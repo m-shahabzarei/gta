@@ -1,0 +1,4 @@
+{
+  "_comment": "Data-driven animation definitions matching AnimationDefinition[]. Empty in Phase 1 (no sprite sheets yet); Phase 2 declares walk/run/idle/attack/damage/death cycles here — or lets AnimationManager derive them from Aseprite frame-tags.",
+  "animations": []
+}

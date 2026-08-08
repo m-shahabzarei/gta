@@ -1,0 +1,1185 @@
+{
+    "generatedAt":  "2026-08-06T09:38:50.3584086Z",
+    "url":  "http://127.0.0.1:5173",
+    "samples":  [
+                    {
+                        "label":  "city-settled",
+                        "frames":  {
+                                       "count":  183,
+                                       "averageMs":  16.93770491803278,
+                                       "p95Ms":  16.899999999999636,
+                                       "p99Ms":  17.30000000000109,
+                                       "maxMs":  50.5,
+                                       "over33Ms":  1,
+                                       "over50Ms":  1,
+                                       "over100Ms":  0
+                                   },
+                        "longTasks":  [
+
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  0,
+                                                          "totalMs":  0,
+                                                          "maxMs":  0
+                                                      },
+                                       "paintHighwayChunk":  {
+                                                                 "calls":  0,
+                                                                 "totalMs":  0,
+                                                                 "maxMs":  0
+                                                             },
+                                       "decorateTile":  {
+                                                            "calls":  0,
+                                                            "totalMs":  0,
+                                                            "maxMs":  0
+                                                        },
+                                       "isMainHighwayCorridor":  {
+                                                                     "calls":  0,
+                                                                     "totalMs":  0,
+                                                                     "maxMs":  0
+                                                                 },
+                                       "isHighwayPavement":  {
+                                                                 "calls":  0,
+                                                                 "totalMs":  0,
+                                                                 "maxMs":  0
+                                                             }
+                                   },
+                        "profiler":  {
+                                         "fps":  60.00043631021381,
+                                         "frameMs":  16.666576449589943,
+                                         "cpuMs":  2.6428913917298296,
+                                         "gpuMs":  null,
+                                         "renderMs":  5.758814675747409,
+                                         "physicsMs":  0.4627958359827113,
+                                         "memoryMb":  404.47003841400146,
+                                         "drawCalls":  10,
+                                         "pathfindingMs":  0.10301455851048441,
+                                         "streamingMs":  0.021589014486216834,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  27,
+                                         "activeNpcs":  19,
+                                         "sleepingNpcs":  8,
+                                         "loadedVehicles":  19,
+                                         "activeVehicles":  14,
+                                         "sleepingVehicles":  5,
+                                         "physicsBodies":  13
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0,
+                                        "activeDrivers":  14,
+                                        "virtualVehicles":  0
+                                    },
+                        "highway":  null,
+                        "loadedRegions":  {
+                                              "city:tehran":  9
+                                          }
+                    },
+                    {
+                        "label":  "national-1-alborz-transition",
+                        "frames":  {
+                                       "count":  33,
+                                       "averageMs":  58.07272727272732,
+                                       "p95Ms":  183.20000000000073,
+                                       "p99Ms":  183.29999999999927,
+                                       "maxMs":  183.70000000000073,
+                                       "over33Ms":  15,
+                                       "over50Ms":  12,
+                                       "over100Ms":  6
+                                   },
+                        "longTasks":  [
+                                          {
+                                              "startMs":  17240.80000001192,
+                                              "durationMs":  61
+                                          },
+                                          {
+                                              "startMs":  17351,
+                                              "durationMs":  62
+                                          },
+                                          {
+                                              "startMs":  17707.10000000894,
+                                              "durationMs":  96
+                                          },
+                                          {
+                                              "startMs":  17803.5,
+                                              "durationMs":  73
+                                          },
+                                          {
+                                              "startMs":  17877,
+                                              "durationMs":  70
+                                          },
+                                          {
+                                              "startMs":  17947.30000001192,
+                                              "durationMs":  65
+                                          },
+                                          {
+                                              "startMs":  18012.60000000894,
+                                              "durationMs":  62
+                                          },
+                                          {
+                                              "startMs":  18075.30000001192,
+                                              "durationMs":  59
+                                          },
+                                          {
+                                              "startMs":  18135.20000000298,
+                                              "durationMs":  135
+                                          },
+                                          {
+                                              "startMs":  18270.40000000596,
+                                              "durationMs":  183
+                                          },
+                                          {
+                                              "startMs":  18453.70000000298,
+                                              "durationMs":  175
+                                          },
+                                          {
+                                              "startMs":  18629.60000000894,
+                                              "durationMs":  192
+                                          },
+                                          {
+                                              "startMs":  18822.60000000894,
+                                              "durationMs":  159
+                                          },
+                                          {
+                                              "startMs":  18982.60000000894,
+                                              "durationMs":  146
+                                          },
+                                          {
+                                              "startMs":  19129.20000000298,
+                                              "durationMs":  176
+                                          }
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  9,
+                                                          "totalMs":  195.09999999403954,
+                                                          "maxMs":  32
+                                                      },
+                                       "paintHighwayChunk":  {
+                                                                 "calls":  9,
+                                                                 "totalMs":  17.5,
+                                                                 "maxMs":  5.799999997019768
+                                                             },
+                                       "decorateTile":  {
+                                                            "calls":  1024,
+                                                            "totalMs":  14,
+                                                            "maxMs":  0.20000000298023224
+                                                        },
+                                       "isMainHighwayCorridor":  {
+                                                                     "calls":  1024,
+                                                                     "totalMs":  9.40000006556511,
+                                                                     "maxMs":  0.20000000298023224
+                                                                 },
+                                       "isHighwayPavement":  {
+                                                                 "calls":  0,
+                                                                 "totalMs":  0,
+                                                                 "maxMs":  0
+                                                             }
+                                   },
+                        "profiler":  {
+                                         "fps":  23.349161993389707,
+                                         "frameMs":  68.82205881960476,
+                                         "cpuMs":  3.3615253176787725,
+                                         "gpuMs":  null,
+                                         "renderMs":  112.24224289981446,
+                                         "physicsMs":  0.8754514632454963,
+                                         "memoryMb":  400.93126010894775,
+                                         "drawCalls":  42,
+                                         "pathfindingMs":  0.027973496581901375,
+                                         "streamingMs":  0.6743558933695603,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  0,
+                                         "activeNpcs":  0,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  5,
+                                         "activeVehicles":  4,
+                                         "sleepingVehicles":  1,
+                                         "physicsBodies":  3
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0,
+                                        "activeDrivers":  5,
+                                        "virtualVehicles":  0
+                                    },
+                        "highway":  null,
+                        "loadedRegions":  {
+                                              "highway:national-22-caspian":  3,
+                                              "highway:national-1-alborz":  6
+                                          }
+                    },
+                    {
+                        "label":  "national-1-alborz-settled",
+                        "frames":  {
+                                       "count":  39,
+                                       "averageMs":  80.76153846153848,
+                                       "p95Ms":  84,
+                                       "p99Ms":  116.70000000000073,
+                                       "maxMs":  166.79999999999927,
+                                       "over33Ms":  39,
+                                       "over50Ms":  39,
+                                       "over100Ms":  2
+                                   },
+                        "longTasks":  [
+                                          {
+                                              "startMs":  19307.90000000596,
+                                              "durationMs":  107
+                                          },
+                                          {
+                                              "startMs":  19415.5,
+                                              "durationMs":  87
+                                          },
+                                          {
+                                              "startMs":  19502.60000000894,
+                                              "durationMs":  75
+                                          },
+                                          {
+                                              "startMs":  19578.60000000894,
+                                              "durationMs":  85
+                                          },
+                                          {
+                                              "startMs":  19663.80000001192,
+                                              "durationMs":  63
+                                          },
+                                          {
+                                              "startMs":  19727.60000000894,
+                                              "durationMs":  82
+                                          },
+                                          {
+                                              "startMs":  19810.20000000298,
+                                              "durationMs":  80
+                                          },
+                                          {
+                                              "startMs":  19890.70000000298,
+                                              "durationMs":  80
+                                          },
+                                          {
+                                              "startMs":  19970.90000000596,
+                                              "durationMs":  74
+                                          },
+                                          {
+                                              "startMs":  20045.40000000596,
+                                              "durationMs":  81
+                                          },
+                                          {
+                                              "startMs":  20127.30000001192,
+                                              "durationMs":  87
+                                          },
+                                          {
+                                              "startMs":  20214.5,
+                                              "durationMs":  72
+                                          },
+                                          {
+                                              "startMs":  20287,
+                                              "durationMs":  77
+                                          },
+                                          {
+                                              "startMs":  20365,
+                                              "durationMs":  70
+                                          },
+                                          {
+                                              "startMs":  20435.40000000596,
+                                              "durationMs":  70
+                                          },
+                                          {
+                                              "startMs":  20506.40000000596,
+                                              "durationMs":  76
+                                          },
+                                          {
+                                              "startMs":  20582.70000000298,
+                                              "durationMs":  84
+                                          },
+                                          {
+                                              "startMs":  20667.10000000894,
+                                              "durationMs":  79
+                                          },
+                                          {
+                                              "startMs":  20746.80000001192,
+                                              "durationMs":  71
+                                          },
+                                          {
+                                              "startMs":  20818.70000000298,
+                                              "durationMs":  69
+                                          },
+                                          {
+                                              "startMs":  20888.70000000298,
+                                              "durationMs":  69
+                                          },
+                                          {
+                                              "startMs":  20958.10000000894,
+                                              "durationMs":  87
+                                          },
+                                          {
+                                              "startMs":  21045.60000000894,
+                                              "durationMs":  87
+                                          },
+                                          {
+                                              "startMs":  21132.80000001192,
+                                              "durationMs":  81
+                                          },
+                                          {
+                                              "startMs":  21214.60000000894,
+                                              "durationMs":  73
+                                          },
+                                          {
+                                              "startMs":  21287.80000001192,
+                                              "durationMs":  81
+                                          },
+                                          {
+                                              "startMs":  21369.40000000596,
+                                              "durationMs":  71
+                                          },
+                                          {
+                                              "startMs":  21442.30000001192,
+                                              "durationMs":  70
+                                          },
+                                          {
+                                              "startMs":  21513.10000000894,
+                                              "durationMs":  77
+                                          },
+                                          {
+                                              "startMs":  21590.60000000894,
+                                              "durationMs":  72
+                                          },
+                                          {
+                                              "startMs":  21663.5,
+                                              "durationMs":  75
+                                          },
+                                          {
+                                              "startMs":  21739,
+                                              "durationMs":  70
+                                          },
+                                          {
+                                              "startMs":  21809.90000000596,
+                                              "durationMs":  72
+                                          },
+                                          {
+                                              "startMs":  21882.70000000298,
+                                              "durationMs":  79
+                                          },
+                                          {
+                                              "startMs":  21962,
+                                              "durationMs":  79
+                                          },
+                                          {
+                                              "startMs":  22041.5,
+                                              "durationMs":  70
+                                          },
+                                          {
+                                              "startMs":  22112.5,
+                                              "durationMs":  82
+                                          },
+                                          {
+                                              "startMs":  22195.40000000596,
+                                              "durationMs":  84
+                                          }
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  0,
+                                                          "totalMs":  0,
+                                                          "maxMs":  0
+                                                      },
+                                       "paintHighwayChunk":  {
+                                                                 "calls":  0,
+                                                                 "totalMs":  0,
+                                                                 "maxMs":  0
+                                                             },
+                                       "decorateTile":  {
+                                                            "calls":  0,
+                                                            "totalMs":  0,
+                                                            "maxMs":  0
+                                                        },
+                                       "isMainHighwayCorridor":  {
+                                                                     "calls":  0,
+                                                                     "totalMs":  0,
+                                                                     "maxMs":  0
+                                                                 },
+                                       "isHighwayPavement":  {
+                                                                 "calls":  0,
+                                                                 "totalMs":  0,
+                                                                 "maxMs":  0
+                                                             }
+                                   },
+                        "profiler":  {
+                                         "fps":  13.09183531351236,
+                                         "frameMs":  77.04904618454853,
+                                         "cpuMs":  2.898956351844623,
+                                         "gpuMs":  null,
+                                         "renderMs":  75.113657139839,
+                                         "physicsMs":  0.7128309414778902,
+                                         "memoryMb":  398.8547372817993,
+                                         "drawCalls":  27,
+                                         "pathfindingMs":  0.005692785804949966,
+                                         "streamingMs":  0.017720415215541258,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  0,
+                                         "activeNpcs":  0,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  7,
+                                         "activeVehicles":  5,
+                                         "sleepingVehicles":  2,
+                                         "physicsBodies":  4
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0,
+                                        "activeDrivers":  7,
+                                        "virtualVehicles":  0
+                                    },
+                        "highway":  null,
+                        "loadedRegions":  {
+                                              "highway:national-22-caspian":  3,
+                                              "highway:national-1-alborz":  6
+                                          }
+                    },
+                    {
+                        "label":  "national-7-desert-transition",
+                        "frames":  {
+                                       "count":  49,
+                                       "averageMs":  44.21224489795914,
+                                       "p95Ms":  83.30000000000291,
+                                       "p99Ms":  83.5,
+                                       "maxMs":  116.60000000000218,
+                                       "over33Ms":  26,
+                                       "over50Ms":  19,
+                                       "over100Ms":  1
+                                   },
+                        "longTasks":  [
+                                          {
+                                              "startMs":  22279.60000000894,
+                                              "durationMs":  85
+                                          },
+                                          {
+                                              "startMs":  22366.80000001192,
+                                              "durationMs":  83
+                                          },
+                                          {
+                                              "startMs":  22451.30000001192,
+                                              "durationMs":  116
+                                          },
+                                          {
+                                              "startMs":  22614.5,
+                                              "durationMs":  52
+                                          },
+                                          {
+                                              "startMs":  23089.90000000596,
+                                              "durationMs":  67
+                                          },
+                                          {
+                                              "startMs":  23157.10000000894,
+                                              "durationMs":  63
+                                          },
+                                          {
+                                              "startMs":  23220.60000000894,
+                                              "durationMs":  75
+                                          },
+                                          {
+                                              "startMs":  23296.80000001192,
+                                              "durationMs":  68
+                                          },
+                                          {
+                                              "startMs":  23365.10000000894,
+                                              "durationMs":  64
+                                          },
+                                          {
+                                              "startMs":  23429.30000001192,
+                                              "durationMs":  90
+                                          },
+                                          {
+                                              "startMs":  23520.10000000894,
+                                              "durationMs":  84
+                                          },
+                                          {
+                                              "startMs":  23605.20000000298,
+                                              "durationMs":  80
+                                          },
+                                          {
+                                              "startMs":  23686.20000000298,
+                                              "durationMs":  76
+                                          },
+                                          {
+                                              "startMs":  23762.80000001192,
+                                              "durationMs":  66
+                                          },
+                                          {
+                                              "startMs":  23829.20000000298,
+                                              "durationMs":  68
+                                          },
+                                          {
+                                              "startMs":  23898.30000001192,
+                                              "durationMs":  59
+                                          },
+                                          {
+                                              "startMs":  23958.70000000298,
+                                              "durationMs":  60
+                                          },
+                                          {
+                                              "startMs":  24019,
+                                              "durationMs":  54
+                                          },
+                                          {
+                                              "startMs":  24073.5,
+                                              "durationMs":  64
+                                          },
+                                          {
+                                              "startMs":  24138.20000000298,
+                                              "durationMs":  68
+                                          },
+                                          {
+                                              "startMs":  24206.90000000596,
+                                              "durationMs":  67
+                                          },
+                                          {
+                                              "startMs":  24274.30000001192,
+                                              "durationMs":  58
+                                          },
+                                          {
+                                              "startMs":  24333.10000000894,
+                                              "durationMs":  59
+                                          },
+                                          {
+                                              "startMs":  24392.30000001192,
+                                              "durationMs":  61
+                                          }
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  9,
+                                                          "totalMs":  179.49999998509884,
+                                                          "maxMs":  27.5
+                                                      },
+                                       "paintHighwayChunk":  {
+                                                                 "calls":  9,
+                                                                 "totalMs":  8.5,
+                                                                 "maxMs":  1.7999999970197678
+                                                             },
+                                       "decorateTile":  {
+                                                            "calls":  1024,
+                                                            "totalMs":  8.999999985098839,
+                                                            "maxMs":  1.0999999940395355
+                                                        },
+                                       "isMainHighwayCorridor":  {
+                                                                     "calls":  1024,
+                                                                     "totalMs":  4.0999999940395355,
+                                                                     "maxMs":  0.10000000894069672
+                                                                 },
+                                       "isHighwayPavement":  {
+                                                                 "calls":  13,
+                                                                 "totalMs":  2.3999999910593033,
+                                                                 "maxMs":  1
+                                                             }
+                                   },
+                        "profiler":  {
+                                         "fps":  19.365383495301895,
+                                         "frameMs":  60.76941104722869,
+                                         "cpuMs":  3.198250041459716,
+                                         "gpuMs":  null,
+                                         "renderMs":  57.023565150683936,
+                                         "physicsMs":  0.8492794375512955,
+                                         "memoryMb":  427.1078577041626,
+                                         "drawCalls":  23,
+                                         "pathfindingMs":  0.013147925582813063,
+                                         "streamingMs":  0.1051800601675997,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  17,
+                                         "activeNpcs":  17,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  9,
+                                         "activeVehicles":  6,
+                                         "sleepingVehicles":  3,
+                                         "physicsBodies":  14
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0,
+                                        "activeDrivers":  9,
+                                        "virtualVehicles":  0
+                                    },
+                        "highway":  null,
+                        "loadedRegions":  {
+                                              "highway:national-7-desert":  9
+                                          }
+                    },
+                    {
+                        "label":  "national-7-desert-settled",
+                        "frames":  {
+                                       "count":  34,
+                                       "averageMs":  88.71764705882357,
+                                       "p95Ms":  100.40000000000146,
+                                       "p99Ms":  116,
+                                       "maxMs":  116.70000000000073,
+                                       "over33Ms":  34,
+                                       "over50Ms":  34,
+                                       "over100Ms":  8
+                                   },
+                        "longTasks":  [
+                                          {
+                                              "startMs":  24453.60000000894,
+                                              "durationMs":  62
+                                          },
+                                          {
+                                              "startMs":  24517.30000001192,
+                                              "durationMs":  60
+                                          },
+                                          {
+                                              "startMs":  24577.5,
+                                              "durationMs":  86
+                                          },
+                                          {
+                                              "startMs":  24663.80000001192,
+                                              "durationMs":  84
+                                          },
+                                          {
+                                              "startMs":  24748.30000001192,
+                                              "durationMs":  78
+                                          },
+                                          {
+                                              "startMs":  24827.30000001192,
+                                              "durationMs":  79
+                                          },
+                                          {
+                                              "startMs":  24906.60000000894,
+                                              "durationMs":  85
+                                          },
+                                          {
+                                              "startMs":  24992.30000001192,
+                                              "durationMs":  96
+                                          },
+                                          {
+                                              "startMs":  25089,
+                                              "durationMs":  95
+                                          },
+                                          {
+                                              "startMs":  25184.80000001192,
+                                              "durationMs":  92
+                                          },
+                                          {
+                                              "startMs":  25277.20000000298,
+                                              "durationMs":  88
+                                          },
+                                          {
+                                              "startMs":  25365.70000000298,
+                                              "durationMs":  74
+                                          },
+                                          {
+                                              "startMs":  25440.80000001192,
+                                              "durationMs":  78
+                                          },
+                                          {
+                                              "startMs":  25519.80000001192,
+                                              "durationMs":  76
+                                          },
+                                          {
+                                              "startMs":  25596.80000001192,
+                                              "durationMs":  75
+                                          },
+                                          {
+                                              "startMs":  25674.10000000894,
+                                              "durationMs":  80
+                                          },
+                                          {
+                                              "startMs":  25754.70000000298,
+                                              "durationMs":  114
+                                          },
+                                          {
+                                              "startMs":  25869.5,
+                                              "durationMs":  102
+                                          },
+                                          {
+                                              "startMs":  25972.30000001192,
+                                              "durationMs":  82
+                                          },
+                                          {
+                                              "startMs":  26054.5,
+                                              "durationMs":  95
+                                          },
+                                          {
+                                              "startMs":  26150.20000000298,
+                                              "durationMs":  89
+                                          },
+                                          {
+                                              "startMs":  26239.60000000894,
+                                              "durationMs":  92
+                                          },
+                                          {
+                                              "startMs":  26332.30000001192,
+                                              "durationMs":  89
+                                          },
+                                          {
+                                              "startMs":  26421.90000000596,
+                                              "durationMs":  102
+                                          },
+                                          {
+                                              "startMs":  26524.80000001192,
+                                              "durationMs":  97
+                                          },
+                                          {
+                                              "startMs":  26622.10000000894,
+                                              "durationMs":  95
+                                          },
+                                          {
+                                              "startMs":  26718.10000000894,
+                                              "durationMs":  100
+                                          },
+                                          {
+                                              "startMs":  26819.10000000894,
+                                              "durationMs":  101
+                                          },
+                                          {
+                                              "startMs":  26920.80000001192,
+                                              "durationMs":  88
+                                          },
+                                          {
+                                              "startMs":  27008.90000000596,
+                                              "durationMs":  81
+                                          },
+                                          {
+                                              "startMs":  27090.5,
+                                              "durationMs":  101
+                                          },
+                                          {
+                                              "startMs":  27191.90000000596,
+                                              "durationMs":  94
+                                          },
+                                          {
+                                              "startMs":  27286.5,
+                                              "durationMs":  96
+                                          },
+                                          {
+                                              "startMs":  27383,
+                                              "durationMs":  79
+                                          }
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  0,
+                                                          "totalMs":  0,
+                                                          "maxMs":  0
+                                                      },
+                                       "paintHighwayChunk":  {
+                                                                 "calls":  0,
+                                                                 "totalMs":  0,
+                                                                 "maxMs":  0
+                                                             },
+                                       "decorateTile":  {
+                                                            "calls":  0,
+                                                            "totalMs":  0,
+                                                            "maxMs":  0
+                                                        },
+                                       "isMainHighwayCorridor":  {
+                                                                     "calls":  0,
+                                                                     "totalMs":  0,
+                                                                     "maxMs":  0
+                                                                 },
+                                       "isHighwayPavement":  {
+                                                                 "calls":  0,
+                                                                 "totalMs":  0,
+                                                                 "maxMs":  0
+                                                             }
+                                   },
+                        "profiler":  {
+                                         "fps":  10.918063228902124,
+                                         "frameMs":  92.4807309445646,
+                                         "cpuMs":  3.8064034821909005,
+                                         "gpuMs":  null,
+                                         "renderMs":  85.82204632086066,
+                                         "physicsMs":  1.3849222435034734,
+                                         "memoryMb":  413.87188053131104,
+                                         "drawCalls":  29,
+                                         "pathfindingMs":  0.009836625910979759,
+                                         "streamingMs":  0.016561034950079795,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  39,
+                                         "activeNpcs":  39,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  10,
+                                         "activeVehicles":  6,
+                                         "sleepingVehicles":  4,
+                                         "physicsBodies":  30
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0,
+                                        "activeDrivers":  10,
+                                        "virtualVehicles":  0
+                                    },
+                        "highway":  null,
+                        "loadedRegions":  {
+                                              "highway:national-7-desert":  9
+                                          }
+                    },
+                    {
+                        "label":  "national-22-caspian-transition",
+                        "frames":  {
+                                       "count":  36,
+                                       "averageMs":  59.25,
+                                       "p95Ms":  149.89999999999782,
+                                       "p99Ms":  150,
+                                       "maxMs":  166.79999999999927,
+                                       "over33Ms":  19,
+                                       "over50Ms":  14,
+                                       "over100Ms":  8
+                                   },
+                        "longTasks":  [
+                                          {
+                                              "startMs":  27462.80000001192,
+                                              "durationMs":  80
+                                          },
+                                          {
+                                              "startMs":  27544.10000000894,
+                                              "durationMs":  81
+                                          },
+                                          {
+                                              "startMs":  27626.40000000596,
+                                              "durationMs":  112
+                                          },
+                                          {
+                                              "startMs":  27738.90000000596,
+                                              "durationMs":  55
+                                          },
+                                          {
+                                              "startMs":  27794.40000000596,
+                                              "durationMs":  71
+                                          },
+                                          {
+                                              "startMs":  27866.30000001192,
+                                              "durationMs":  54
+                                          },
+                                          {
+                                              "startMs":  28393.30000001192,
+                                              "durationMs":  138
+                                          },
+                                          {
+                                              "startMs":  28531.40000000596,
+                                              "durationMs":  122
+                                          },
+                                          {
+                                              "startMs":  28654.10000000894,
+                                              "durationMs":  138
+                                          },
+                                          {
+                                              "startMs":  28793,
+                                              "durationMs":  143
+                                          },
+                                          {
+                                              "startMs":  28936.30000001192,
+                                              "durationMs":  139
+                                          },
+                                          {
+                                              "startMs":  29075.90000000596,
+                                              "durationMs":  119
+                                          },
+                                          {
+                                              "startMs":  29196,
+                                              "durationMs":  163
+                                          },
+                                          {
+                                              "startMs":  29359.40000000596,
+                                              "durationMs":  136
+                                          },
+                                          {
+                                              "startMs":  29496.30000001192,
+                                              "durationMs":  51
+                                          },
+                                          {
+                                              "startMs":  29547.80000001192,
+                                              "durationMs":  57
+                                          }
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  9,
+                                                          "totalMs":  209.99999997019768,
+                                                          "maxMs":  40.099999994039536
+                                                      },
+                                       "paintHighwayChunk":  {
+                                                                 "calls":  9,
+                                                                 "totalMs":  21.799999967217445,
+                                                                 "maxMs":  4.299999997019768
+                                                             },
+                                       "decorateTile":  {
+                                                            "calls":  1024,
+                                                            "totalMs":  12.800000011920929,
+                                                            "maxMs":  0.3999999910593033
+                                                        },
+                                       "isMainHighwayCorridor":  {
+                                                                     "calls":  1024,
+                                                                     "totalMs":  8.100000038743019,
+                                                                     "maxMs":  0.20000000298023224
+                                                                 },
+                                       "isHighwayPavement":  {
+                                                                 "calls":  3,
+                                                                 "totalMs":  0.9999999850988388,
+                                                                 "maxMs":  0.3999999910593033
+                                                             }
+                                   },
+                        "profiler":  {
+                                         "fps":  19.07479242184863,
+                                         "frameMs":  78.68549741526397,
+                                         "cpuMs":  2.9861467205599155,
+                                         "gpuMs":  null,
+                                         "renderMs":  83.45633061452749,
+                                         "physicsMs":  0.6051781759155849,
+                                         "memoryMb":  405.4502353668213,
+                                         "drawCalls":  22,
+                                         "pathfindingMs":  0.001810091511778145,
+                                         "streamingMs":  0.48759643327880475,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  0,
+                                         "activeNpcs":  0,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  8,
+                                         "activeVehicles":  5,
+                                         "sleepingVehicles":  3,
+                                         "physicsBodies":  5
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0,
+                                        "activeDrivers":  8,
+                                        "virtualVehicles":  0
+                                    },
+                        "highway":  null,
+                        "loadedRegions":  {
+                                              "highway:national-22-caspian":  9
+                                          }
+                    },
+                    {
+                        "label":  "national-22-caspian-settled",
+                        "frames":  {
+                                       "count":  39,
+                                       "averageMs":  77.76923076923077,
+                                       "p95Ms":  99.90000000000146,
+                                       "p99Ms":  100.29999999999927,
+                                       "maxMs":  100.30000000000291,
+                                       "over33Ms":  39,
+                                       "over50Ms":  39,
+                                       "over100Ms":  2
+                                   },
+                        "longTasks":  [
+                                          {
+                                              "startMs":  29605.20000000298,
+                                              "durationMs":  68
+                                          },
+                                          {
+                                              "startMs":  29675.80000001192,
+                                              "durationMs":  72
+                                          },
+                                          {
+                                              "startMs":  29748.80000001192,
+                                              "durationMs":  61
+                                          },
+                                          {
+                                              "startMs":  29810.20000000298,
+                                              "durationMs":  61
+                                          },
+                                          {
+                                              "startMs":  29871.70000000298,
+                                              "durationMs":  66
+                                          },
+                                          {
+                                              "startMs":  29938.20000000298,
+                                              "durationMs":  68
+                                          },
+                                          {
+                                              "startMs":  30007.30000001192,
+                                              "durationMs":  69
+                                          },
+                                          {
+                                              "startMs":  30076.5,
+                                              "durationMs":  66
+                                          },
+                                          {
+                                              "startMs":  30142.90000000596,
+                                              "durationMs":  66
+                                          },
+                                          {
+                                              "startMs":  30209.5,
+                                              "durationMs":  76
+                                          },
+                                          {
+                                              "startMs":  30286.40000000596,
+                                              "durationMs":  75
+                                          },
+                                          {
+                                              "startMs":  30361.60000000894,
+                                              "durationMs":  79
+                                          },
+                                          {
+                                              "startMs":  30441.40000000596,
+                                              "durationMs":  72
+                                          },
+                                          {
+                                              "startMs":  30513.90000000596,
+                                              "durationMs":  75
+                                          },
+                                          {
+                                              "startMs":  30589.40000000596,
+                                              "durationMs":  77
+                                          },
+                                          {
+                                              "startMs":  30666.80000001192,
+                                              "durationMs":  79
+                                          },
+                                          {
+                                              "startMs":  30746.20000000298,
+                                              "durationMs":  80
+                                          },
+                                          {
+                                              "startMs":  30827.30000001192,
+                                              "durationMs":  101
+                                          },
+                                          {
+                                              "startMs":  30928.40000000596,
+                                              "durationMs":  97
+                                          },
+                                          {
+                                              "startMs":  31025.5,
+                                              "durationMs":  83
+                                          },
+                                          {
+                                              "startMs":  31109,
+                                              "durationMs":  82
+                                          },
+                                          {
+                                              "startMs":  31191.70000000298,
+                                              "durationMs":  74
+                                          },
+                                          {
+                                              "startMs":  31266.60000000894,
+                                              "durationMs":  84
+                                          },
+                                          {
+                                              "startMs":  31351.70000000298,
+                                              "durationMs":  83
+                                          },
+                                          {
+                                              "startMs":  31435.10000000894,
+                                              "durationMs":  81
+                                          },
+                                          {
+                                              "startMs":  31516.30000001192,
+                                              "durationMs":  85
+                                          },
+                                          {
+                                              "startMs":  31601.90000000596,
+                                              "durationMs":  76
+                                          },
+                                          {
+                                              "startMs":  31678.20000000298,
+                                              "durationMs":  72
+                                          },
+                                          {
+                                              "startMs":  31751,
+                                              "durationMs":  75
+                                          },
+                                          {
+                                              "startMs":  31826.40000000596,
+                                              "durationMs":  80
+                                          },
+                                          {
+                                              "startMs":  31906.80000001192,
+                                              "durationMs":  73
+                                          },
+                                          {
+                                              "startMs":  31980.5,
+                                              "durationMs":  84
+                                          },
+                                          {
+                                              "startMs":  32065.10000000894,
+                                              "durationMs":  80
+                                          },
+                                          {
+                                              "startMs":  32146.10000000894,
+                                              "durationMs":  80
+                                          },
+                                          {
+                                              "startMs":  32227,
+                                              "durationMs":  77
+                                          },
+                                          {
+                                              "startMs":  32304.40000000596,
+                                              "durationMs":  81
+                                          },
+                                          {
+                                              "startMs":  32385.90000000596,
+                                              "durationMs":  81
+                                          },
+                                          {
+                                              "startMs":  32467.10000000894,
+                                              "durationMs":  84
+                                          },
+                                          {
+                                              "startMs":  32552.20000000298,
+                                              "durationMs":  82
+                                          }
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  0,
+                                                          "totalMs":  0,
+                                                          "maxMs":  0
+                                                      },
+                                       "paintHighwayChunk":  {
+                                                                 "calls":  0,
+                                                                 "totalMs":  0,
+                                                                 "maxMs":  0
+                                                             },
+                                       "decorateTile":  {
+                                                            "calls":  0,
+                                                            "totalMs":  0,
+                                                            "maxMs":  0
+                                                        },
+                                       "isMainHighwayCorridor":  {
+                                                                     "calls":  0,
+                                                                     "totalMs":  0,
+                                                                     "maxMs":  0
+                                                                 },
+                                       "isHighwayPavement":  {
+                                                                 "calls":  0,
+                                                                 "totalMs":  0,
+                                                                 "maxMs":  0
+                                                             }
+                                   },
+                        "profiler":  {
+                                         "fps":  12.602730493699761,
+                                         "frameMs":  79.74404118720086,
+                                         "cpuMs":  2.9167230431464954,
+                                         "gpuMs":  null,
+                                         "renderMs":  76.81904765379376,
+                                         "physicsMs":  0.6985465519995862,
+                                         "memoryMb":  426.76836109161377,
+                                         "drawCalls":  28,
+                                         "pathfindingMs":  0.00036836522147817407,
+                                         "streamingMs":  0.034162868167878266,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  0,
+                                         "activeNpcs":  0,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  13,
+                                         "activeVehicles":  9,
+                                         "sleepingVehicles":  4,
+                                         "physicsBodies":  9
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0,
+                                        "activeDrivers":  13,
+                                        "virtualVehicles":  0
+                                    },
+                        "highway":  null,
+                        "loadedRegions":  {
+                                              "highway:national-22-caspian":  9
+                                          }
+                    }
+                ],
+    "browserErrors":  "WrongDocumentError: The root document of this element is not valid for pointer lock."
+}

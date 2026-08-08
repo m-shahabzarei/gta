@@ -1,0 +1,740 @@
+{
+    "generatedAt":  "2026-08-06T10:49:44.7452891Z",
+    "url":  "http://127.0.0.1:5173",
+    "samples":  [
+                    {
+                        "label":  "city-settled",
+                        "frames":  {
+                                       "count":  183,
+                                       "averageMs":  16.756284153005463,
+                                       "p95Ms":  16.900000000001455,
+                                       "p99Ms":  17.19999999999709,
+                                       "maxMs":  33.399999999999636,
+                                       "over33Ms":  1,
+                                       "over50Ms":  0,
+                                       "over100Ms":  0
+                                   },
+                        "longTasks":  [
+
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  0,
+                                                          "totalMs":  0,
+                                                          "maxMs":  0
+                                                      },
+                                       "decorateTile":  {
+                                                            "calls":  0,
+                                                            "totalMs":  0,
+                                                            "maxMs":  0
+                                                        }
+                                   },
+                        "profiler":  {
+                                         "fps":  59.9957757873488,
+                                         "frameMs":  16.667852725652377,
+                                         "cpuMs":  2.4243306830388587,
+                                         "gpuMs":  null,
+                                         "renderMs":  6.482099737248391,
+                                         "physicsMs":  0.5088198373667506,
+                                         "memoryMb":  415.1770992279053,
+                                         "drawCalls":  10,
+                                         "pathfindingMs":  0.10617873503463904,
+                                         "streamingMs":  0.03395803198067317,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  27,
+                                         "activeNpcs":  19,
+                                         "sleepingNpcs":  8,
+                                         "loadedVehicles":  19,
+                                         "activeVehicles":  14,
+                                         "sleepingVehicles":  5,
+                                         "physicsBodies":  13,
+                                         "nearEntities":  1,
+                                         "mediumEntities":  33,
+                                         "farEntities":  13,
+                                         "veryFarEntities":  0,
+                                         "dormantEntities":  16,
+                                         "trafficAiMs":  0.4000000059604645,
+                                         "trafficNavigationMs":  0,
+                                         "trafficCollisionMs":  0.19999998807907104,
+                                         "highwayChunkBuildMs":  0,
+                                         "highwayMaximumBuildMs":  0
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0.4000000059604645,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0.19999998807907104,
+                                        "activeDrivers":  14,
+                                        "virtualVehicles":  0,
+                                        "nearVehicles":  1,
+                                        "mediumVehicles":  9,
+                                        "farVehicles":  4,
+                                        "frozenVehicles":  0
+                                    },
+                        "highway":  {
+                                        "indexedChunks":  140,
+                                        "mainlineSections":  199,
+                                        "medianSections":  91,
+                                        "rampSections":  67,
+                                        "splineSamples":  15531,
+                                        "corridorTiles":  27219,
+                                        "railCollisionTiles":  3564,
+                                        "residentChunks":  0,
+                                        "visibleChunks":  0,
+                                        "cachedTextures":  0,
+                                        "cacheHits":  0,
+                                        "cacheMisses":  0,
+                                        "rasterizedDetails":  0,
+                                        "estimatedBatchedDraws":  0,
+                                        "lastBuildMs":  0,
+                                        "maximumBuildMs":  0,
+                                        "totalBuildMs":  0
+                                    },
+                        "loadedRegions":  {
+                                              "city:tehran":  9
+                                          }
+                    },
+                    {
+                        "label":  "national-1-alborz-transition",
+                        "frames":  {
+                                       "count":  97,
+                                       "averageMs":  20.95876288659794,
+                                       "p95Ms":  33.099999999998545,
+                                       "p99Ms":  133.70000000000073,
+                                       "maxMs":  217.09999999999854,
+                                       "over33Ms":  3,
+                                       "over50Ms":  3,
+                                       "over100Ms":  2
+                                   },
+                        "longTasks":  [
+                                          {
+                                              "startMs":  19386.90000000596,
+                                              "durationMs":  143
+                                          }
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  9,
+                                                          "totalMs":  84.09999997913837,
+                                                          "maxMs":  22.099999994039536
+                                                      },
+                                       "decorateTile":  {
+                                                            "calls":  1024,
+                                                            "totalMs":  2.899999976158142,
+                                                            "maxMs":  0.10000000894069672
+                                                        }
+                                   },
+                        "profiler":  {
+                                         "fps":  60.0080965783966,
+                                         "frameMs":  16.666442995309477,
+                                         "cpuMs":  2.05043274159838,
+                                         "gpuMs":  null,
+                                         "renderMs":  5.336039692490911,
+                                         "physicsMs":  0.4079768983134822,
+                                         "memoryMb":  202.51176071166992,
+                                         "drawCalls":  9,
+                                         "pathfindingMs":  0.0020902758020672984,
+                                         "streamingMs":  0.0251548472174351,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  0,
+                                         "activeNpcs":  0,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  7,
+                                         "activeVehicles":  6,
+                                         "sleepingVehicles":  1,
+                                         "physicsBodies":  5,
+                                         "nearEntities":  1,
+                                         "mediumEntities":  6,
+                                         "farEntities":  1,
+                                         "veryFarEntities":  0,
+                                         "dormantEntities":  16,
+                                         "trafficAiMs":  0.7000000029802322,
+                                         "trafficNavigationMs":  0,
+                                         "trafficCollisionMs":  0.5000000149011612,
+                                         "highwayChunkBuildMs":  3.1000000089406967,
+                                         "highwayMaximumBuildMs":  7.4000000059604645
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0.7000000029802322,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0.5000000149011612,
+                                        "activeDrivers":  7,
+                                        "virtualVehicles":  0,
+                                        "nearVehicles":  0,
+                                        "mediumVehicles":  6,
+                                        "farVehicles":  1,
+                                        "frozenVehicles":  0
+                                    },
+                        "highway":  {
+                                        "indexedChunks":  140,
+                                        "mainlineSections":  199,
+                                        "medianSections":  91,
+                                        "rampSections":  67,
+                                        "splineSamples":  15531,
+                                        "corridorTiles":  27219,
+                                        "railCollisionTiles":  3564,
+                                        "residentChunks":  6,
+                                        "visibleChunks":  2,
+                                        "cachedTextures":  11,
+                                        "cacheHits":  0,
+                                        "cacheMisses":  11,
+                                        "rasterizedDetails":  865,
+                                        "estimatedBatchedDraws":  2,
+                                        "lastBuildMs":  3.1000000089406967,
+                                        "maximumBuildMs":  7.4000000059604645,
+                                        "totalBuildMs":  59.00000002980232
+                                    },
+                        "loadedRegions":  {
+                                              "highway:national-1-alborz":  6,
+                                              "highway:national-22-caspian":  3
+                                          }
+                    },
+                    {
+                        "label":  "national-1-alborz-settled",
+                        "frames":  {
+                                       "count":  181,
+                                       "averageMs":  16.665193370165753,
+                                       "p95Ms":  17,
+                                       "p99Ms":  17.400000000001455,
+                                       "maxMs":  17.400000000001455,
+                                       "over33Ms":  0,
+                                       "over50Ms":  0,
+                                       "over100Ms":  0
+                                   },
+                        "longTasks":  [
+
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  0,
+                                                          "totalMs":  0,
+                                                          "maxMs":  0
+                                                      },
+                                       "decorateTile":  {
+                                                            "calls":  0,
+                                                            "totalMs":  0,
+                                                            "maxMs":  0
+                                                        }
+                                   },
+                        "profiler":  {
+                                         "fps":  59.98574380773271,
+                                         "frameMs":  16.670662436665438,
+                                         "cpuMs":  2.189830203618573,
+                                         "gpuMs":  null,
+                                         "renderMs":  6.112087084252138,
+                                         "physicsMs":  0.42635357936060464,
+                                         "memoryMb":  228.8248062133789,
+                                         "drawCalls":  9,
+                                         "pathfindingMs":  0.0000012921019240054541,
+                                         "streamingMs":  0.014585606502033367,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  0,
+                                         "activeNpcs":  0,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  7,
+                                         "activeVehicles":  6,
+                                         "sleepingVehicles":  1,
+                                         "physicsBodies":  5,
+                                         "nearEntities":  1,
+                                         "mediumEntities":  6,
+                                         "farEntities":  1,
+                                         "veryFarEntities":  0,
+                                         "dormantEntities":  16,
+                                         "trafficAiMs":  0.5,
+                                         "trafficNavigationMs":  0,
+                                         "trafficCollisionMs":  0.3999999910593033,
+                                         "highwayChunkBuildMs":  3.1000000089406967,
+                                         "highwayMaximumBuildMs":  7.4000000059604645
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0.5,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0.3999999910593033,
+                                        "activeDrivers":  7,
+                                        "virtualVehicles":  0,
+                                        "nearVehicles":  1,
+                                        "mediumVehicles":  3,
+                                        "farVehicles":  2,
+                                        "frozenVehicles":  1
+                                    },
+                        "highway":  {
+                                        "indexedChunks":  140,
+                                        "mainlineSections":  199,
+                                        "medianSections":  91,
+                                        "rampSections":  67,
+                                        "splineSamples":  15531,
+                                        "corridorTiles":  27219,
+                                        "railCollisionTiles":  3564,
+                                        "residentChunks":  6,
+                                        "visibleChunks":  2,
+                                        "cachedTextures":  11,
+                                        "cacheHits":  0,
+                                        "cacheMisses":  11,
+                                        "rasterizedDetails":  865,
+                                        "estimatedBatchedDraws":  2,
+                                        "lastBuildMs":  3.1000000089406967,
+                                        "maximumBuildMs":  7.4000000059604645,
+                                        "totalBuildMs":  59.00000002980232
+                                    },
+                        "loadedRegions":  {
+                                              "highway:national-1-alborz":  6,
+                                              "highway:national-22-caspian":  3
+                                          }
+                    },
+                    {
+                        "label":  "national-1-alborz-driven-crossing",
+                        "frames":  {
+                                       "count":  349,
+                                       "averageMs":  16.90343839541548,
+                                       "p95Ms":  16.899999999997817,
+                                       "p99Ms":  17.599999999998545,
+                                       "maxMs":  49.799999999995634,
+                                       "over33Ms":  2,
+                                       "over50Ms":  0,
+                                       "over100Ms":  0
+                                   },
+                        "longTasks":  [
+
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  6,
+                                                          "totalMs":  28.400000005960464,
+                                                          "maxMs":  7.0999999940395355
+                                                      },
+                                       "decorateTile":  {
+                                                            "calls":  2048,
+                                                            "totalMs":  6.099999979138374,
+                                                            "maxMs":  0.19999998807907104
+                                                        }
+                                   },
+                        "profiler":  {
+                                         "fps":  60.01747868258536,
+                                         "frameMs":  16.661818041125233,
+                                         "cpuMs":  3.222340015394309,
+                                         "gpuMs":  null,
+                                         "renderMs":  6.866207492795827,
+                                         "physicsMs":  0.9762504867966384,
+                                         "memoryMb":  261.3479461669922,
+                                         "drawCalls":  12,
+                                         "pathfindingMs":  0.008901481848395927,
+                                         "streamingMs":  0.025996960781492322,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  23,
+                                         "activeNpcs":  23,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  16,
+                                         "activeVehicles":  12,
+                                         "sleepingVehicles":  4,
+                                         "physicsBodies":  34,
+                                         "nearEntities":  13,
+                                         "mediumEntities":  23,
+                                         "farEntities":  4,
+                                         "veryFarEntities":  0,
+                                         "dormantEntities":  16,
+                                         "trafficAiMs":  0.9000000059604645,
+                                         "trafficNavigationMs":  0,
+                                         "trafficCollisionMs":  0.7000000029802322,
+                                         "highwayChunkBuildMs":  2.3999999910593033,
+                                         "highwayMaximumBuildMs":  9.799999997019768
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0.9000000059604645,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0.7000000029802322,
+                                        "activeDrivers":  16,
+                                        "virtualVehicles":  10,
+                                        "nearVehicles":  6,
+                                        "mediumVehicles":  6,
+                                        "farVehicles":  3,
+                                        "frozenVehicles":  1
+                                    },
+                        "highway":  {
+                                        "indexedChunks":  140,
+                                        "mainlineSections":  199,
+                                        "medianSections":  91,
+                                        "rampSections":  67,
+                                        "splineSamples":  15531,
+                                        "corridorTiles":  27219,
+                                        "railCollisionTiles":  3564,
+                                        "residentChunks":  8,
+                                        "visibleChunks":  2,
+                                        "cachedTextures":  18,
+                                        "cacheHits":  8,
+                                        "cacheMisses":  30,
+                                        "rasterizedDetails":  1043,
+                                        "estimatedBatchedDraws":  2,
+                                        "lastBuildMs":  2.3999999910593033,
+                                        "maximumBuildMs":  9.799999997019768,
+                                        "totalBuildMs":  144.29999999701977
+                                    },
+                        "loadedRegions":  {
+                                              "highway:national-1-alborz":  9
+                                          }
+                    },
+                    {
+                        "label":  "national-7-desert-transition",
+                        "frames":  {
+                                       "count":  109,
+                                       "averageMs":  18.653211009174285,
+                                       "p95Ms":  33.30000000000291,
+                                       "p99Ms":  49.799999999995634,
+                                       "maxMs":  83.09999999999854,
+                                       "over33Ms":  5,
+                                       "over50Ms":  2,
+                                       "over100Ms":  0
+                                   },
+                        "longTasks":  [
+
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  9,
+                                                          "totalMs":  67.59999999403954,
+                                                          "maxMs":  10.099999994039536
+                                                      },
+                                       "decorateTile":  {
+                                                            "calls":  1024,
+                                                            "totalMs":  1.7999999672174454,
+                                                            "maxMs":  0.10000000894069672
+                                                        }
+                                   },
+                        "profiler":  {
+                                         "fps":  59.99380831923062,
+                                         "frameMs":  16.668621845192668,
+                                         "cpuMs":  2.5586359813065602,
+                                         "gpuMs":  null,
+                                         "renderMs":  7.992509237218687,
+                                         "physicsMs":  0.8203676769973246,
+                                         "memoryMb":  286.85369968414307,
+                                         "drawCalls":  9,
+                                         "pathfindingMs":  0.0375240115307657,
+                                         "streamingMs":  0.015399161913001416,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  18,
+                                         "activeNpcs":  18,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  9,
+                                         "activeVehicles":  6,
+                                         "sleepingVehicles":  3,
+                                         "physicsBodies":  15,
+                                         "nearEntities":  1,
+                                         "mediumEntities":  24,
+                                         "farEntities":  3,
+                                         "veryFarEntities":  0,
+                                         "dormantEntities":  16,
+                                         "trafficAiMs":  0.5,
+                                         "trafficNavigationMs":  0,
+                                         "trafficCollisionMs":  0.30000001192092896,
+                                         "highwayChunkBuildMs":  4.0999999940395355,
+                                         "highwayMaximumBuildMs":  9.799999997019768
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0.5,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0.30000001192092896,
+                                        "activeDrivers":  9,
+                                        "virtualVehicles":  0,
+                                        "nearVehicles":  0,
+                                        "mediumVehicles":  6,
+                                        "farVehicles":  3,
+                                        "frozenVehicles":  0
+                                    },
+                        "highway":  {
+                                        "indexedChunks":  140,
+                                        "mainlineSections":  199,
+                                        "medianSections":  91,
+                                        "rampSections":  67,
+                                        "splineSamples":  15531,
+                                        "corridorTiles":  27219,
+                                        "railCollisionTiles":  3564,
+                                        "residentChunks":  8,
+                                        "visibleChunks":  2,
+                                        "cachedTextures":  18,
+                                        "cacheHits":  8,
+                                        "cacheMisses":  45,
+                                        "rasterizedDetails":  1004,
+                                        "estimatedBatchedDraws":  2,
+                                        "lastBuildMs":  4.0999999940395355,
+                                        "maximumBuildMs":  9.799999997019768,
+                                        "totalBuildMs":  210.70000000298023
+                                    },
+                        "loadedRegions":  {
+                                              "highway:national-7-desert":  9
+                                          }
+                    },
+                    {
+                        "label":  "national-7-desert-settled",
+                        "frames":  {
+                                       "count":  182,
+                                       "averageMs":  16.664835164835164,
+                                       "p95Ms":  16.900000000001455,
+                                       "p99Ms":  17.10000000000582,
+                                       "maxMs":  17.5,
+                                       "over33Ms":  0,
+                                       "over50Ms":  0,
+                                       "over100Ms":  0
+                                   },
+                        "longTasks":  [
+
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  0,
+                                                          "totalMs":  0,
+                                                          "maxMs":  0
+                                                      },
+                                       "decorateTile":  {
+                                                            "calls":  0,
+                                                            "totalMs":  0,
+                                                            "maxMs":  0
+                                                        }
+                                   },
+                        "profiler":  {
+                                         "fps":  60.00858691913113,
+                                         "frameMs":  16.664293096420533,
+                                         "cpuMs":  2.6243491764141265,
+                                         "gpuMs":  null,
+                                         "renderMs":  5.511149960158482,
+                                         "physicsMs":  0.8434295605418941,
+                                         "memoryMb":  288.79324436187744,
+                                         "drawCalls":  9,
+                                         "pathfindingMs":  0.004380559319919289,
+                                         "streamingMs":  0.00522013492861549,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  43,
+                                         "activeNpcs":  43,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  11,
+                                         "activeVehicles":  8,
+                                         "sleepingVehicles":  3,
+                                         "physicsBodies":  31,
+                                         "nearEntities":  1,
+                                         "mediumEntities":  51,
+                                         "farEntities":  3,
+                                         "veryFarEntities":  0,
+                                         "dormantEntities":  16,
+                                         "trafficAiMs":  0.5,
+                                         "trafficNavigationMs":  0,
+                                         "trafficCollisionMs":  0.29999999701976776,
+                                         "highwayChunkBuildMs":  4.0999999940395355,
+                                         "highwayMaximumBuildMs":  9.799999997019768
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0.5,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0.29999999701976776,
+                                        "activeDrivers":  11,
+                                        "virtualVehicles":  0,
+                                        "nearVehicles":  2,
+                                        "mediumVehicles":  4,
+                                        "farVehicles":  3,
+                                        "frozenVehicles":  2
+                                    },
+                        "highway":  {
+                                        "indexedChunks":  140,
+                                        "mainlineSections":  199,
+                                        "medianSections":  91,
+                                        "rampSections":  67,
+                                        "splineSamples":  15531,
+                                        "corridorTiles":  27219,
+                                        "railCollisionTiles":  3564,
+                                        "residentChunks":  8,
+                                        "visibleChunks":  2,
+                                        "cachedTextures":  18,
+                                        "cacheHits":  8,
+                                        "cacheMisses":  45,
+                                        "rasterizedDetails":  1004,
+                                        "estimatedBatchedDraws":  2,
+                                        "lastBuildMs":  4.0999999940395355,
+                                        "maximumBuildMs":  9.799999997019768,
+                                        "totalBuildMs":  210.70000000298023
+                                    },
+                        "loadedRegions":  {
+                                              "highway:national-7-desert":  9
+                                          }
+                    },
+                    {
+                        "label":  "national-22-caspian-transition",
+                        "frames":  {
+                                       "count":  122,
+                                       "averageMs":  18.16721311475411,
+                                       "p95Ms":  17.099999999998545,
+                                       "p99Ms":  50,
+                                       "maxMs":  66.60000000000582,
+                                       "over33Ms":  5,
+                                       "over50Ms":  1,
+                                       "over100Ms":  0
+                                   },
+                        "longTasks":  [
+
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  9,
+                                                          "totalMs":  54.099999994039536,
+                                                          "maxMs":  9
+                                                      },
+                                       "decorateTile":  {
+                                                            "calls":  1024,
+                                                            "totalMs":  1.699999988079071,
+                                                            "maxMs":  0.10000000894069672
+                                                        }
+                                   },
+                        "profiler":  {
+                                         "fps":  60.00251838268481,
+                                         "frameMs":  16.666126851859918,
+                                         "cpuMs":  2.200501431393719,
+                                         "gpuMs":  null,
+                                         "renderMs":  7.792371809637099,
+                                         "physicsMs":  0.6367745475272396,
+                                         "memoryMb":  306.7700529098511,
+                                         "drawCalls":  8,
+                                         "pathfindingMs":  0.00024358517113287569,
+                                         "streamingMs":  0.017760273256893822,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  0,
+                                         "activeNpcs":  0,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  9,
+                                         "activeVehicles":  6,
+                                         "sleepingVehicles":  3,
+                                         "physicsBodies":  6,
+                                         "nearEntities":  1,
+                                         "mediumEntities":  6,
+                                         "farEntities":  3,
+                                         "veryFarEntities":  0,
+                                         "dormantEntities":  16,
+                                         "trafficAiMs":  0.29999999701976776,
+                                         "trafficNavigationMs":  0,
+                                         "trafficCollisionMs":  0,
+                                         "highwayChunkBuildMs":  5.5999999940395355,
+                                         "highwayMaximumBuildMs":  9.799999997019768
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0.29999999701976776,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0,
+                                        "activeDrivers":  9,
+                                        "virtualVehicles":  0,
+                                        "nearVehicles":  0,
+                                        "mediumVehicles":  6,
+                                        "farVehicles":  3,
+                                        "frozenVehicles":  0
+                                    },
+                        "highway":  {
+                                        "indexedChunks":  140,
+                                        "mainlineSections":  199,
+                                        "medianSections":  91,
+                                        "rampSections":  67,
+                                        "splineSamples":  15531,
+                                        "corridorTiles":  27219,
+                                        "railCollisionTiles":  3564,
+                                        "residentChunks":  7,
+                                        "visibleChunks":  2,
+                                        "cachedTextures":  18,
+                                        "cacheHits":  8,
+                                        "cacheMisses":  58,
+                                        "rasterizedDetails":  1161,
+                                        "estimatedBatchedDraws":  2,
+                                        "lastBuildMs":  5.5999999940395355,
+                                        "maximumBuildMs":  9.799999997019768,
+                                        "totalBuildMs":  265.50000001490116
+                                    },
+                        "loadedRegions":  {
+                                              "highway:national-22-caspian":  9
+                                          }
+                    },
+                    {
+                        "label":  "national-22-caspian-settled",
+                        "frames":  {
+                                       "count":  181,
+                                       "averageMs":  16.665193370165753,
+                                       "p95Ms":  16.80000000000291,
+                                       "p99Ms":  17,
+                                       "maxMs":  17.19999999999709,
+                                       "over33Ms":  0,
+                                       "over50Ms":  0,
+                                       "over100Ms":  0
+                                   },
+                        "longTasks":  [
+
+                                      ],
+                        "probes":  {
+                                       "buildChunk":  {
+                                                          "calls":  0,
+                                                          "totalMs":  0,
+                                                          "maxMs":  0
+                                                      },
+                                       "decorateTile":  {
+                                                            "calls":  0,
+                                                            "totalMs":  0,
+                                                            "maxMs":  0
+                                                        }
+                                   },
+                        "profiler":  {
+                                         "fps":  60.01659825419951,
+                                         "frameMs":  16.662065768313205,
+                                         "cpuMs":  2.0928344255901288,
+                                         "gpuMs":  null,
+                                         "renderMs":  6.337047718830779,
+                                         "physicsMs":  0.6041096681754712,
+                                         "memoryMb":  298.89187145233154,
+                                         "drawCalls":  9,
+                                         "pathfindingMs":  1.5057193312418832E-07,
+                                         "streamingMs":  0.014722991656095447,
+                                         "loadedChunks":  9,
+                                         "loadedNpcs":  0,
+                                         "activeNpcs":  0,
+                                         "sleepingNpcs":  0,
+                                         "loadedVehicles":  11,
+                                         "activeVehicles":  7,
+                                         "sleepingVehicles":  4,
+                                         "physicsBodies":  7,
+                                         "nearEntities":  1,
+                                         "mediumEntities":  7,
+                                         "farEntities":  4,
+                                         "veryFarEntities":  0,
+                                         "dormantEntities":  16,
+                                         "trafficAiMs":  0.29999999701976776,
+                                         "trafficNavigationMs":  0,
+                                         "trafficCollisionMs":  0.10000000894069672,
+                                         "highwayChunkBuildMs":  5.5999999940395355,
+                                         "highwayMaximumBuildMs":  9.799999997019768
+                                     },
+                        "traffic":  {
+                                        "schedulerCpuMs":  0.29999999701976776,
+                                        "navigationMs":  0,
+                                        "collisionMs":  0.10000000894069672,
+                                        "activeDrivers":  11,
+                                        "virtualVehicles":  0,
+                                        "nearVehicles":  3,
+                                        "mediumVehicles":  3,
+                                        "farVehicles":  4,
+                                        "frozenVehicles":  1
+                                    },
+                        "highway":  {
+                                        "indexedChunks":  140,
+                                        "mainlineSections":  199,
+                                        "medianSections":  91,
+                                        "rampSections":  67,
+                                        "splineSamples":  15531,
+                                        "corridorTiles":  27219,
+                                        "railCollisionTiles":  3564,
+                                        "residentChunks":  7,
+                                        "visibleChunks":  2,
+                                        "cachedTextures":  18,
+                                        "cacheHits":  8,
+                                        "cacheMisses":  58,
+                                        "rasterizedDetails":  1161,
+                                        "estimatedBatchedDraws":  2,
+                                        "lastBuildMs":  5.5999999940395355,
+                                        "maximumBuildMs":  9.799999997019768,
+                                        "totalBuildMs":  265.50000001490116
+                                    },
+                        "loadedRegions":  {
+                                              "highway:national-22-caspian":  9
+                                          }
+                    }
+                ],
+    "browserErrors":  "WrongDocumentError: The root document of this element is not valid for pointer lock."
+}

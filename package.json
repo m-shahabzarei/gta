@@ -1,0 +1,42 @@
+{
+  "name": "pixel-city-open-world",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A production-quality 2D open-world game inspired by classic GTA 1 and GTA 2, built with TypeScript, Phaser 3 and Vite.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\"",
+    "validate:traffic": "node scripts/run-traffic-validation.mjs",
+    "validate:police": "node scripts/run-police-validation.mjs",
+    "validate:gameplay": "node scripts/run-gameplay-systems-validation.mjs",
+    "validate:highways": "node scripts/run-highway-validation.mjs",
+    "validate:architecture": "node scripts/run-architecture-validation.mjs",
+    "validate:mobile": "node scripts/run-mobile-controls-validation.mjs",
+    "smoke:mobile": "powershell -ExecutionPolicy Bypass -File scripts/mobile-browser-smoke.ps1",
+    "profile:highways": "powershell -ExecutionPolicy Bypass -File scripts/highway-performance.ps1",
+    "lint:fix": "eslint \"src/**/*.ts\" --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\""
+  },
+  "dependencies": {
+    "phaser": "^3.80.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@typescript-eslint/eslint-plugin": "^7.7.0",
+    "@typescript-eslint/parser": "^7.7.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.2.5",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.10"
+  }
+}

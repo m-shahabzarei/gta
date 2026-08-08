@@ -1,0 +1,10 @@
+{
+  "_comment": "Declarative asset manifest consumed by ResourceManager. Phase 1 ships no binary art, so every list is empty and the game boots on procedural placeholder textures. Phase 2 adds entries here (pointing at files under public/assets/**) without changing any code.",
+  "images": [],
+  "spritesheets": [],
+  "atlases": [],
+  "aseprite": [],
+  "audio": [],
+  "tilemaps": [],
+  "bitmapFonts": []
+}
