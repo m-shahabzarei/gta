@@ -6,6 +6,10 @@ dist/
 dist-ssr/
 *.local
 
+# Android / PWABuilder signing secrets
+*.keystore
+apk/signing-key-info.txt
+
 # Logs
 logs/
 *.log
