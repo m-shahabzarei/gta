@@ -266,13 +266,19 @@ Object.defineProperty(Element.prototype, 'requestPointerLock', {
 (() => {
   const managers = window.game.registry.managers;
   const world = managers.find(manager => manager.key === 'WorldManager');
+  const minimap = window.game.phaser.scene.getScene('UIScene')?.minimap ?? null;
   return {
     buildings: world.map.majorBuildings,
     hospitals: world.map.hospitals,
     policeStations: world.map.policeStations,
     interiorCount: world.map.buildingInteriors.length,
     serviceLandmarks: world.map.landmarks.filter(item => item.kind === 'hospital' || item.kind === 'police'),
-    minimapReady: Boolean(window.game.phaser.scene.getScene('UIScene')?.minimap?.hasMap)
+    minimap: minimap?.debugSnapshot?.() ?? {
+      hasMap: Boolean(minimap?.hasMap),
+      majorPoiCount: world.map.majorBuildings.length,
+      scale: 0,
+      viewCenter: { x: 0, y: 0 }
+    }
   };
 })()
 '@
@@ -281,7 +287,8 @@ Object.defineProperty(Element.prototype, 'requestPointerLock', {
     throw 'Compatibility service projections do not contain 4 hospitals and 4 police stations.'
   }
   if ($registry.serviceLandmarks.Count -ne 0) { throw 'Duplicate police/hospital landmarks remain.' }
-  if (-not $registry.minimapReady) { throw 'Minimap did not consume the generated map.' }
+  if (-not $registry.minimap.hasMap) { throw 'Minimap did not consume the generated map.' }
+  if ($registry.minimap.majorPoiCount -ne 8) { throw "Expected 8 minimap service POIs, got $($registry.minimap.majorPoiCount)." }
 
   $results = @()
   $settledExterior = $null
@@ -444,10 +451,87 @@ Object.defineProperty(Element.prototype, 'requestPointerLock', {
     if ($PerformanceOnly) { break }
   }
 
+  $mapPoiAudit = $null
   if (-not $PerformanceOnly) {
     Invoke-Cdp $socket 'Input.dispatchKeyEvent' @{ type = 'keyDown'; key = 'm'; code = 'KeyM'; windowsVirtualKeyCode = 77 } | Out-Null
     Invoke-Cdp $socket 'Input.dispatchKeyEvent' @{ type = 'keyUp'; key = 'm'; code = 'KeyM'; windowsVirtualKeyCode = 77 } | Out-Null
-    Start-Sleep -Seconds 2
+    $mapReady = $false
+    for ($attempt = 0; $attempt -lt 40 -and -not $mapReady; $attempt++) {
+      Start-Sleep -Milliseconds 250
+      $mapReady = Evaluate-Cdp $socket @'
+(() => {
+  const scene = window.game.phaser.scene.getScene('MapScene');
+  return Boolean(window.game.phaser.scene.isActive('MapScene') && scene.debugMajorPoiSnapshot?.().renderedPoiCount === 8);
+})()
+'@
+    }
+    if (-not $mapReady) { throw 'World map POIs did not become ready.' }
+    $mapPoiAudit = Evaluate-Cdp $socket @'
+(() => {
+  const scene = window.game.phaser.scene.getScene('MapScene');
+  const snapshot = scene.debugMajorPoiSnapshot();
+  const renderedPois = snapshot.renderedPois;
+  return {
+    before: snapshot,
+    firstPoi: renderedPois[0] ?? null,
+    hospitalCount: renderedPois.filter(item => item.type === 'hospital').length,
+    policeCount: renderedPois.filter(item => item.type === 'police-station').length,
+    labelsOk: renderedPois.every(item =>
+      typeof item.label === 'string' &&
+      item.label.length > 0 &&
+      (item.label.includes('Hospital') || item.label.includes('Police Station')) &&
+      (item.label.includes('Tehran') || item.label.includes('Yazd') || item.label.includes('Gilan'))
+    ),
+    iconsOk: renderedPois.every(item =>
+      item.type === 'hospital'
+        ? item.mapIcon === 'medical-cross' && item.minimapIcon === 'medical-cross'
+        : item.mapIcon === 'police-badge' && item.minimapIcon === 'police-badge'
+    ),
+    allInsideView: renderedPois.every(item => item.insideView === true)
+  };
+})()
+'@
+    if (-not $mapPoiAudit.firstPoi) { throw 'No rendered full-map POI available to click.' }
+    $clickX = [int][Math]::Round([double]$mapPoiAudit.firstPoi.screen.x)
+    $clickY = [int][Math]::Round([double]$mapPoiAudit.firstPoi.screen.y)
+    Invoke-Cdp $socket 'Input.dispatchMouseEvent' @{ type = 'mouseMoved'; x = $clickX; y = $clickY; button = 'none' } | Out-Null
+    Start-Sleep -Milliseconds 150
+    Invoke-Cdp $socket 'Input.dispatchMouseEvent' @{ type = 'mousePressed'; x = $clickX; y = $clickY; button = 'left'; clickCount = 1 } | Out-Null
+    Invoke-Cdp $socket 'Input.dispatchMouseEvent' @{ type = 'mouseReleased'; x = $clickX; y = $clickY; button = 'left'; clickCount = 1 } | Out-Null
+    Start-Sleep -Milliseconds 500
+    $mapPoiAudit = Evaluate-Cdp $socket @'
+(() => {
+  const scene = window.game.phaser.scene.getScene('MapScene');
+  const snapshot = scene.debugMajorPoiSnapshot();
+  const selected = snapshot.renderedPois.find(item => item.id === snapshot.selectedId) ?? null;
+  const waypointMatches = Boolean(
+    selected &&
+    snapshot.waypoint &&
+    Math.abs(snapshot.waypoint.x - selected.entrancePosition.x) < 0.5 &&
+    Math.abs(snapshot.waypoint.y - selected.entrancePosition.y) < 0.5
+  );
+  return {
+    before: null,
+    after: snapshot,
+    selected,
+    waypointMatches,
+    hospitalCount: snapshot.renderedPois.filter(item => item.type === 'hospital').length,
+    policeCount: snapshot.renderedPois.filter(item => item.type === 'police-station').length,
+    labelsOk: snapshot.renderedPois.every(item =>
+      typeof item.label === 'string' &&
+      item.label.length > 0 &&
+      (item.label.includes('Hospital') || item.label.includes('Police Station')) &&
+      (item.label.includes('Tehran') || item.label.includes('Yazd') || item.label.includes('Gilan'))
+    ),
+    iconsOk: snapshot.renderedPois.every(item =>
+      item.type === 'hospital'
+        ? item.mapIcon === 'medical-cross' && item.minimapIcon === 'medical-cross'
+        : item.mapIcon === 'police-badge' && item.minimapIcon === 'police-badge'
+    ),
+    allInsideView: snapshot.renderedPois.every(item => item.insideView === true)
+  };
+})()
+'@
     Save-Capture $socket (Join-Path $output 'major-buildings-world-map.png')
   }
 
@@ -468,6 +552,7 @@ Object.defineProperty(Element.prototype, 'requestPointerLock', {
       } else { 0 }
     }
     minimumFps = ($results | ForEach-Object { @($_.exterior.fps, $_.interior.fps) } | Measure-Object -Minimum).Minimum
+    mapPoiAudit = $mapPoiAudit
     browserErrors = $errors
   }
   $report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $output 'report.json') -Encoding utf8
@@ -488,6 +573,21 @@ Object.defineProperty(Element.prototype, 'requestPointerLock', {
     if ($location.exit.roofOpen) { $failures += "$($location.id): roof stayed open after exit" }
   }
   if ($errors.Count -gt 0) { $failures += "Browser errors: $($errors -join '; ')" }
+  if (-not $PerformanceOnly) {
+    if (-not $mapPoiAudit) {
+      $failures += 'Map POI audit did not run'
+    } else {
+      if ($mapPoiAudit.after.poiCount -ne 8) { $failures += "Full map POI source count is $($mapPoiAudit.after.poiCount), expected 8" }
+      if ($mapPoiAudit.after.renderedPoiCount -ne 8) { $failures += "Full map rendered POI count is $($mapPoiAudit.after.renderedPoiCount), expected 8" }
+      if ($mapPoiAudit.hospitalCount -ne 4) { $failures += "Full map hospital POI count is $($mapPoiAudit.hospitalCount), expected 4" }
+      if ($mapPoiAudit.policeCount -ne 4) { $failures += "Full map police POI count is $($mapPoiAudit.policeCount), expected 4" }
+      if (-not $mapPoiAudit.labelsOk) { $failures += 'Full map POI labels are incomplete' }
+      if (-not $mapPoiAudit.iconsOk) { $failures += 'Full map POI icons are incorrect' }
+      if (-not $mapPoiAudit.allInsideView) { $failures += 'At least one full map POI is not visible at maximum zoom-out' }
+      if (-not $mapPoiAudit.selected) { $failures += 'Clicking a full map POI did not select it' }
+      if (-not $mapPoiAudit.waypointMatches) { $failures += 'Clicking a full map POI did not set the existing waypoint to the building entrance' }
+    }
+  }
   if ($failures.Count -gt 0) { throw ($failures -join [Environment]::NewLine) }
 
   [ordered]@{

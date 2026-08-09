@@ -10,7 +10,14 @@ import { SceneKeys } from '@/config/SceneKeys';
 import { ServiceKeys } from '@/config/ServiceKeys';
 import { COLORS, GAME_HEIGHT, GAME_WIDTH, TILE_SIZE } from '@/config/Constants';
 import { ServiceLocator } from '@/core/ServiceLocator';
-import { TileType, type MapData, type WorldCity, type WorldLandmark } from '@/gameplay/types';
+import {
+  TileType,
+  type MajorBuildingDefinition,
+  type MajorBuildingIcon,
+  type MapData,
+  type WorldCity,
+  type WorldLandmark,
+} from '@/gameplay/types';
 import type { Vector2 } from '@/core/types';
 import { Button, Panel } from '@/ui/components';
 import type { GameManager } from '@/managers/GameManager';
@@ -19,7 +26,10 @@ import type { WorldManager } from '@/systems/WorldManager';
 import type { MissionSystem } from '@/systems/MissionSystem';
 import type { MobilePlatform } from '@/platform';
 import { getObjectiveTarget, getWaypoint, setWaypoint } from '@/gameplay/WorldMapState';
-import { paintMajorBuildingIcon } from '@/ui/hud/MajorBuildingIconPainter';
+import {
+  majorBuildingIconHitRadius,
+  paintMajorBuildingIcon,
+} from '@/ui/hud/MajorBuildingIconPainter';
 
 interface MapRect {
   x: number;
@@ -30,7 +40,14 @@ interface MapRect {
 
 interface LegendItem {
   label: string;
-  color: number;
+  color?: number;
+  icon?: MajorBuildingIcon;
+}
+
+interface MajorPoiScreenTarget {
+  building: MajorBuildingDefinition;
+  screen: Vector2;
+  hitRadius: number;
 }
 
 const VIEW: MapRect = {
@@ -52,6 +69,9 @@ const CLICK_DRAG_THRESHOLD = 6;
 const PLAYER_COLOR = 0x7dd3fc;
 const WAYPOINT_COLOR = 0x22d3ee;
 const OBJECTIVE_COLOR = COLORS.ACCENT;
+const FULL_MAP_POI_SIZE = 13;
+const POI_CARD_WIDTH = 268;
+const POI_CARD_HEIGHT = 118;
 
 export class MapScene extends Phaser.Scene {
   private mobile = false;
@@ -65,10 +85,19 @@ export class MapScene extends Phaser.Scene {
   private routeLayer: Phaser.GameObjects.Graphics | null = null;
   private staticMarkerLayer: Phaser.GameObjects.Graphics | null = null;
   private dynamicMarkerLayer: Phaser.GameObjects.Graphics | null = null;
+  private poiLayer: Phaser.GameObjects.Graphics | null = null;
+  private playerOverlayLayer: Phaser.GameObjects.Graphics | null = null;
+  private poiInfoPanel: Phaser.GameObjects.Graphics | null = null;
+  private poiInfoTitleText: Phaser.GameObjects.Text | null = null;
+  private poiInfoBodyText: Phaser.GameObjects.Text | null = null;
+  private poiHoverLabel: Phaser.GameObjects.Text | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
   private cityStatusText: Phaser.GameObjects.Text | null = null;
   private readonly cityLabels: Phaser.GameObjects.Text[] = [];
+  private readonly poiTargets: MajorPoiScreenTarget[] = [];
   private uiZones: Phaser.Geom.Rectangle[] = [];
+  private hoveredPoiId: string | null = null;
+  private selectedPoiId: string | null = null;
 
   private zoom = 1;
   private baseScale = 1;
@@ -88,6 +117,9 @@ export class MapScene extends Phaser.Scene {
   }
 
   public create(): void {
+    this.hoveredPoiId = null;
+    this.selectedPoiId = null;
+    this.poiTargets.length = 0;
     const platform = ServiceLocator.tryResolve<MobilePlatform>(ServiceKeys.Platform);
     this.mobile = platform?.isMobile ?? false;
     if (platform?.isMobile) {
@@ -124,6 +156,52 @@ export class MapScene extends Phaser.Scene {
     this.refreshMarkers();
   }
 
+  public debugMajorPoiSnapshot(): {
+    poiCount: number;
+    renderedPoiCount: number;
+    selectedId: string | null;
+    hoveredId: string | null;
+    waypoint: Vector2 | null;
+    viewRect: MapRect;
+    renderedPois: Array<{
+      id: string;
+      type: MajorBuildingDefinition['type'];
+      city: MajorBuildingDefinition['city'];
+      mapIcon: MajorBuildingIcon;
+      minimapIcon: MajorBuildingIcon;
+      label: string;
+      screen: Vector2;
+      worldPosition: Vector2;
+      entrancePosition: Vector2;
+      hitRadius: number;
+      insideView: boolean;
+    }>;
+  } {
+    const map = this.mapData;
+    const renderedPois = this.poiTargets.map(({ building, screen, hitRadius }) => ({
+      id: building.id,
+      type: building.type,
+      city: building.city,
+      mapIcon: building.mapIcon,
+      minimapIcon: building.minimapIcon,
+      label: this.poiLabel(building),
+      screen: { ...screen },
+      worldPosition: { ...building.worldPosition },
+      entrancePosition: { ...building.entrancePosition },
+      hitRadius,
+      insideView: this.isInView(screen.x, screen.y),
+    }));
+    return {
+      poiCount: map?.majorBuildings.length ?? 0,
+      renderedPoiCount: renderedPois.length,
+      selectedId: this.selectedPoiId,
+      hoveredId: this.hoveredPoiId,
+      waypoint: getWaypoint(),
+      viewRect: { ...this.viewRect },
+      renderedPois,
+    };
+  }
+
   private buildChrome(): void {
     const topBarHeight = this.mobile ? 94 : TOP_BAR_HEIGHT;
     this.add.rectangle(0, 0, this.viewportWidth, this.viewportHeight, 0x06070d, 0.98).setOrigin(0);
@@ -137,7 +215,14 @@ export class MapScene extends Phaser.Scene {
     });
 
     this.add
-      .rectangle(this.viewRect.x, this.viewRect.y, this.viewRect.width, this.viewRect.height, 0x0a0d14, 1)
+      .rectangle(
+        this.viewRect.x,
+        this.viewRect.y,
+        this.viewRect.width,
+        this.viewRect.height,
+        0x0a0d14,
+        1,
+      )
       .setOrigin(0)
       .setStrokeStyle(2, COLORS.UI_BORDER, 1);
 
@@ -170,6 +255,39 @@ export class MapScene extends Phaser.Scene {
       color: this.hex(COLORS.ACCENT),
       wordWrap: { width: PANEL_WIDTH - 32 },
     });
+
+    const poiPanel = this.poiPanelRect();
+    this.poiInfoPanel = this.add.graphics().setDepth(12).setVisible(false);
+    this.poiInfoTitleText = this.add
+      .text(poiPanel.x + 14, poiPanel.y + 12, '', {
+        fontFamily: 'Courier New',
+        fontSize: '14px',
+        fontStyle: 'bold',
+        color: this.hex(COLORS.TEXT),
+      })
+      .setDepth(13)
+      .setVisible(false);
+    this.poiInfoBodyText = this.add
+      .text(poiPanel.x + 14, poiPanel.y + 36, '', {
+        fontFamily: 'Courier New',
+        fontSize: '12px',
+        color: this.hex(0xcbd5e1),
+        lineSpacing: 3,
+        wordWrap: { width: POI_CARD_WIDTH - 28 },
+      })
+      .setDepth(13)
+      .setVisible(false);
+    this.poiHoverLabel = this.add
+      .text(0, 0, '', {
+        fontFamily: 'Courier New',
+        fontSize: '12px',
+        fontStyle: 'bold',
+        color: this.hex(COLORS.TEXT),
+        backgroundColor: 'rgba(7, 10, 18, 0.92)',
+        padding: { x: 6, y: 4 },
+      })
+      .setDepth(14)
+      .setVisible(false);
   }
 
   private buildLegend(): void {
@@ -180,6 +298,7 @@ export class MapScene extends Phaser.Scene {
       color: this.hex(COLORS.TEXT),
     });
 
+    const legendIcons = this.add.graphics();
     const items: LegendItem[] = [
       { label: 'Player', color: PLAYER_COLOR },
       { label: 'Mission', color: OBJECTIVE_COLOR },
@@ -187,15 +306,21 @@ export class MapScene extends Phaser.Scene {
       { label: 'City Area', color: 0xf59e0b },
       { label: 'Highway Route', color: 0xf8d36e },
       { label: 'Airport', color: 0x94a3b8 },
-      { label: 'Hospital', color: COLORS.HEALTH },
-      { label: 'Police', color: 0x3a6cff },
+      { label: 'Hospital', icon: 'medical-cross' },
+      { label: 'Police Station', icon: 'police-badge' },
       { label: 'Services / Shops', color: 0x8b5cf6 },
       { label: 'Nature / View', color: 0x4cbf87 },
     ];
 
     items.forEach((item, index) => {
       const y = PANEL_Y + 58 + index * 25;
-      this.add.circle(PANEL_X + 26, y + 7, 5, item.color, 1).setStrokeStyle(2, 0xffffff, 0.75);
+      if (item.icon) {
+        paintMajorBuildingIcon(legendIcons, item.icon, PANEL_X + 26, y + 7, 8);
+      } else {
+        this.add
+          .circle(PANEL_X + 26, y + 7, 5, item.color ?? COLORS.TEXT, 1)
+          .setStrokeStyle(2, 0xffffff, 0.75);
+      }
       this.add.text(PANEL_X + 42, y, item.label, {
         fontFamily: 'Courier New',
         fontSize: '12px',
@@ -253,6 +378,8 @@ export class MapScene extends Phaser.Scene {
     this.routeLayer = this.add.graphics();
     this.staticMarkerLayer = this.add.graphics();
     this.dynamicMarkerLayer = this.add.graphics();
+    this.poiLayer = this.add.graphics().setDepth(6);
+    this.playerOverlayLayer = this.add.graphics().setDepth(7);
     this.content.add([
       this.tileLayer,
       this.cityLayer,
@@ -301,15 +428,6 @@ export class MapScene extends Phaser.Scene {
         this.colorForLandmark(landmark),
         3.2 / this.zoom,
         landmark.kind === 'airport' || landmark.kind === 'bridge' ? 'diamond' : 'circle',
-      );
-    }
-    for (const building of map.majorBuildings) {
-      paintMajorBuildingIcon(
-        g,
-        building.mapIcon,
-        building.worldPosition.x / TILE_SIZE,
-        building.worldPosition.y / TILE_SIZE,
-        (building.size === 'metropolitan' ? 4.6 : 4) / this.zoom,
       );
     }
   }
@@ -382,9 +500,7 @@ export class MapScene extends Phaser.Scene {
     }
 
     const player = ServiceLocator.tryResolve<PlayerController>(ServiceKeys.Player)?.playerPosition;
-    if (player) {
-      this.drawMarker(g, player, PLAYER_COLOR, 4.2 / this.zoom, 'player');
-    }
+    this.redrawPlayerOverlay(player ?? null);
     this.drawRoutePreview(player ?? null, waypoint);
     this.updateCityStatus(player ?? null);
   }
@@ -486,10 +602,245 @@ export class MapScene extends Phaser.Scene {
     g.strokeCircle(x, y, radius);
   }
 
+  private redrawPoiMarkers(): void {
+    const map = this.mapData;
+    const g = this.poiLayer;
+    if (!map || !g) return;
+    g.clear();
+    this.poiTargets.length = 0;
+
+    for (const building of map.majorBuildings) {
+      const screen = this.worldToMapScreen(building.worldPosition);
+      const hitRadius = majorBuildingIconHitRadius(FULL_MAP_POI_SIZE);
+      if (!this.isInViewWithMargin(screen.x, screen.y, hitRadius + 2)) {
+        continue;
+      }
+
+      this.poiTargets.push({ building, screen, hitRadius });
+      const selected = this.selectedPoiId === building.id;
+      const hovered = this.hoveredPoiId === building.id;
+      const color = this.poiColor(building);
+      const x = Math.round(screen.x);
+      const y = Math.round(screen.y);
+
+      g.fillStyle(0x050712, selected ? 0.78 : hovered ? 0.58 : 0.36);
+      g.fillRect(x - hitRadius, y - hitRadius, hitRadius * 2, hitRadius * 2);
+
+      if (selected || hovered) {
+        g.lineStyle(selected ? 3 : 2, selected ? COLORS.ACCENT : color, 1);
+        g.strokeRect(x - hitRadius - 2, y - hitRadius - 2, hitRadius * 2 + 4, hitRadius * 2 + 4);
+      }
+
+      paintMajorBuildingIcon(g, building.mapIcon, x, y, FULL_MAP_POI_SIZE);
+    }
+
+    this.updatePoiInfoPanel();
+    this.updatePoiHoverLabel();
+  }
+
+  private redrawPlayerOverlay(player: Vector2 | null): void {
+    const g = this.playerOverlayLayer;
+    if (!g) return;
+    g.clear();
+    if (!player) return;
+    const screen = this.worldToMapScreen(player);
+    if (!this.isInViewWithMargin(screen.x, screen.y, 10)) return;
+    const x = Math.round(screen.x);
+    const y = Math.round(screen.y);
+    const radius = 7;
+
+    g.fillStyle(0x050712, 0.78);
+    g.fillRect(x - 9, y - 9, 18, 18);
+    g.lineStyle(2, 0xffffff, 0.95);
+    g.fillStyle(COLORS.ACCENT, 1);
+    g.beginPath();
+    g.moveTo(x, y - radius);
+    g.lineTo(x + radius, y);
+    g.lineTo(x, y + radius);
+    g.lineTo(x - radius, y);
+    g.closePath();
+    g.fillPath();
+    g.strokePath();
+    g.lineStyle(1, PLAYER_COLOR, 0.75);
+    g.strokeRect(x - 11, y - 11, 22, 22);
+  }
+
+  private worldToMapScreen(point: Vector2): Vector2 {
+    const map = this.mapData;
+    const tileSize = map?.tileSize ?? TILE_SIZE;
+    const scale = this.scalePerTile();
+    return {
+      x: this.offsetX + (point.x / tileSize) * scale,
+      y: this.offsetY + (point.y / tileSize) * scale,
+    };
+  }
+
+  private findPoiAtScreen(x: number, y: number): MajorPoiScreenTarget | null {
+    let best: MajorPoiScreenTarget | null = null;
+    let bestDistanceSq = Infinity;
+    for (const target of this.poiTargets) {
+      const dx = target.screen.x - x;
+      const dy = target.screen.y - y;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq > target.hitRadius * target.hitRadius || distanceSq >= bestDistanceSq) {
+        continue;
+      }
+      best = target;
+      bestDistanceSq = distanceSq;
+    }
+    return best;
+  }
+
+  private updatePoiHover(x: number, y: number): void {
+    const target = this.isInView(x, y) ? this.findPoiAtScreen(x, y) : null;
+    this.setHoveredPoi(target?.building ?? null);
+  }
+
+  private setHoveredPoi(building: MajorBuildingDefinition | null): void {
+    const nextId = building?.id ?? null;
+    if (this.hoveredPoiId === nextId) {
+      this.updatePoiHoverLabel();
+      return;
+    }
+    this.hoveredPoiId = nextId;
+    this.redrawPoiMarkers();
+  }
+
+  private selectPoi(building: MajorBuildingDefinition): void {
+    this.selectedPoiId = building.id;
+    setWaypoint(building.entrancePosition);
+    this.showStatus(`${this.poiTypeLabel(building)} waypoint set`);
+    this.redrawPoiMarkers();
+    this.refreshMarkers();
+  }
+
+  private updatePoiInfoPanel(): void {
+    const panel = this.poiInfoPanel;
+    const title = this.poiInfoTitleText;
+    const body = this.poiInfoBodyText;
+    if (!panel || !title || !body) return;
+
+    const building = this.buildingById(this.hoveredPoiId) ?? this.buildingById(this.selectedPoiId);
+    if (!building) {
+      panel.clear();
+      panel.setVisible(false);
+      title.setVisible(false);
+      body.setVisible(false);
+      return;
+    }
+
+    const rect = this.poiPanelRect();
+    const selected = this.selectedPoiId === building.id;
+    const color = this.poiColor(building);
+
+    panel.clear();
+    panel.setVisible(true);
+    panel.fillStyle(0x070a12, 0.96);
+    panel.fillRect(rect.x, rect.y, rect.width, rect.height);
+    panel.lineStyle(2, color, 0.95);
+    panel.strokeRect(rect.x, rect.y, rect.width, rect.height);
+    panel.fillStyle(color, 0.95);
+    panel.fillRect(rect.x, rect.y, 5, rect.height);
+
+    title
+      .setVisible(true)
+      .setPosition(rect.x + 14, rect.y + 12)
+      .setText(this.poiTypeLabel(building).toUpperCase())
+      .setColor(this.hex(color));
+    body
+      .setVisible(true)
+      .setPosition(rect.x + 14, rect.y + 36)
+      .setText(
+        [
+          this.poiLabel(building),
+          building.name,
+          `Distance: ${this.distanceLabel(building.entrancePosition)}`,
+          selected ? 'Waypoint: entrance set' : 'Click: set waypoint',
+        ].join('\n'),
+      );
+  }
+
+  private updatePoiHoverLabel(): void {
+    const label = this.poiHoverLabel;
+    if (!label) return;
+    const target = this.poiTargets.find((entry) => entry.building.id === this.hoveredPoiId);
+    if (!target) {
+      label.setVisible(false);
+      return;
+    }
+    const text = this.poiLabel(target.building);
+    label.setText(text);
+    label.setColor(this.hex(COLORS.TEXT));
+    label.setVisible(true);
+
+    const labelWidth = label.width;
+    const labelHeight = label.height;
+    const x = Phaser.Math.Clamp(
+      target.screen.x + 13,
+      this.viewRect.x + 6,
+      this.viewRect.x + this.viewRect.width - labelWidth - 6,
+    );
+    const y = Phaser.Math.Clamp(
+      target.screen.y - labelHeight - 12,
+      this.viewRect.y + 6,
+      this.viewRect.y + this.viewRect.height - labelHeight - 6,
+    );
+    label.setPosition(Math.round(x), Math.round(y));
+  }
+
+  private buildingById(id: string | null): MajorBuildingDefinition | null {
+    if (!id || !this.mapData) return null;
+    return this.mapData.majorBuildings.find((building) => building.id === id) ?? null;
+  }
+
+  private poiPanelRect(): MapRect {
+    return {
+      x: Math.round(this.viewRect.x + this.viewRect.width - POI_CARD_WIDTH - 16),
+      y: Math.round(this.viewRect.y + 16),
+      width: POI_CARD_WIDTH,
+      height: POI_CARD_HEIGHT,
+    };
+  }
+
+  private poiLabel(building: MajorBuildingDefinition): string {
+    return `${this.poiTypeLabel(building)} — ${this.cityLabel(building.city)}`;
+  }
+
+  private poiTypeLabel(building: MajorBuildingDefinition): string {
+    return building.type === 'hospital' ? 'Hospital' : 'Police Station';
+  }
+
+  private cityLabel(cityId: MajorBuildingDefinition['city']): string {
+    const city = this.mapData?.cities.find((entry) => entry.id === cityId);
+    if (city) {
+      return city.name.charAt(0) + city.name.slice(1).toLowerCase();
+    }
+    return cityId.charAt(0).toUpperCase() + cityId.slice(1);
+  }
+
+  private poiColor(building: MajorBuildingDefinition): number {
+    return building.type === 'hospital' ? COLORS.HEALTH : 0x3a6cff;
+  }
+
+  private distanceLabel(point: Vector2): string {
+    const player = ServiceLocator.tryResolve<PlayerController>(ServiceKeys.Player)?.playerPosition;
+    if (!player) return '--';
+    const meters = Math.max(
+      1,
+      Math.round(
+        (Phaser.Math.Distance.Between(player.x, player.y, point.x, point.y) / TILE_SIZE) * 5,
+      ),
+    );
+    return `${meters.toLocaleString()}m`;
+  }
+
   private fitWholeCity(): void {
     const map = this.mapData;
     if (!map) return;
-    this.baseScale = Math.min(this.viewRect.width / map.widthTiles, this.viewRect.height / map.heightTiles);
+    this.baseScale = Math.min(
+      this.viewRect.width / map.widthTiles,
+      this.viewRect.height / map.heightTiles,
+    );
     this.zoom = 1;
     this.offsetX = this.viewRect.x + (this.viewRect.width - map.widthTiles * this.baseScale) / 2;
     this.offsetY = this.viewRect.y + (this.viewRect.height - map.heightTiles * this.baseScale) / 2;
@@ -532,6 +883,7 @@ export class MapScene extends Phaser.Scene {
     if (!pointer.leftButtonDown() || !this.isInView(pointer.x, pointer.y)) {
       return;
     }
+    this.setHoveredPoi(null);
     this.dragging = true;
     this.dragMoved = false;
     this.dragPointerId = pointer.id;
@@ -542,7 +894,11 @@ export class MapScene extends Phaser.Scene {
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer): void {
-    if (!this.dragging || pointer.id !== this.dragPointerId) {
+    if (!this.dragging) {
+      this.updatePoiHover(pointer.x, pointer.y);
+      return;
+    }
+    if (pointer.id !== this.dragPointerId) {
       return;
     }
     const dx = pointer.x - this.dragStartX;
@@ -564,8 +920,14 @@ export class MapScene extends Phaser.Scene {
     this.dragging = false;
     this.dragPointerId = -1;
     if (shouldPlace) {
-      this.placeWaypoint(pointer.x, pointer.y);
+      const poi = this.findPoiAtScreen(pointer.x, pointer.y);
+      if (poi) {
+        this.selectPoi(poi.building);
+      } else {
+        this.placeWaypoint(pointer.x, pointer.y);
+      }
     }
+    this.updatePoiHover(pointer.x, pointer.y);
   }
 
   private onWheel(
@@ -578,6 +940,7 @@ export class MapScene extends Phaser.Scene {
       return;
     }
     this.zoomAt(dy < 0 ? ZOOM_STEP : 1 / ZOOM_STEP, { x: pointer.x, y: pointer.y });
+    this.updatePoiHover(pointer.x, pointer.y);
   }
 
   private zoomAt(factor: number, screen: Vector2): void {
@@ -627,12 +990,16 @@ export class MapScene extends Phaser.Scene {
       y: Phaser.Math.Clamp(mapPoint.y, 0, map.heightTiles) * map.tileSize,
     };
     setWaypoint(worldPoint);
+    this.selectedPoiId = null;
+    this.updatePoiInfoPanel();
     this.showStatus('Waypoint set');
     this.refreshMarkers();
   }
 
   private clearWaypoint(): void {
     setWaypoint(null);
+    this.selectedPoiId = null;
+    this.updatePoiInfoPanel();
     this.showStatus('Waypoint cleared');
     this.refreshMarkers();
   }
@@ -661,6 +1028,10 @@ export class MapScene extends Phaser.Scene {
     const scale = this.scalePerTile();
     content.setPosition(this.offsetX, this.offsetY);
     content.setScale(scale);
+    this.redrawPoiMarkers();
+    this.redrawPlayerOverlay(
+      ServiceLocator.tryResolve<PlayerController>(ServiceKeys.Player)?.playerPosition ?? null,
+    );
   }
 
   private constrainView(): void {
@@ -669,8 +1040,18 @@ export class MapScene extends Phaser.Scene {
     const width = map.widthTiles * this.scalePerTile();
     const height = map.heightTiles * this.scalePerTile();
 
-    this.offsetX = this.clampOffset(this.offsetX, this.viewRect.x, this.viewRect.x + this.viewRect.width, width);
-    this.offsetY = this.clampOffset(this.offsetY, this.viewRect.y, this.viewRect.y + this.viewRect.height, height);
+    this.offsetX = this.clampOffset(
+      this.offsetX,
+      this.viewRect.x,
+      this.viewRect.x + this.viewRect.width,
+      width,
+    );
+    this.offsetY = this.clampOffset(
+      this.offsetY,
+      this.viewRect.y,
+      this.viewRect.y + this.viewRect.height,
+      height,
+    );
   }
 
   private clampOffset(offset: number, minEdge: number, maxEdge: number, size: number): number {
@@ -700,11 +1081,34 @@ export class MapScene extends Phaser.Scene {
   }
 
   private isInView(x: number, y: number): boolean {
-    return x >= this.viewRect.x && y >= this.viewRect.y && x <= this.viewRect.x + this.viewRect.width && y <= this.viewRect.y + this.viewRect.height;
+    return (
+      x >= this.viewRect.x &&
+      y >= this.viewRect.y &&
+      x <= this.viewRect.x + this.viewRect.width &&
+      y <= this.viewRect.y + this.viewRect.height
+    );
+  }
+
+  private isInViewWithMargin(x: number, y: number, margin: number): boolean {
+    return (
+      x >= this.viewRect.x - margin &&
+      y >= this.viewRect.y - margin &&
+      x <= this.viewRect.x + this.viewRect.width + margin &&
+      y <= this.viewRect.y + this.viewRect.height + margin
+    );
   }
 
   private isUiPoint(x: number, y: number): boolean {
-    return this.uiZones.some((zone) => zone.contains(x, y));
+    if (this.uiZones.some((zone) => zone.contains(x, y))) {
+      return true;
+    }
+    if (this.poiInfoPanel?.visible) {
+      const panel = this.poiPanelRect();
+      return (
+        x >= panel.x && y >= panel.y && x <= panel.x + panel.width && y <= panel.y + panel.height
+      );
+    }
+    return false;
   }
 
   private colorForTile(tile: number | undefined): number {

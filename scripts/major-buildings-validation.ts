@@ -294,7 +294,9 @@ function worldCellKey(point: { x: number; y: number }, origin: { x: number; y: n
 
 function validateRegistry(source: readonly MajorBuildingDefinition[]): void {
   const registry = new MajorBuildingRegistry(source);
+  const pois = registry.pois();
   check(registry.all().length === 8, 'registry must contain exactly eight required locations');
+  check(pois.length === 8, 'registry POI projection must contain exactly eight required locations');
   for (const [city, police, hospitals] of [
     ['tehran', 2, 2],
     ['yazd', 1, 1],
@@ -309,6 +311,8 @@ function validateRegistry(source: readonly MajorBuildingDefinition[]): void {
       cityBuildings.filter((item) => item.type === 'hospital').length === hospitals,
       `${city} hospital count is wrong`,
     );
+    const cityPois = registry.poisForCity(city);
+    check(cityPois.length === police + hospitals, `${city} POI count is wrong`);
   }
   check(new Set(source.map((item) => item.id)).size === 8, 'major-building ids must be unique');
   check(
@@ -320,7 +324,43 @@ function validateRegistry(source: readonly MajorBuildingDefinition[]): void {
     'architectural variants must be unique',
   );
   for (const item of source) {
+    const poi = pois.find((candidate) => candidate.id === item.id);
+    check(Boolean(poi), `${item.id} is missing from registry POI projection`);
+    check(poi?.buildingId === item.buildingId, `${item.id} POI building owner diverges`);
+    check(poi?.interiorId === item.interiorId, `${item.id} POI interior id diverges`);
+    check(poi?.worldPosition.x === item.worldPosition.x, `${item.id} POI x position diverges`);
+    check(poi?.worldPosition.y === item.worldPosition.y, `${item.id} POI y position diverges`);
+    check(
+      poi?.entrancePosition.x === item.entrancePosition.x,
+      `${item.id} POI entrance x diverges`,
+    );
+    check(
+      poi?.entrancePosition.y === item.entrancePosition.y,
+      `${item.id} POI entrance y diverges`,
+    );
     check(item.mapIcon === item.minimapIcon, `${item.id} map and minimap icons diverge`);
+    check(
+      item.type === 'hospital' ? item.mapIcon === 'medical-cross' : item.mapIcon === 'police-badge',
+      `${item.id} uses the wrong full-map icon`,
+    );
+    check(
+      item.type === 'hospital'
+        ? item.minimapIcon === 'medical-cross'
+        : item.minimapIcon === 'police-badge',
+      `${item.id} uses the wrong minimap icon`,
+    );
+    check(
+      Boolean(
+        poi &&
+        ((poi.label.includes('Hospital') && item.type === 'hospital') ||
+          (poi.label.includes('Police Station') && item.type === 'police-station')),
+      ),
+      `${item.id} POI label does not expose the service type`,
+    );
+    check(
+      Boolean(poi?.label.toLowerCase().includes(item.city)),
+      `${item.id} POI label does not expose the city`,
+    );
     check(
       distance(item.entrancePosition, item.parkingArea.position) >= 48,
       `${item.id} parking blocks its entrance`,

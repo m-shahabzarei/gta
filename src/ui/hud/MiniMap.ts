@@ -84,6 +84,8 @@ export class MiniMap extends UIComponent {
   private viewCenterY = 0;
   /** Whether {@link MiniMap.setMap} has rasterised a map yet. */
   private hasMap = false;
+  /** Number of static service POIs drawn from the authoritative map data. */
+  private majorPoiCount = 0;
 
   /**
    * Builds the frame, map and blip layers and pins them to the camera.
@@ -152,13 +154,14 @@ export class MiniMap extends UIComponent {
       }
     }
 
+    this.majorPoiCount = map.majorBuildings.length;
     for (const building of map.majorBuildings) {
       paintMajorBuildingIcon(
         this.mapGfx,
         building.minimapIcon,
         building.worldPosition.x * MINIMAP_SCALE,
         building.worldPosition.y * MINIMAP_SCALE,
-        building.size === 'metropolitan' ? 5 : 4,
+        building.size === 'metropolitan' ? 6 : 5,
       );
     }
 
@@ -204,6 +207,20 @@ export class MiniMap extends UIComponent {
     // Player is implicitly at the view centre.
     this.blipGfx.fillStyle(COLORS.ACCENT, 1);
     this.blipGfx.fillCircle(0, 0, PLAYER_MARKER_SIZE);
+  }
+
+  public debugSnapshot(): {
+    hasMap: boolean;
+    majorPoiCount: number;
+    scale: number;
+    viewCenter: { x: number; y: number };
+  } {
+    return {
+      hasMap: this.hasMap,
+      majorPoiCount: this.majorPoiCount,
+      scale: MINIMAP_SCALE,
+      viewCenter: { x: this.viewCenterX, y: this.viewCenterY },
+    };
   }
 
   /** Move the already-built minimap to a safe screen-space location. */
