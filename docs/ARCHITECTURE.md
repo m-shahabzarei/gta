@@ -155,6 +155,23 @@ Composition happens in `scenes/GameScene.ts` (attach systems → wire Arcade
 colliders) and `core/ManagerRegistry.ts` (construct/init/tick, freezing the sim
 while paused).
 
+## Major service buildings
+
+- `MapData.majorBuildings` is the authoritative registry for police stations
+  and hospitals. Compatibility service arrays, gameplay dispatch, world-map
+  markers, minimap markers, entrances, and parking anchors project from it.
+- `WorldManager` reserves exactly eight distinct service footprints across
+  Tehran, Yazd, and Gilan, then stamps authored rooms, walls, doors, fixtures,
+  role anchors, and collision into each real building footprint.
+- `WorldInteriorSystem` streams cutaway art and pooled role NPCs only near the
+  player. It opens the owning roof for physical entry and retires those NPCs
+  when the interior leaves the activation band.
+- `MajorBuildingServiceParking` uses the existing vehicle pool for bounded
+  police-car and ambulance dressing. Wanted, arrest, death, healing, and
+  emergency-response systems query registry entrances or parking positions.
+- `MajorBuildingIconPainter` supplies the shared badge/cross geometry consumed
+  by both `MapScene` and `MiniMap`; neither UI keeps an independent POI list.
+
 ## Future work
 
 Real Aseprite/Tiled art & audio can be loaded under the existing asset keys via

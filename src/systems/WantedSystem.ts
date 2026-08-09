@@ -952,7 +952,7 @@ export class WantedSystem extends BaseSceneManager implements IWantedService, IS
       ENGINE_LIMITS.MAX_ACTIVE_POLICE_PATROLS,
     );
     if (active >= target) return;
-    const stations = this.world()?.map?.policeStations ?? [];
+    const stations = this.world()?.majorBuildings.ofType('police-station') ?? [];
     const traffic = this.traffic();
     if (!traffic) return;
     const kind = responseProfileForLevel(this.wantedLevel).swat ? 'policeSuv' : 'police';
@@ -962,12 +962,13 @@ export class WantedSystem extends BaseSceneManager implements IWantedService, IS
       const index = (this.stationIndex + offset) % stations.length;
       const station = stations[index];
       if (!station) continue;
+      const dispatchPoint = station.parkingArea.position;
       if (anchor) {
-        const dx = station.x - anchor.x;
-        const dy = station.y - anchor.y;
+        const dx = dispatchPoint.x - anchor.x;
+        const dy = dispatchPoint.y - anchor.y;
         if (dx * dx + dy * dy > STATION_DISPATCH_ACTIVE_RADIUS ** 2) continue;
       }
-      spawned = traffic.spawnServiceVehicle(kind, station, null, 56);
+      spawned = traffic.spawnServiceVehicle(kind, dispatchPoint, null, 56);
       if (!spawned) continue;
       this.stationIndex = index + 1;
       break;
@@ -1076,16 +1077,14 @@ export class WantedSystem extends BaseSceneManager implements IWantedService, IS
     const scene = this.scene;
     const group = this.aircraftGroup;
     const center = this.lastKnownPosition;
-    const map = this.world()?.map;
-    if (!scene || !group || !center || !map) return;
-    const station = map.policeStations.reduce<Vector2 | null>((nearest, candidate) => {
-      if (!nearest) return candidate;
-      const candidateSq = (candidate.x - center.x) ** 2 + (candidate.y - center.y) ** 2;
-      const nearestSq = (nearest.x - center.x) ** 2 + (nearest.y - center.y) ** 2;
-      return candidateSq < nearestSq ? candidate : nearest;
-    }, null);
+    const world = this.world();
+    if (!scene || !group || !center || !world) return;
+    const station = world.majorBuildings.nearest('police-station', center);
     const bearing = station
-      ? Math.atan2(station.y - center.y, station.x - center.x)
+      ? Math.atan2(
+          station.parkingArea.position.y - center.y,
+          station.parkingArea.position.x - center.x,
+        )
       : (this.waveIndex * 1.91) % (Math.PI * 2);
     const spawn = this.clampWorld({
       x: center.x + Math.cos(bearing) * WANTED.SPAWN_RADIUS,

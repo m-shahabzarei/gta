@@ -25,6 +25,7 @@ import { DepthLayers } from '@/config/DepthLayers';
 import { TileType, type MapData } from '@/gameplay/types';
 import { Panel } from '@/ui/components';
 import { UIComponent } from '@/ui/UIComponent';
+import { paintMajorBuildingIcon } from '@/ui/hud/MajorBuildingIconPainter';
 
 /** A single dynamic marker rendered on the minimap, in world coordinates. */
 export interface MiniMapBlip {
@@ -149,6 +150,16 @@ export class MiniMap extends UIComponent {
         this.mapGfx.fillRect(x * tilePx, y * tilePx, runLen * tilePx, tilePx);
         x += runLen;
       }
+    }
+
+    for (const building of map.majorBuildings) {
+      paintMajorBuildingIcon(
+        this.mapGfx,
+        building.minimapIcon,
+        building.worldPosition.x * MINIMAP_SCALE,
+        building.worldPosition.y * MINIMAP_SCALE,
+        building.size === 'metropolitan' ? 5 : 4,
+      );
     }
 
     this.hasMap = true;

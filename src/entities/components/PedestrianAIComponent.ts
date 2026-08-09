@@ -15,7 +15,7 @@
  * (wander/idle/flee only — no sitting, conversing or witness reporting).
  */
 import type { Vector2 } from '@/core/types';
-import type { IDamageable, WitnessReaction } from '@/gameplay/types';
+import type { IDamageable, InteriorNpcActivity, WitnessReaction } from '@/gameplay/types';
 import { getNavigationService, getTrafficQuery, getWorldQuery } from '@/gameplay/types';
 import { Component } from '@/entities/Component';
 import type { CharacterMovementComponent } from './CharacterMovementComponent';
@@ -122,6 +122,24 @@ export class PedestrianAIComponent extends Component implements PedestrianPeer {
     this.ctx.homeArea = { x, y, radius };
   }
 
+  /** Assign a bounded indoor activity loop while retaining shared navigation and reactions. */
+  public setInteriorRoutine(activity: InteriorNpcActivity, anchors: readonly Vector2[]): void {
+    const ctx = this.ctx;
+    if (!ctx || anchors.length === 0) return;
+    // spawn() gives every ordinary pedestrian an initial sidewalk intent.
+    // Service NPCs receive their authored routine immediately afterward, so
+    // discard that first request before it can carry them through the entrance.
+    ctx.nav.cancel(ctx.navService);
+    ctx.movement.stop();
+    ctx.state = 'wander';
+    ctx.stateTimer = 0;
+    ctx.interiorRoutine = {
+      activity,
+      anchors: anchors.map((anchor) => ({ ...anchor })),
+      nextIndex: this.entity.id % anchors.length,
+    };
+  }
+
   /** Cache the locomotion/health siblings and seed the initial wander leg. */
   protected override onAttach(): void {
     const movement = this.entity.getComponent<CharacterMovementComponent>('movement') ?? null;
@@ -139,6 +157,7 @@ export class PedestrianAIComponent extends Component implements PedestrianPeer {
       traffic: null,
       navService: null,
       homeArea: null,
+      interiorRoutine: null,
       state: 'wander',
       stateTimer: 0,
       danger: { x: 0, y: 0 },
@@ -234,6 +253,7 @@ export class PedestrianAIComponent extends Component implements PedestrianPeer {
     this.destroyed = false;
     resetTransient(ctx);
     ctx.homeArea = null;
+    ctx.interiorRoutine = null;
     ctx.stateTimer = 0;
     ctx.danger = { x: 0, y: 0 };
     ctx.dodgeDir = { x: 0, y: 0 };

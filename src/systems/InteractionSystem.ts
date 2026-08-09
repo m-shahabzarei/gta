@@ -125,8 +125,16 @@ export class InteractionSystem extends BaseSceneManager {
 
     const world = this.resolveWorld();
     if (world) {
-      this.addNearest(candidates, 'hospital', 'E  Hospital entrance', world.map.hospitals, pos, 1);
-      this.addNearest(candidates, 'police', 'E  Police entrance', world.map.policeStations, pos, 1);
+      for (const building of world.map.majorBuildings) {
+        const distanceSq = this.distanceSq(pos, building.entrancePosition);
+        if (distanceSq > RANGE_SQ) continue;
+        candidates.push({
+          kind: building.type === 'hospital' ? 'hospital' : 'police',
+          prompt: `E  ${building.name} entrance`,
+          distanceSq,
+          priority: 1,
+        });
+      }
       this.addNearest(candidates, 'gunshop', 'E  Gun store entrance', world.map.gunShops, pos, 1);
       this.addNearest(candidates, 'dealership', 'E  Dealership entrance', world.map.garages, pos, 1);
       this.addNearest(candidates, 'safehouse', 'E  Save at safe house', world.map.safeHouses, pos, 1);

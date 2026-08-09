@@ -54,6 +54,7 @@ export class TilesetFactory {
     this.drawTile(g, TileType.InteriorWall);
     this.drawTile(g, TileType.InteriorDoor);
     this.drawTile(g, TileType.UrbanFixture);
+    this.drawTile(g, TileType.InteriorFixture);
     g.generateTexture(TextureKeys.CityTileset, width, TILE_SIZE);
     g.destroy();
   }
@@ -121,6 +122,10 @@ export class TilesetFactory {
         break;
       case TileType.UrbanFixture:
         // Deliberately blank: ArchitectureComposer owns the visible fixture and ground art.
+        break;
+      case TileType.InteriorFixture:
+        // Collision is tile-based; the detailed furniture is drawn above this floor-like tile.
+        this.interiorFloor(g, ox);
         break;
     }
   }

@@ -51,7 +51,16 @@ with **S/↓**. Press **F** to jump out.
 - **Traffic lights** cycle at intersections; AI traffic stops on red.
 - **Pedestrians** wander the sidewalks, chat, and flee from gunfire, explosions
   and death nearby.
-- **Hospitals** are your respawn points; **police stations** seed extra cops.
+- The world contains four **hospitals** and four **police stations** distributed
+  across Tehran, Yazd, and Gilan. Each has a city-specific exterior, parking,
+  service vehicles, and a physical cutaway interior.
+- Walk through a marked service entrance to enter. Hospitals provide treatment,
+  medkits, and save access; police desks can resolve an active wanted record.
+  Use **E** at the relevant counter or station.
+- Doctors, nurses, patients, paramedics, detectives, desk officers, and custody
+  officers use the shared pedestrian AI and remain inside their assigned rooms.
+- Hospital-cross and police-badge POIs on the world map and minimap use the same
+  world coordinates as the actual entrances.
 
 ## Wanted level & police
 

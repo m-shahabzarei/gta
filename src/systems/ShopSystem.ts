@@ -69,9 +69,9 @@ export class ShopSystem extends BaseSceneManager {
     if (interiors?.handleInteract(x, y)) return;
 
     const point: Vector2 = { x, y };
-    if (this.near(point, world.map.hospitals)) {
+    if (this.nearMajor(point, world, 'hospital')) {
       this.focusInterior('hospital');
-    } else if (this.near(point, world.map.policeStations)) {
+    } else if (this.nearMajor(point, world, 'police-station')) {
       this.focusInterior('police');
     } else if (this.near(point, world.map.gunShops)) {
       this.focusInterior('gunstore');
@@ -122,6 +122,19 @@ export class ShopSystem extends BaseSceneManager {
       if (dx * dx + dy * dy <= SERVICE_RANGE_SQ) return true;
     }
     return false;
+  }
+
+  /** Required service entrances come only from the authoritative registry. */
+  private nearMajor(
+    point: Vector2,
+    world: WorldManager,
+    type: 'hospital' | 'police-station',
+  ): boolean {
+    const building = world.majorBuildings.nearest(type, point);
+    if (!building) return false;
+    const dx = building.entrancePosition.x - point.x;
+    const dy = building.entrancePosition.y - point.y;
+    return dx * dx + dy * dy <= SERVICE_RANGE_SQ;
   }
 
   /** Emit a HUD toast. */

@@ -26,7 +26,6 @@ import { DepthLayers } from '@/config/DepthLayers';
 import { TextureKeys } from '@/config/AssetKeys';
 import {
   CITY,
-  COLORS,
   PED,
   TILE_SIZE,
   WORLD_HEIGHT,
@@ -57,6 +56,8 @@ import type {
   IWorldQuery,
   MapData,
   MapOverview,
+  MajorBuildingDefinition,
+  MajorBuildingVariant,
   PlannedBlockProgram,
   PlannedBuilding,
   PlannedBuildingArchetype,
@@ -96,6 +97,11 @@ import {
   type SolidTileGrid,
 } from '@/gameplay/world/SafePedestrianPlacement';
 import { interiorNpcSpawnPosition } from '@/gameplay/world/InteriorNpcPlacement';
+import { MajorBuildingRegistry } from '@/gameplay/major-buildings';
+import {
+  createMajorInteriorLayout,
+  type MajorInteriorLayout,
+} from '@/gameplay/major-buildings';
 import { QuadTree, Random, random } from '@/utils';
 import { ArchitectureComposer } from '@/graphics/ArchitectureComposer';
 import {
@@ -575,6 +581,8 @@ class CityGenerator {
 
     const services = this.pickServices(buildingEntrances, cities);
     const interiorBuild = this.buildServiceInteriors(tiles, services);
+    const majorBuildings = this.buildMajorBuildings(services, interiorBuild.interiors);
+    this.assertMajorBuildings(majorBuildings);
     const serviceArchitectureIssues = this.auditServiceArchitecture(services, buildingEntrances);
     const postInteriorQuality = this.validateUrbanFabric(
       tiles,
@@ -620,6 +628,7 @@ class CityGenerator {
       tileSize: TILE_SIZE,
       cities,
       landmarks,
+      majorBuildings,
       highways,
       highwayQuality: highwayPlan.quality,
       streamZones,
@@ -1461,7 +1470,8 @@ class CityGenerator {
       tile === TileType.Dock ||
       tile === TileType.InteriorFloor ||
       tile === TileType.InteriorWall ||
-      tile === TileType.InteriorDoor
+      tile === TileType.InteriorDoor ||
+      tile === TileType.InteriorFixture
     );
   }
 
@@ -2554,7 +2564,8 @@ class CityGenerator {
       tile === TileType.Runway ||
       tile === TileType.Dock ||
       tile === TileType.InteriorFloor ||
-      tile === TileType.InteriorWall
+      tile === TileType.InteriorWall ||
+      tile === TileType.InteriorFixture
     );
   }
 
@@ -3387,7 +3398,8 @@ class CityGenerator {
             tile === TileType.Dock ||
             tile === TileType.InteriorFloor ||
             tile === TileType.InteriorWall ||
-            tile === TileType.InteriorDoor
+            tile === TileType.InteriorDoor ||
+            tile === TileType.InteriorFixture
           ) {
             return false;
           }
@@ -3503,7 +3515,8 @@ class CityGenerator {
               (!this.isBuildingTile(tile) &&
                 tile !== TileType.InteriorFloor &&
                 tile !== TileType.InteriorWall &&
-                tile !== TileType.InteriorDoor)
+                tile !== TileType.InteriorDoor &&
+                tile !== TileType.InteriorFixture)
             ) {
               footprintMismatches++;
             }
@@ -4866,6 +4879,7 @@ class CityGenerator {
   /** Reserve and specialize owned architecture as semantic service buildings. */
   private pickServices(entrances: BuildingEntrance[], cities: readonly WorldCity[]): ServiceSites {
     const used = new Set<BuildingEntrance>();
+    const usedBuildingIds = new Set<string>();
     const byCity = (id: CityId, role: ServiceArchitectureRole): BuildingEntrance[] => {
       const city = cities.find((entry) => entry.id === id);
       if (!city) return [];
@@ -4875,6 +4889,7 @@ class CityGenerator {
           entrances.filter(
             (entry) =>
               !used.has(entry) &&
+              !usedBuildingIds.has(entry.buildingId) &&
               entry.x >= b.x &&
               entry.y >= b.y &&
               entry.x < b.x + b.width &&
@@ -4892,6 +4907,7 @@ class CityGenerator {
       points: Vector2[],
     ): void => {
       used.add(entrance);
+      usedBuildingIds.add(entrance.buildingId);
       this.specializeServiceEntrance(entrance, role);
       points.push({ x: entrance.x, y: entrance.y });
     };
@@ -4901,14 +4917,29 @@ class CityGenerator {
     ): Vector2[] => {
       const points: Vector2[] = [];
       for (const [cityId, count] of plan) {
-        for (const entrance of byCity(cityId, role).slice(0, count)) claim(entrance, role, points);
+        const candidates = byCity(cityId, role).filter(
+          (entrance) => this.serviceInteriorCandidateFits(entrance, role),
+        );
+        for (const entrance of this.distinctServiceEntrances(candidates, role, count)) {
+          claim(entrance, role, points);
+        }
+        if (points.filter((point) => this.cityIdForPoint(point, cities) === cityId).length < count) {
+          throw new Error(`City ${cityId} lacks ${count} interior-capable ${role} buildings`);
+        }
       }
       return points;
     };
     const fill = (points: Vector2[], target: number, role: ServiceArchitectureRole): Vector2[] => {
       if (points.length >= target) return points;
       const candidates = this.rng
-        .shuffle(entrances.filter((entry) => !used.has(entry)))
+        .shuffle(
+          entrances.filter(
+            (entry) =>
+              !used.has(entry) &&
+              !usedBuildingIds.has(entry.buildingId) &&
+              this.serviceInteriorCandidateFits(entry, role),
+          ),
+        )
         .sort(
           (first, second) =>
             this.serviceEntranceScore(first, role) - this.serviceEntranceScore(second, role),
@@ -4927,13 +4958,13 @@ class CityGenerator {
       hospitals: fill(
         reserve(
           [
-            ['tehran', 4],
+            ['tehran', 2],
             ['yazd', 1],
             ['gilan', 1],
           ],
           'hospital',
         ),
-        6,
+        4,
         'hospital',
       ),
       policeStations: fill(
@@ -5009,6 +5040,75 @@ class CityGenerator {
         'safe-house',
       ),
     };
+  }
+
+  /** Prefer genuinely different owners for repeated services in one city. */
+  private distinctServiceEntrances(
+    candidates: readonly BuildingEntrance[],
+    role: ServiceArchitectureRole,
+    count: number,
+  ): BuildingEntrance[] {
+    const unique = candidates.filter(
+      (candidate, index) =>
+        candidates.findIndex((other) => other.buildingId === candidate.buildingId) === index,
+    );
+    const selected: BuildingEntrance[] = [];
+    while (selected.length < count && unique.length > 0) {
+      if (selected.length === 0) {
+        const first = unique.shift();
+        if (first) selected.push(first);
+        continue;
+      }
+      const bestRoleScore = Math.min(
+        ...unique.map((candidate) => this.serviceEntranceScore(candidate, role)),
+      );
+      const comparable = unique.filter(
+        (candidate) => this.serviceEntranceScore(candidate, role) === bestRoleScore,
+      );
+      let best = comparable[0] ?? unique[0];
+      let bestVariation = -Infinity;
+      for (const candidate of comparable) {
+        const building = this.plannedBuildings.find((item) => item.id === candidate.buildingId);
+        if (!building) continue;
+        let nearestVariation = Infinity;
+        for (const chosen of selected) {
+          const other = this.plannedBuildings.find((item) => item.id === chosen.buildingId);
+          if (!other) continue;
+          const variation =
+            Math.abs(building.bounds.width - other.bounds.width) * 4 +
+            Math.abs(building.bounds.height - other.bounds.height) * 4 +
+            Math.abs(building.floors - other.floors) * 28 +
+            (building.size !== other.size ? 80 : 0) +
+            (building.material !== other.material ? 64 : 0) +
+            (building.roofStyle !== other.roofStyle ? 36 : 0);
+          nearestVariation = Math.min(nearestVariation, variation);
+        }
+        if (nearestVariation <= bestVariation) continue;
+        best = candidate;
+        bestVariation = nearestVariation;
+      }
+      if (!best) break;
+      selected.push(best);
+      unique.splice(unique.indexOf(best), 1);
+    }
+    return selected;
+  }
+
+  private serviceNeedsInterior(role: ServiceArchitectureRole): boolean {
+    return role === 'hospital' || role === 'police' || role === 'gun-shop' || role === 'garage';
+  }
+
+  private serviceInteriorCandidateFits(
+    entrance: BuildingEntrance,
+    role: ServiceArchitectureRole,
+  ): boolean {
+    if (!this.serviceNeedsInterior(role)) return true;
+    const grid = this.interiorBoundsFromEntrance(entrance);
+    if (!grid) return false;
+    if (role !== 'hospital' && role !== 'police') return true;
+    const longest = Math.max(grid.w, grid.h);
+    const shortest = Math.min(grid.w, grid.h);
+    return longest <= 24 && longest / Math.max(1, shortest) <= 3;
   }
 
   private serviceEntranceScore(entrance: BuildingEntrance, role: ServiceArchitectureRole): number {
@@ -5254,9 +5354,8 @@ class CityGenerator {
     };
 
     for (const interior of interiors) {
-      const targetCount = interior.npcSpawns.reduce((sum, spawn) => sum + spawn.count, 0);
       for (const spawn of interior.npcSpawns) {
-        for (let ordinal = 0; ordinal < targetCount; ordinal += 1) {
+        for (let ordinal = 0; ordinal < spawn.count; ordinal += 1) {
           const point = interiorNpcSpawnPosition(spawn, ordinal);
           if (isCircleClearOnGrid(grid, point, PED.RADIUS)) continue;
           throw new Error(
@@ -5317,8 +5416,8 @@ class CityGenerator {
   ): BuildingInterior | null {
     const grid = this.interiorBoundsFromEntrance(entrance);
     if (!grid) return null;
-
-    this.paintInteriorTiles(tiles, kind, grid.tx0, grid.ty0, grid.w, grid.h, grid.doorX);
+    const building = this.plannedBuildings.find((candidate) => candidate.id === grid.buildingId);
+    if (!building) return null;
 
     const bounds = {
       x: grid.tx0 * TILE_SIZE,
@@ -5326,16 +5425,48 @@ class CityGenerator {
       w: grid.w * TILE_SIZE,
       h: grid.h * TILE_SIZE,
     };
+    const variant =
+      kind === 'hospital' || kind === 'police'
+        ? this.majorVariantFor(building.cityId, kind, index)
+        : kind === 'gunstore'
+          ? 'gun-store'
+          : 'vehicle-showroom';
+    const majorLayout =
+      kind === 'hospital' || kind === 'police'
+        ? createMajorInteriorLayout({
+            kind,
+            cityId: building.cityId,
+            variant: variant as MajorBuildingVariant,
+            bounds,
+            widthTiles: grid.w,
+            heightTiles: grid.h,
+            doorX: grid.doorX,
+            entrance,
+          })
+        : null;
+    this.paintInteriorTiles(
+      tiles,
+      kind,
+      grid.tx0,
+      grid.ty0,
+      grid.w,
+      grid.h,
+      grid.doorX,
+      majorLayout,
+    );
+
     const interior: BuildingInterior = {
       id: `${kind}:${index}`,
       buildingId: grid.buildingId,
       kind,
+      cityId: building.cityId,
+      variant,
       entrance: { x: entrance.x, y: entrance.y },
       bounds,
-      rooms: this.interiorRooms(kind, bounds),
-      doors: this.interiorDoors(bounds, entrance),
-      objects: this.interiorObjects(kind, bounds),
-      npcSpawns: this.interiorNpcSpawns(kind, bounds),
+      rooms: majorLayout?.rooms ?? this.interiorRooms(kind, bounds),
+      doors: majorLayout?.doors ?? this.interiorDoors(bounds, entrance),
+      objects: majorLayout?.objects ?? this.interiorObjects(kind, bounds),
+      npcSpawns: majorLayout?.npcSpawns ?? this.interiorNpcSpawns(kind, bounds),
       ambient:
         kind === 'hospital'
           ? 'medical'
@@ -5348,6 +5479,210 @@ class CityGenerator {
     return interior;
   }
 
+  private majorVariantFor(
+    cityId: CityId,
+    kind: 'hospital' | 'police',
+    globalIndex: number,
+  ): MajorBuildingVariant {
+    if (kind === 'police') {
+      if (cityId === 'yazd') return 'yazd-courtyard-police';
+      if (cityId === 'gilan') return 'gilan-regional-police';
+      return globalIndex === 0 ? 'tehran-police-headquarters' : 'tehran-district-police';
+    }
+    if (cityId === 'yazd') return 'yazd-courtyard-hospital';
+    if (cityId === 'gilan') return 'gilan-regional-hospital';
+    return globalIndex === 0 ? 'tehran-general-hospital' : 'tehran-emergency-hospital';
+  }
+
+  /** Build the shared gameplay/map registry from the exact specialized owners and interiors. */
+  private buildMajorBuildings(
+    services: ServiceSites,
+    interiors: readonly BuildingInterior[],
+  ): MajorBuildingDefinition[] {
+    const definitions: MajorBuildingDefinition[] = [];
+    const cityOrdinals = new Map<string, number>();
+    const groups: ReadonlyArray<readonly ['hospital' | 'police-station', readonly Vector2[]]> = [
+      ['hospital', services.hospitals],
+      ['police-station', services.policeStations],
+    ];
+
+    for (const [type, points] of groups) {
+      const interiorKind = type === 'hospital' ? 'hospital' : 'police';
+      for (const point of points) {
+        const interior = interiors.find(
+          (candidate) =>
+            candidate.kind === interiorKind &&
+            candidate.entrance.x === point.x &&
+            candidate.entrance.y === point.y,
+        );
+        if (!interior) {
+          throw new Error(`${type} at ${point.x},${point.y} has no playable interior`);
+        }
+        const building = this.plannedBuildings.find(
+          (candidate) => candidate.id === interior.buildingId,
+        );
+        if (!building) throw new Error(`Major interior ${interior.id} lost ${interior.buildingId}`);
+
+        const ordinalKey = `${building.cityId}:${type}`;
+        const ordinal = cityOrdinals.get(ordinalKey) ?? 0;
+        cityOrdinals.set(ordinalKey, ordinal + 1);
+        const variant = interior.variant as MajorBuildingVariant;
+        const police = type === 'police-station';
+        const parking = this.majorBuildingParkingArea(building, point, police);
+        const id = `${building.cityId}-${police ? 'police' : 'hospital'}-${ordinal + 1}`;
+        const bounds = tileBounds(
+          building.bounds.x,
+          building.bounds.y,
+          building.bounds.width,
+          building.bounds.height,
+        );
+        definitions.push({
+          id,
+          name: this.majorBuildingName(variant),
+          type,
+          city: building.cityId,
+          buildingId: building.id,
+          worldPosition: {
+            x: bounds.x + bounds.width / 2,
+            y: bounds.y + bounds.height / 2,
+          },
+          entrancePosition: { ...point },
+          exteriorBounds: bounds,
+          interiorId: interior.id,
+          mapIcon: police ? 'police-badge' : 'medical-cross',
+          minimapIcon: police ? 'police-badge' : 'medical-cross',
+          size:
+            building.cityId === 'tehran' && ordinal === 0
+              ? 'metropolitan'
+              : building.cityId === 'tehran'
+                ? 'district'
+                : 'regional',
+          architecturalVariant: variant,
+          npcProfile: {
+            maxActive: interior.npcSpawns.reduce((sum, spawn) => sum + spawn.count, 0),
+            roles: interior.npcSpawns.map((spawn) => spawn.role),
+          },
+          parkingArea: {
+            position: parking.position,
+            heading: parking.heading,
+            slots: building.cityId === 'tehran' && ordinal === 0 ? 3 : 2,
+            vehicleKind: police
+              ? building.cityId === 'tehran' && ordinal === 0
+                ? 'policeSuv'
+                : 'police'
+              : 'ambulance',
+          },
+          services: police
+            ? ['arrest', 'dispatch', 'wanted-clearance']
+            : ['healing', 'revival', 'ambulance'],
+          activeState: 'proximity-streamed',
+        });
+      }
+    }
+    return definitions;
+  }
+
+  /** Resolve the actual planned police/ambulance bay owned by the service block. */
+  private majorBuildingParkingArea(
+    building: PlannedBuilding,
+    entrance: Vector2,
+    police: boolean,
+  ): { position: Vector2; heading: number } {
+    const requiredKind = police ? 'police-parking' : 'ambulance-bay';
+    let best: PlannedGroundFeature | null = null;
+    let bestSq = Infinity;
+    for (const space of this.plannedSpaces) {
+      if (space.blockId !== building.blockId) continue;
+      for (const feature of space.features) {
+        if (feature.kind !== requiredKind) continue;
+        const x = (feature.bounds.x + feature.bounds.width / 2) * TILE_SIZE;
+        const y = (feature.bounds.y + feature.bounds.height / 2) * TILE_SIZE;
+        const dx = x - entrance.x;
+        const dy = y - entrance.y;
+        const distanceSq = dx * dx + dy * dy;
+        if (distanceSq >= bestSq) continue;
+        best = feature;
+        bestSq = distanceSq;
+      }
+    }
+    if (best) {
+      const position = {
+        x: (best.bounds.x + best.bounds.width / 2) * TILE_SIZE,
+        y: (best.bounds.y + best.bounds.height / 2) * TILE_SIZE,
+      };
+      const heading =
+        best.facing === 'east' || best.facing === 'west'
+          ? 0
+          : best.facing === 'north' || best.facing === 'south'
+            ? Math.PI / 2
+            : best.bounds.width >= best.bounds.height
+              ? 0
+              : Math.PI / 2;
+      return { position, heading };
+    }
+
+    // A rare service conversion can reuse a building whose original block did
+    // not include the semantic yard. Keep the fallback on its entrance apron,
+    // never on an arbitrary live traffic lane.
+    const plannedEntrance = building.entrances.find((candidate) => candidate.primary);
+    if (plannedEntrance) {
+      const dx = plannedEntrance.apron.x - plannedEntrance.position.x;
+      const dy = plannedEntrance.apron.y - plannedEntrance.position.y;
+      return {
+        position: {
+          x: plannedEntrance.apron.x * TILE_SIZE + TILE_SIZE / 2 + dx * TILE_SIZE * 1.5,
+          y: plannedEntrance.apron.y * TILE_SIZE + TILE_SIZE / 2 + dy * TILE_SIZE * 1.5,
+        },
+        heading: Math.abs(dx) >= Math.abs(dy) ? Math.PI / 2 : 0,
+      };
+    }
+    return { position: { ...entrance }, heading: 0 };
+  }
+
+  private majorBuildingName(variant: MajorBuildingVariant): string {
+    const names: Record<MajorBuildingVariant, string> = {
+      'tehran-police-headquarters': 'Tehran Metropolitan Police Headquarters',
+      'tehran-district-police': 'Tehran District Police Station',
+      'yazd-courtyard-police': 'Yazd Courtyard Police Station',
+      'gilan-regional-police': 'Gilan Regional Police Station',
+      'tehran-general-hospital': 'Tehran General Hospital',
+      'tehran-emergency-hospital': 'Tehran Emergency Hospital',
+      'yazd-courtyard-hospital': 'Yazd Courtyard Hospital',
+      'gilan-regional-hospital': 'Gilan Regional Hospital',
+    };
+    return names[variant];
+  }
+
+  private assertMajorBuildings(definitions: readonly MajorBuildingDefinition[]): void {
+    const registry = new MajorBuildingRegistry(definitions);
+    const expected: ReadonlyArray<readonly [CityId, 'hospital' | 'police-station', number]> = [
+      ['tehran', 'hospital', 2],
+      ['tehran', 'police-station', 2],
+      ['yazd', 'hospital', 1],
+      ['yazd', 'police-station', 1],
+      ['gilan', 'hospital', 1],
+      ['gilan', 'police-station', 1],
+    ];
+    if (definitions.length !== 8) {
+      throw new Error(`Major-building registry expected 8 definitions, received ${definitions.length}`);
+    }
+    for (const [city, type, count] of expected) {
+      const actual = registry.inCity(city).filter((definition) => definition.type === type).length;
+      if (actual !== count) {
+        throw new Error(`Major-building distribution ${city}/${type}: expected ${count}, got ${actual}`);
+      }
+    }
+    if (new Set(definitions.map((definition) => definition.buildingId)).size !== definitions.length) {
+      throw new Error('A planned building owns more than one major-building definition');
+    }
+    if (
+      new Set(definitions.map((definition) => definition.architecturalVariant)).size !==
+      definitions.length
+    ) {
+      throw new Error('Required major buildings must use eight distinct architectural variants');
+    }
+  }
+
   /** Paint floor, exterior walls, working door tiles and simple partitions. */
   private paintInteriorTiles(
     tiles: number[][],
@@ -5357,6 +5692,7 @@ class CityGenerator {
     w: number,
     h: number,
     doorX: number,
+    majorLayout: MajorInteriorLayout | null,
   ): void {
     for (let y = 0; y < h; y++) {
       const row = tiles[ty0 + y];
@@ -5382,6 +5718,18 @@ class CityGenerator {
       if (!row) return;
       row[tx0 + x] = TileType.InteriorDoor;
     };
+
+    if (majorLayout) {
+      for (const cell of majorLayout.wallCells) wall(cell.x, cell.y);
+      for (const cell of majorLayout.doorCells) door(cell.x, cell.y);
+      for (const cell of majorLayout.fixtureCells) {
+        const row = tiles[ty0 + cell.y];
+        if (row && row[tx0 + cell.x] === TileType.InteriorFloor) {
+          row[tx0 + cell.x] = TileType.InteriorFixture;
+        }
+      }
+      return;
+    }
 
     if (kind === 'hospital') {
       for (const x of [1, 2, 4, 5]) wall(x, 3);
@@ -5685,7 +6033,6 @@ class CityGenerator {
       mark('yazd-military', 'Desert Military Base', 1780, 665, 'military'),
       mark('yazd-viewpoint', 'Dune Sea Viewpoint', 1375, 900, 'viewpoint'),
       mark('yazd-rest', 'Silk Road Truck Stop', 1320, 990, 'rest-stop'),
-      mark('yazd-police', 'Remote Desert Police Post', 1415, 825, 'police'),
 
       mark('gilan-harbor', 'Gilan Fishing Harbor', 185, 335, 'harbor'),
       mark('gilan-port', 'Caspian Commercial Port', 225, 365, 'port'),
@@ -5705,13 +6052,10 @@ class CityGenerator {
       mark('alborz-pass', 'Alborz Tunnel and Scenic Pass', 820, 590, 'viewpoint'),
       mark('alborz-maintenance', 'Alborz Road Maintenance Depot', 720, 650, 'rest-stop'),
       mark('east-route-stop', 'Caspian Route Service Plaza', 1040, 345, 'gas'),
-      mark('desert-checkpoint', 'Central Highway Inspection Station', 1190, 420, 'police'),
       mark('desert-rest-area', 'Kavir Highway Rest Area', 1300, 1000, 'rest-stop'),
     ];
 
     const serviceGroups: Array<readonly [string, readonly Vector2[], WorldLandmark['kind']]> = [
-      ['hospital', services.hospitals, 'hospital'],
-      ['police', services.policeStations, 'police'],
       ['fuel', services.gasStations, 'gas'],
       ['garage', services.garages, 'shop'],
       ['gun', services.gunShops, 'shop'],
@@ -5721,13 +6065,7 @@ class CityGenerator {
         landmarks.push({
           id: prefix + '-' + index,
           name:
-            kind === 'hospital'
-              ? 'Hospital'
-              : kind === 'police'
-                ? 'Police Station'
-                : kind === 'gas'
-                  ? 'Fuel and Repair'
-                  : 'Service District',
+            kind === 'gas' ? 'Fuel and Repair' : 'Service District',
           position: { x: position.x, y: position.y },
           kind,
           cityId: this.cityIdForPoint(position, cities),
@@ -6237,6 +6575,7 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
 
   /** The generated world, available after {@link onInit}. */
   private mapData: MapData | null = null;
+  private majorBuildingRegistry: MajorBuildingRegistry | null = null;
 
   /** Active streamed terrain/decor chunks, keyed by "cx,cy". */
   private readonly chunks = new Map<string, DecoChunk>();
@@ -6272,6 +6611,13 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
       throw new Error('WorldManager.map accessed before init()');
     }
     return this.mapData;
+  }
+
+  public get majorBuildings(): MajorBuildingRegistry {
+    if (!this.majorBuildingRegistry) {
+      throw new Error('WorldManager.majorBuildings accessed before init()');
+    }
+    return this.majorBuildingRegistry;
   }
 
   /** The active collision layer, or `null` when no scene is attached. */
@@ -6324,6 +6670,7 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
   /** Generate the world once, up front. */
   protected onInit(): void {
     this.mapData = CityGenerator.generate(CITY_SEED);
+    this.majorBuildingRegistry = new MajorBuildingRegistry(this.mapData.majorBuildings);
     this.highwayGeometry = HighwayGeometryIndex.build(this.mapData, CHUNK_TILES);
     this.architectureComposer = new ArchitectureComposer(
       this.mapData,
@@ -6512,6 +6859,7 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
       case TileType.Concrete:
       case TileType.Dock:
       case TileType.InteriorFloor:
+      case TileType.InteriorFixture:
       case TileType.InteriorDoor:
         return 1;
       default:
@@ -6656,12 +7004,28 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
 
   /** The hospital nearest to a world position (for respawns). */
   public nearestHospital(x: number, y: number): Vector2 {
-    return this.nearestOf(this.map.hospitals, x, y);
+    const building = this.majorBuildings.nearest('hospital', { x, y });
+    return building ? { ...building.entrancePosition } : this.nearestOf(this.map.hospitals, x, y);
   }
 
   /** The police station nearest to a world position. */
   public nearestPoliceStation(x: number, y: number): Vector2 {
-    return this.nearestOf(this.map.policeStations, x, y);
+    const building = this.majorBuildings.nearest('police-station', { x, y });
+    return building
+      ? { ...building.entrancePosition }
+      : this.nearestOf(this.map.policeStations, x, y);
+  }
+
+  /** Dispatch pose for the hospital nearest to an incident. */
+  public nearestHospitalParking(x: number, y: number): Vector2 {
+    const building = this.majorBuildings.nearest('hospital', { x, y });
+    return building ? { ...building.parkingArea.position } : this.nearestHospital(x, y);
+  }
+
+  /** Dispatch pose for the police station nearest to an incident. */
+  public nearestPoliceParking(x: number, y: number): Vector2 {
+    const building = this.majorBuildings.nearest('police-station', { x, y });
+    return building ? { ...building.parkingArea.position } : this.nearestPoliceStation(x, y);
   }
 
   /** The fire station nearest to a world position. */
@@ -6776,8 +7140,7 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
     out: Phaser.GameObjects.GameObject[],
   ): void {
     const map = this.map;
-    this.markerSet(scene, map.hospitals, COLORS.HEALTH, 'H', tx0, ty0, out);
-    this.markerSet(scene, map.policeStations, 0x3a6cff, 'P', tx0, ty0, out);
+    this.placeMajorBuildingSigns(scene, tx0, ty0, out);
     this.markerSet(scene, map.fireStations, 0xc0281e, 'F', tx0, ty0, out);
     this.markerSet(scene, map.gasStations, 0x53d769, 'G', tx0, ty0, out);
     this.markerSet(scene, map.gunShops, 0xffcc33, '$', tx0, ty0, out);
@@ -6786,6 +7149,59 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
     this.placeBenches(scene, map.benches, tx0, ty0, out);
     this.placeBusStops(scene, map.busStops, tx0, ty0, out);
     this.placeLandmarkLabels(scene, tx0, ty0, out);
+  }
+
+  /** Stream recognizable entrance-scale service signage from the shared registry. */
+  private placeMajorBuildingSigns(
+    scene: Phaser.Scene,
+    tx0: number,
+    ty0: number,
+    out: Phaser.GameObjects.GameObject[],
+  ): void {
+    for (const building of this.majorBuildings.all()) {
+      const point = building.entrancePosition;
+      if (!this.pointInChunk(point, tx0, ty0)) continue;
+      const police = building.type === 'police-station';
+      const g = scene.add.graphics();
+      g.setDepth(DepthLayers.BuildingsHigh + 2);
+      const x = Math.round(point.x);
+      const y = Math.round(point.y - 22);
+      const panel = police ? 0x214f76 : 0xf1eee6;
+      const accent = police ? 0x6eb2d5 : 0xb8323b;
+      g.fillStyle(0x121a20, 0.42);
+      g.fillRect(x - 24, y + 4, 52, 14);
+      g.fillStyle(0x1b252b, 1);
+      g.fillRect(x - 27, y - 2, 54, 15);
+      g.fillStyle(panel, 1);
+      g.fillRect(x - 25, y, 50, 11);
+      g.fillStyle(accent, 1);
+      if (police) {
+        g.fillRect(x - 22, y + 2, 8, 2);
+        g.fillRect(x - 20, y, 4, 7);
+        g.fillRect(x + 15, y + 2, 8, 2);
+        g.fillRect(x + 17, y, 4, 7);
+      } else {
+        g.fillRect(x - 21, y + 4, 10, 3);
+        g.fillRect(x - 18, y + 1, 3, 9);
+        g.fillRect(x + 12, y + 4, 10, 3);
+        g.fillRect(x + 15, y + 1, 3, 9);
+      }
+      g.fillStyle(0x29333a, 1);
+      g.fillRect(x - 22, y + 11, 3, 10);
+      g.fillRect(x + 19, y + 11, 3, 10);
+      out.push(g);
+
+      const label = scene.add.text(x, y + 5, police ? 'POLICE' : 'HOSPITAL', {
+        fontFamily: 'Courier New',
+        fontSize: police ? '8px' : '7px',
+        fontStyle: 'bold',
+        color: police ? '#ffffff' : '#8f222c',
+      });
+      label.setOrigin(0.5);
+      label.setResolution(2);
+      label.setDepth(DepthLayers.BuildingsHigh + 3);
+      out.push(label);
+    }
   }
 
   /** Draw a tinted marker rectangle + glyph at each service location. */
@@ -7499,7 +7915,7 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
     ) {
       // Architecture is composed once at lot scale for the whole chunk.
       return;
-    } else if (tile === TileType.InteriorFloor) {
+    } else if (tile === TileType.InteriorFloor || tile === TileType.InteriorFixture) {
       if (roll < 0.035) {
         const rug = scene.add.rectangle(cxp, cyp, 18, 10, 0x394f66, 0.45);
         rug.setDepth(DepthLayers.GroundDetail);

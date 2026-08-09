@@ -38,10 +38,12 @@ export enum TileType {
   InteriorDoor = 18,
   /** Transparent collision adapter beneath a composer-owned physical urban fixture. */
   UrbanFixture = 19,
+  /** Indoor floor appearance with solid collision beneath substantial furniture. */
+  InteriorFixture = 20,
 }
 
 /** Total number of tiles in the tileset strip (drives the atlas width). */
-export const TILE_TYPE_COUNT = 20;
+export const TILE_TYPE_COUNT = 21;
 
 /** Tiles that block movement — used to set tilemap collision. */
 export const SOLID_TILE_TYPES: readonly TileType[] = [
@@ -52,6 +54,7 @@ export const SOLID_TILE_TYPES: readonly TileType[] = [
   TileType.Rock,
   TileType.InteriorWall,
   TileType.UrbanFixture,
+  TileType.InteriorFixture,
 ];
 
 /** Pedestrian-sized openings that only vehicle bodies must treat as solid. */

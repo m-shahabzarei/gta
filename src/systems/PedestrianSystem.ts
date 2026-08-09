@@ -29,6 +29,7 @@ import {
   getWorldQuery,
   type IWorldQuery,
   type NpcPersonality,
+  type PedProfile,
   type VehicleOccupantRecord,
 } from '@/gameplay/types';
 import { PED_PROFILES } from '@/data';
@@ -143,6 +144,11 @@ export class PedestrianSystem extends BaseSceneManager {
    */
   public spawnAt(x: number, y: number): Pedestrian | null {
     return this.spawn({ x, y });
+  }
+
+  /** Spawn an authored service appearance while retaining pooling and shared AI. */
+  public spawnProfileAt(x: number, y: number, profile: PedProfile): Pedestrian | null {
+    return this.spawn({ x, y }, undefined, profile);
   }
 
   public spawnFromVehicleOccupant(
@@ -392,7 +398,11 @@ export class PedestrianSystem extends BaseSceneManager {
    * crowd group.
    * @param point World position to spawn at.
    */
-  private spawn(point: Vector2, personality?: NpcPersonality): Pedestrian | null {
+  private spawn(
+    point: Vector2,
+    personality?: NpcPersonality,
+    profileOverride?: PedProfile,
+  ): Pedestrian | null {
     const scene = this.scene;
     if (!scene || !this.pedGroup) return null;
     if (this.peds.length >= ENGINE_LIMITS.MAX_ACTIVE_NPCS) {
@@ -406,8 +416,12 @@ export class PedestrianSystem extends BaseSceneManager {
       return null;
     }
 
-    const baseProfile = random.pick(PED_PROFILES);
-    const profile = baseProfile ? this.profileForRegion(baseProfile, point) : null;
+    const baseProfile = profileOverride ?? random.pick(PED_PROFILES);
+    const profile = baseProfile
+      ? profileOverride
+        ? baseProfile
+        : this.profileForRegion(baseProfile, point)
+      : null;
     if (!profile) return null;
 
     const bucket = this.pedPool.get(profile.id);

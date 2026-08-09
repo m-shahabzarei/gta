@@ -230,11 +230,11 @@ export class ArchitectureComposer {
       for (const building of buildings) {
         const geometry = this.geometry(building);
         const palette = this.palette(building.cityId, building.material, building.signature);
-        this.paintFoundation(foundations, building, geometry, palette);
+        const interiorIds = this.interiorIdsByBuilding.get(building.id) ?? [];
+        this.paintFoundation(foundations, building, geometry, palette, interiorIds.length === 0);
         this.paintShadow(shadows, geometry);
         this.paintWalls(walls, building, geometry, palette);
 
-        const interiorIds = this.interiorIdsByBuilding.get(building.id) ?? [];
         if (interiorIds.length === 0) {
           this.paintRoof(sharedRoofs, building, geometry, palette);
           continue;
@@ -621,10 +621,13 @@ export class ArchitectureComposer {
     building: PlannedBuilding,
     geometry: BuildingGeometry,
     palette: PixelPalette,
+    fillFootprint: boolean,
   ): void {
-    g.fillStyle(palette.foundation, 1);
-    for (const tile of geometry.tiles) {
-      g.fillRect(tile.x * TILE_SIZE, tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    if (fillFootprint) {
+      g.fillStyle(palette.foundation, 1);
+      for (const tile of geometry.tiles) {
+        g.fillRect(tile.x * TILE_SIZE, tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      }
     }
     g.fillStyle(palette.foundationEdge, 1);
     for (const span of geometry.north) {

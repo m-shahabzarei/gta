@@ -91,7 +91,7 @@ export class EmergencyResponseSystem extends BaseSceneManager {
       return;
     }
     const world = this.resolveWorld();
-    const hospital = world?.nearestHospital(position.x, position.y) ?? position;
+    const hospital = world?.nearestHospitalParking(position.x, position.y) ?? position;
     const incident: EmergencyIncident = {
       id: this.nextIncidentId++,
       victimId,

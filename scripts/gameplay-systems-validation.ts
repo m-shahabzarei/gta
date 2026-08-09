@@ -149,8 +149,20 @@ function validateArchitectureCollisionPolicy(): void {
     'physical urban fixtures must never be drivable terrain',
   );
   check(
-    TILE_TYPE_COUNT === TileType.UrbanFixture + 1,
-    'tile atlas size must include the UrbanFixture collision adapter',
+    SOLID_TILE_TYPES.includes(TileType.InteriorFixture),
+    'substantial interior fixtures must block the shared collision layer',
+  );
+  check(
+    PEDESTRIAN_BLOCKED_TILE_TYPES.includes(TileType.InteriorFixture),
+    'substantial interior fixtures must block pedestrian navigation',
+  );
+  check(
+    !DRIVABLE_TILE_TYPES.includes(TileType.InteriorFixture),
+    'substantial interior fixtures must never be drivable terrain',
+  );
+  check(
+    TILE_TYPE_COUNT === TileType.InteriorFixture + 1,
+    'tile atlas size must include the InteriorFixture collision adapter',
   );
 
   const expectedPhysicalKinds = [

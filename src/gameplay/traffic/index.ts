@@ -1,4 +1,5 @@
 export * from './IntersectionReservationController';
+export * from './MajorBuildingServiceParking';
 export * from './ParkedVehicleManager';
 export * from './SplineMath';
 export * from './TrafficDebugOverlay';

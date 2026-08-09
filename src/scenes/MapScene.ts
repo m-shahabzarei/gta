@@ -19,6 +19,7 @@ import type { WorldManager } from '@/systems/WorldManager';
 import type { MissionSystem } from '@/systems/MissionSystem';
 import type { MobilePlatform } from '@/platform';
 import { getObjectiveTarget, getWaypoint, setWaypoint } from '@/gameplay/WorldMapState';
+import { paintMajorBuildingIcon } from '@/ui/hud/MajorBuildingIconPainter';
 
 interface MapRect {
   x: number;
@@ -293,12 +294,22 @@ export class MapScene extends Phaser.Scene {
     g.clear();
 
     for (const landmark of map.landmarks) {
+      if (landmark.kind === 'hospital' || landmark.kind === 'police') continue;
       this.drawMarker(
         g,
         landmark.position,
         this.colorForLandmark(landmark),
         3.2 / this.zoom,
         landmark.kind === 'airport' || landmark.kind === 'bridge' ? 'diamond' : 'circle',
+      );
+    }
+    for (const building of map.majorBuildings) {
+      paintMajorBuildingIcon(
+        g,
+        building.mapIcon,
+        building.worldPosition.x / TILE_SIZE,
+        building.worldPosition.y / TILE_SIZE,
+        (building.size === 'metropolitan' ? 4.6 : 4) / this.zoom,
       );
     }
   }

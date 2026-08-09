@@ -12,6 +12,7 @@ import type {
   BusStopSite,
   IDamageable,
   INavigationService,
+  InteriorNpcActivity,
   ITrafficQuery,
   IWorldQuery,
 } from '@/gameplay/types';
@@ -75,6 +76,12 @@ export interface PedestrianAIContext {
   navService: INavigationService | null;
   /** Optional anchor used by interior/service NPCs to keep ordinary wandering local. */
   homeArea: { x: number; y: number; radius: number } | null;
+  /** Authored indoor work loop; when present the NPC never samples outdoor sidewalks. */
+  interiorRoutine: {
+    activity: InteriorNpcActivity;
+    anchors: Vector2[];
+    nextIndex: number;
+  } | null;
 
   state: PedState;
   stateTimer: number;

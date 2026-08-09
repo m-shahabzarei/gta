@@ -581,6 +581,9 @@ export interface BuildingInterior {
   /** Planned exterior object whose roof is opened for this interior. */
   buildingId: string;
   kind: InteriorKind;
+  /** City and layout identity used by rendering, NPC routines and validation. */
+  cityId: CityId;
+  variant: MajorBuildingVariant | 'gun-store' | 'vehicle-showroom';
   entrance: Vector2;
   bounds: { x: number; y: number; w: number; h: number };
   rooms: InteriorRoom[];
@@ -624,7 +627,16 @@ export type InteriorObjectKind =
   | 'washroom'
   | 'crate'
   | 'stretcher'
-  | 'door';
+  | 'door'
+  | 'chair'
+  | 'computer'
+  | 'medical-cart'
+  | 'exam-table'
+  | 'operating-table'
+  | 'privacy-screen'
+  | 'filing-cabinet'
+  | 'security-console'
+  | 'evidence-table';
 
 export type InteriorInteractionAction =
   | 'hospital-heal'
@@ -645,6 +657,8 @@ export interface InteriorObjectInfo {
   h: number;
   kind: InteriorObjectKind;
   color: number;
+  /** Substantial furniture stamps an invisible solid floor tile beneath its core. */
+  blocksMovement?: boolean;
   prompt?: string;
   action?: InteriorInteractionAction;
 }
@@ -655,7 +669,34 @@ export interface InteriorNpcSpawn {
   y: number;
   role: string;
   count: number;
+  appearance?: InteriorNpcAppearance;
+  activity?: InteriorNpcActivity;
+  /** Validated local route anchors used by the shared pedestrian navigation state machine. */
+  anchors?: Vector2[];
 }
+
+export type InteriorNpcAppearance =
+  | 'police-uniform'
+  | 'police-detective'
+  | 'hospital-doctor'
+  | 'hospital-nurse'
+  | 'hospital-paramedic'
+  | 'hospital-patient'
+  | 'hospital-reception'
+  | 'hospital-security'
+  | 'civilian';
+
+export type InteriorNpcActivity =
+  | 'reception'
+  | 'desk-work'
+  | 'patrol'
+  | 'guard'
+  | 'inspect'
+  | 'treat'
+  | 'deliver'
+  | 'wait'
+  | 'recover'
+  | 'talk';
 
 /** A sidewalk bench pedestrians can path to and sit on. */
 export interface BenchSite {
@@ -689,6 +730,70 @@ export interface CrossingInfo {
 
 /** Stable identifiers for the three seamless destination cities. */
 export type CityId = 'tehran' | 'yazd' | 'gilan';
+
+/** Functional landmark categories supported by the shared major-building registry. */
+export type MajorBuildingType =
+  | 'police-station'
+  | 'hospital'
+  | 'fire-station'
+  | 'gas-station'
+  | 'bank'
+  | 'government'
+  | 'shopping-center';
+
+export type MajorBuildingIcon =
+  | 'police-badge'
+  | 'medical-cross'
+  | 'fire-shield'
+  | 'fuel-pump'
+  | 'bank-columns'
+  | 'government-columns'
+  | 'shopping-bag';
+
+export type MajorBuildingVariant =
+  | 'tehran-police-headquarters'
+  | 'tehran-district-police'
+  | 'yazd-courtyard-police'
+  | 'gilan-regional-police'
+  | 'tehran-general-hospital'
+  | 'tehran-emergency-hospital'
+  | 'yazd-courtyard-hospital'
+  | 'gilan-regional-hospital';
+
+export type MajorBuildingSize = 'district' | 'regional' | 'metropolitan';
+
+export interface MajorBuildingParkingArea {
+  position: Vector2;
+  heading: number;
+  slots: number;
+  vehicleKind: 'police' | 'policeSuv' | 'ambulance';
+}
+
+export interface MajorBuildingNpcProfile {
+  maxActive: number;
+  roles: string[];
+}
+
+/** Authoritative record shared by simulation, rendering, world map and minimap. */
+export interface MajorBuildingDefinition {
+  id: string;
+  name: string;
+  type: MajorBuildingType;
+  city: CityId;
+  buildingId: string;
+  worldPosition: Vector2;
+  entrancePosition: Vector2;
+  exteriorBounds: WorldBounds;
+  interiorId: string;
+  mapIcon: MajorBuildingIcon;
+  minimapIcon: MajorBuildingIcon;
+  size: MajorBuildingSize;
+  architecturalVariant: MajorBuildingVariant;
+  npcProfile: MajorBuildingNpcProfile;
+  parkingArea: MajorBuildingParkingArea;
+  services: Array<'arrest' | 'dispatch' | 'wanted-clearance' | 'healing' | 'revival' | 'ambulance'>;
+  activeState: 'proximity-streamed';
+}
 
 /** A rectangular world-space extent, used by map and streaming queries. */
 export interface WorldBounds {
@@ -1141,6 +1246,8 @@ export interface MapData {
   cities: WorldCity[];
   /** Static destinations that remain visible on the world map while unloaded. */
   landmarks: WorldLandmark[];
+  /** Required service landmarks consumed by gameplay, world map and minimap. */
+  majorBuildings: MajorBuildingDefinition[];
   /** Intercity highway routes used by routing preview and road-trip traffic. */
   highways: HighwayRoute[];
   /** Rejection-gate result for the complete national expressway system. */

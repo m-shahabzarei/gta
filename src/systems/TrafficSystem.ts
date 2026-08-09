@@ -13,6 +13,7 @@ import { getPlayerRef } from '@/gameplay/types';
 import type { ITrafficQuery, IWorldQuery, MapData, VehicleKind } from '@/gameplay/types';
 import {
   IntersectionReservationController,
+  MajorBuildingServiceParking,
   ParkedVehicleManager,
   TrafficDebugOverlay,
   TrafficDriver,
@@ -148,6 +149,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
   private network: TrafficNetwork | null = null;
   private intersections: IntersectionReservationController | null = null;
   private parking: ParkedVehicleManager | null = null;
+  private serviceParking: MajorBuildingServiceParking | null = null;
   private validator: TrafficValidator | null = null;
   private debugOverlay: TrafficDebugOverlay | null = null;
   private lightsAnchor = '';
@@ -204,6 +206,8 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     this.scheduler.clear();
     this.parking?.destroy();
     this.parking = null;
+    this.serviceParking?.destroy();
+    this.serviceParking = null;
     this.validator?.clear();
     this.validator = null;
     this.intersections?.clear();
@@ -246,6 +250,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     for (const driver of this.drivers.values()) driver.render(interpolation);
     this.processPendingDespawns();
     this.parking?.update(player, delta);
+    this.serviceParking?.update(player, delta);
     this.validator?.update(time, delta, this.drivers.values());
     this.refreshLightSprites(scene);
     this.refreshLightTints();
@@ -447,6 +452,12 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     }
     this.intersections = new IntersectionReservationController(this.network);
     this.parking = new ParkedVehicleManager(this.network, this.vehicleSystem, this.world, this.rng);
+    this.serviceParking = new MajorBuildingServiceParking(
+      this.world.map.majorBuildings,
+      this.vehicleSystem,
+      this.world,
+      this.rng,
+    );
     this.validator = new TrafficValidator(this.network, this.world);
   }
 
@@ -996,7 +1007,8 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     const reservations = this.intersections?.stats;
     const scheduler = this.scheduler.stats;
     this.statsValue.activeDrivers = this.drivers.size;
-    this.statsValue.parkedVehicles = this.parking?.count ?? 0;
+    this.statsValue.parkedVehicles =
+      (this.parking?.count ?? 0) + (this.serviceParking?.count ?? 0);
     this.statsValue.queuedVehicles = reservations?.queued ?? 0;
     this.statsValue.blockedDrivers = this.blockedDriverIds.size;
     this.statsValue.routeCacheHits = this.network?.routeCacheHits ?? 0;

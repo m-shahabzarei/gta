@@ -43,9 +43,12 @@ interface EntranceProvider {
 
 export function updateWander(ctx: PedestrianAIContext, pos: Vector2, delta: number): void {
   if (!ctx.nav.hasDestination) {
+    const routine = ctx.interiorRoutine;
     const anchor = ctx.homeArea ?? pos;
     const radius = ctx.homeArea?.radius ?? WANDER_LOCAL_RADIUS;
-    const target = ctx.world?.randomSidewalkPointNear(anchor.x, anchor.y, radius) ?? null;
+    const target = routine
+      ? routine.anchors[routine.nextIndex++ % routine.anchors.length] ?? null
+      : ctx.world?.randomSidewalkPointNear(anchor.x, anchor.y, radius) ?? null;
     if (!target) {
       enterIdle(ctx);
       return;
@@ -92,6 +95,26 @@ export function updateIdle(
   ctx.movement.stop();
   ctx.stateTimer -= delta;
   if (ctx.stateTimer > 0) return;
+
+  const routine = ctx.interiorRoutine;
+  if (routine) {
+    if (routine.activity === 'talk' && ctx.capabilities.canConverse) {
+      enterTalk(ctx, pos, sprite);
+      return;
+    }
+    if (
+      routine.activity === 'reception' ||
+      routine.activity === 'desk-work' ||
+      routine.activity === 'guard' ||
+      routine.activity === 'wait' ||
+      routine.activity === 'recover'
+    ) {
+      enterLookAround(ctx);
+      return;
+    }
+    enterWander(ctx);
+    return;
+  }
 
   const roll = Math.random();
   let band = ctx.homeArea ? 0 : ENTER_BUILDING_CHANCE;
