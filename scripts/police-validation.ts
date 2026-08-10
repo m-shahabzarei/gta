@@ -9,7 +9,7 @@ import {
   reactionWillReport,
   witnessReportDelay,
 } from '@/gameplay/crime/CrimeRules';
-import { isPoliceOccupant, occupantManifestFor } from '@/gameplay/occupants/OccupantRules';
+import { isPoliceOccupant, occupantManifestFor, passengerSeatsFor } from '@/gameplay/occupants/OccupantRules';
 
 const failures: string[] = [];
 let assertions = 0;
@@ -123,7 +123,11 @@ function validateVehicleOwnership(): void {
     enforcer.filter(([, role]) => isPoliceOccupant(role)).length >= 3,
     'police SUV needs a full crew',
   );
-  check(occupantManifestFor('bus').length >= 5, 'bus needs a driver and visible passengers');
+  check(
+    occupantManifestFor('bus').some(([seat, role]) => seat === 'driver' && role === 'bus-driver') &&
+      passengerSeatsFor('bus').length >= 5,
+    'bus needs a real driver and five dynamically claimable passenger seats',
+  );
 }
 
 function validatePhysicalTransitions(): void {

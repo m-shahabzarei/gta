@@ -27,6 +27,7 @@ export type PedState =
   | 'look-around'
   | 'sit'
   | 'wait-bus'
+  | 'transit-boarding'
   | 'talk'
   | 'talk-to-nearby-npc'
   | 'enter-building'
@@ -94,6 +95,10 @@ export interface PedestrianAIContext {
   bench: BenchSite | null;
   /** Bus stop currently claimed, if any (state 'wait-bus'). */
   busStop: BusStopSite | null;
+  /** Door target while a real transit passenger walks from the platform to a vehicle. */
+  transitBoardingTarget: Vector2 | null;
+  /** Set only after navigation reaches the door target. */
+  transitBoardingReady: boolean;
   /** Brawl opponent, when a street fight is running. */
   brawlTarget: IDamageable | null;
   brawlSwingMs: number;

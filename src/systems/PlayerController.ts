@@ -29,7 +29,7 @@ import { EntityCategory, type EntityManager } from '@/systems/EntityManager';
 import type { ISerializable } from '@/core/interfaces';
 import type { CrimeType, Json, Vector2 } from '@/core/types';
 import { damageAttribution } from '@/gameplay/types';
-import { getWorldQuery, type IPlayerRef, type MapData } from '@/gameplay/types';
+import { getWorldQuery, type IPlayerRef, type MapData, type VehicleSeat } from '@/gameplay/types';
 import type { VehicleOccupantSystem } from '@/systems/VehicleOccupantSystem';
 import type { PedestrianSystem } from '@/systems/PedestrianSystem';
 import type { TrafficSystem } from '@/systems/TrafficSystem';
@@ -38,6 +38,8 @@ import type { VehicleSystem } from '@/systems/VehicleSystem';
 
 interface VehicleEntryTransition {
   vehicle: Vehicle;
+  seat: VehicleSeat;
+  mode: 'driver' | 'passenger';
   elapsed: number;
   ejectDuration: number;
   start: Vector2;
@@ -46,6 +48,8 @@ interface VehicleEntryTransition {
 
 interface VehicleExitTransition {
   vehicle: Vehicle;
+  seat: VehicleSeat;
+  mode: 'driver' | 'passenger';
   elapsed: number;
   target: Vector2;
 }
@@ -96,6 +100,9 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
 
   /** The vehicle the player is currently driving, or `null` when on foot. */
   private vehicleOccupied: Vehicle | null = null;
+  /** Service vehicle carrying the player without transferring driving authority. */
+  private passengerVehicle: Vehicle | null = null;
+  private passengerSeat: VehicleSeat | null = null;
   private entryTransition: VehicleEntryTransition | null = null;
   private exitTransition: VehicleExitTransition | null = null;
 
@@ -128,7 +135,7 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
    * @param vehicleId Id of the vehicle that was destroyed.
    */
   private onVehicleDestroyed(vehicleId: number): void {
-    const vehicle = this.vehicleOccupied;
+    const vehicle = this.vehicleOccupied ?? this.passengerVehicle;
     const player = this.playerEntity;
     if (!vehicle || vehicle.id !== vehicleId || !player || player.isDead) {
       return;
@@ -139,6 +146,8 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
   /** Spawn the player, then frame and follow it with the main camera. */
   protected onAttach(scene: Phaser.Scene): void {
     this.vehicleOccupied = null;
+    this.passengerVehicle = null;
+    this.passengerSeat = null;
     this.entryTransition = null;
     this.exitTransition = null;
     this.respawnTimerMs = 0;
@@ -153,10 +162,13 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
       category: EntityCategory.Player,
       alwaysActive: true,
       canRender: () =>
-        (this.vehicleOccupied === null || this.exitTransition !== null) && this.jailTimerMs <= 0,
+        ((this.vehicleOccupied === null && this.passengerVehicle === null) ||
+          this.exitTransition !== null) &&
+        this.jailTimerMs <= 0,
       canSimulatePhysics: () =>
         !player.isDead &&
         this.vehicleOccupied === null &&
+        this.passengerVehicle === null &&
         this.entryTransition === null &&
         this.exitTransition === null &&
         this.jailTimerMs <= 0,
@@ -177,6 +189,8 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
   /** Destroy the player entity on scene teardown. */
   protected override onDetach(_scene: Phaser.Scene): void {
     this.vehicleOccupied = null;
+    this.passengerVehicle = null;
+    this.passengerSeat = null;
     this.entryTransition = null;
     this.exitTransition = null;
     if (this.playerEntity) this.resolveEntityManager()?.unregister(this.playerEntity);
@@ -207,9 +221,12 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
       return;
     }
 
-    const vehicle = this.vehicleOccupied;
-    if (vehicle) {
-      this.updateDriving(input, player, vehicle);
+    const drivenVehicle = this.vehicleOccupied;
+    const passengerVehicle = this.passengerVehicle;
+    if (drivenVehicle) {
+      this.updateDriving(input, player, drivenVehicle);
+    } else if (passengerVehicle) {
+      this.updatePassenger(input, player, passengerVehicle);
     } else {
       this.updateOnFoot(input, player);
     }
@@ -223,7 +240,7 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     if (!player || player.isDead) {
       return null;
     }
-    const vehicle = this.vehicleOccupied;
+    const vehicle = this.vehicleOccupied ?? this.passengerVehicle;
     if (vehicle) {
       return { x: vehicle.sprite.x, y: vehicle.sprite.y };
     }
@@ -233,7 +250,7 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
 
   /** Whether the player is currently driving a vehicle. */
   public get playerInVehicle(): boolean {
-    return this.vehicleOccupied !== null;
+    return this.vehicleOccupied !== null || this.passengerVehicle !== null;
   }
 
   /** Whether the player entity exists and is alive. */
@@ -250,7 +267,16 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
 
   /** The vehicle the player is driving, or `null` when on foot. */
   public get currentVehicle(): Vehicle | null {
-    return this.vehicleOccupied;
+    return this.vehicleOccupied ?? this.passengerVehicle;
+  }
+
+  /** True while the player rides as a non-driving bus or taxi passenger. */
+  public get playerIsTransitPassenger(): boolean {
+    return this.passengerVehicle !== null;
+  }
+
+  public get currentPassengerSeat(): VehicleSeat | null {
+    return this.passengerSeat;
   }
 
   /**
@@ -262,6 +288,76 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
       return;
     }
     this.playerEntity?.inventory.addMoney(n);
+  }
+
+  /**
+   * Start a door-mediated passenger transition without stealing vehicle control.
+   * Transit calls this only after reserving `seat` in VehicleOccupantSystem.
+   */
+  public beginPassengerBoarding(vehicle: Vehicle, seat: VehicleSeat): boolean {
+    const player = this.playerEntity;
+    const occupants = this.resolveOccupants();
+    if (
+      !player ||
+      player.isDead ||
+      !occupants ||
+      vehicle.isDestroyed ||
+      this.vehicleOccupied ||
+      this.passengerVehicle ||
+      this.entryTransition ||
+      this.exitTransition ||
+      Math.abs(vehicle.movement.speed) > OCCUPANTS.CARJACK_MAX_SPEED
+    ) {
+      return false;
+    }
+    const start = { ...player.position };
+    const door = occupants.doorWorldPosition(vehicle, seat, 4);
+    const seatPosition = occupants.seatWorldPosition(vehicle, seat);
+    const world = getWorldQuery();
+    if (
+      !world ||
+      !world.isPedestrianClearAtWorld(door.x, door.y, PLAYER.RADIUS) ||
+      !world.isPedestrianSegmentClear(start, door, PLAYER.RADIUS) ||
+      !world.isPedestrianSegmentClear(door, seatPosition, PLAYER.RADIUS)
+    ) {
+      return false;
+    }
+    this.entryTransition = {
+      vehicle,
+      seat,
+      mode: 'passenger',
+      elapsed: 0,
+      ejectDuration: OCCUPANTS.DOOR_OPEN_MS,
+      start,
+      door,
+    };
+    player.stopMoving();
+    player.movement.setEnabled(false);
+    const body = player.sprite.body as Phaser.Physics.Arcade.Body;
+    body.setVelocity(0, 0);
+    body.enable = false;
+    this.bus.emit(EventKeys.VehicleDoor, { open: true, vehicleId: vehicle.id, seat });
+    return true;
+  }
+
+  /** Begin a passenger exit to a transit-supplied curb/platform location. */
+  public beginPassengerExit(requested: Vector2): boolean {
+    const player = this.playerEntity;
+    const vehicle = this.passengerVehicle;
+    const seat = this.passengerSeat;
+    const occupants = this.resolveOccupants();
+    if (!player || !vehicle || !seat || !occupants || this.exitTransition || this.entryTransition) {
+      return false;
+    }
+    const target = this.resolveSafeVehicleExitPosition(vehicle, requested, false);
+    if (!target) return false;
+    const seatPosition = occupants.seatWorldPosition(vehicle, seat);
+    player.sprite.setPosition(seatPosition.x, seatPosition.y).setVisible(true).setActive(true);
+    const body = player.sprite.body as Phaser.Physics.Arcade.Body;
+    body.enable = false;
+    this.exitTransition = { vehicle, seat, mode: 'passenger', elapsed: 0, target };
+    this.bus.emit(EventKeys.VehicleDoor, { open: true, vehicleId: vehicle.id, seat });
+    return true;
   }
 
   // ── On-foot control ──────────────────────────────────────────────────────────
@@ -309,6 +405,17 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     if (input.isJustDown(InputAction.Interact)) {
       const pos = player.position;
       this.bus.emit(EventKeys.PlayerInteract, { x: pos.x, y: pos.y });
+    }
+  }
+
+  /** A passenger retains camera follow and interaction, but never receives driving authority. */
+  private updatePassenger(input: InputManager, player: Player, vehicle: Vehicle): void {
+    player.stopMoving();
+    if (
+      input.isJustDown(InputAction.Interact) ||
+      input.isJustDown(InputAction.EnterVehicle)
+    ) {
+      this.bus.emit(EventKeys.PlayerInteract, { x: vehicle.sprite.x, y: vehicle.sprite.y });
     }
   }
 
@@ -365,6 +472,10 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     ) {
       return;
     }
+    if (vehicle.sprite.getData('persistentTransitService') === true) {
+      this.bus.emit(EventKeys.PlayerInteract, { x: pos.x, y: pos.y });
+      return;
+    }
     const occupants = this.resolveOccupants();
     if (!occupants) return;
     const manifest = occupants.occupantsFor(vehicle);
@@ -389,6 +500,8 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     const occupantExitDuration = OCCUPANTS.DOOR_OPEN_MS + OCCUPANTS.EXIT_MS + OCCUPANTS.FALL_MS;
     this.entryTransition = {
       vehicle,
+      seat: 'driver',
+      mode: 'driver',
       elapsed: 0,
       ejectDuration:
         driver || carjack.passengers.length > 0 ? occupantExitDuration : OCCUPANTS.DOOR_OPEN_MS,
@@ -427,7 +540,7 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     player.sprite.setPosition(seat.x, seat.y).setVisible(true).setActive(true);
     const body = player.sprite.body as Phaser.Physics.Arcade.Body;
     body.enable = false;
-    this.exitTransition = { vehicle, elapsed: 0, target };
+    this.exitTransition = { vehicle, seat: 'driver', mode: 'driver', elapsed: 0, target };
     this.bus.emit(EventKeys.VehicleDoor, {
       open: true,
       vehicleId: vehicle.id,
@@ -444,7 +557,7 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     }
     transition.elapsed += delta;
     const door = transition.door;
-    const seat = occupants.seatWorldPosition(transition.vehicle, 'driver');
+    const seat = occupants.seatWorldPosition(transition.vehicle, transition.seat);
     const enterStart = transition.ejectDuration;
     const closeStart = enterStart + OCCUPANTS.BOARD_MS;
     const finish = closeStart + OCCUPANTS.DOOR_CLOSE_MS;
@@ -466,11 +579,25 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
       player.sprite.setPosition(seat.x, seat.y).setVisible(false);
     }
     if (transition.elapsed < finish) return;
-    this.completeVehicleEntry(player, transition.vehicle);
+    this.completeVehicleEntry(player, transition);
   }
 
-  private completeVehicleEntry(player: Player, vehicle: Vehicle): void {
+  private completeVehicleEntry(player: Player, transition: VehicleEntryTransition): void {
+    const { vehicle } = transition;
     this.entryTransition = null;
+    if (transition.mode === 'passenger') {
+      this.passengerVehicle = vehicle;
+      this.passengerSeat = transition.seat;
+      player.sprite.setVisible(false);
+      this.resolveCamera()?.follow(vehicle.sprite);
+      this.bus.emit(EventKeys.VehicleDoor, {
+        open: false,
+        vehicleId: vehicle.id,
+        seat: transition.seat,
+      });
+      this.bus.emit(EventKeys.PlayerEnteredVehicle, { vehicleId: vehicle.id });
+      return;
+    }
     this.vehicleOccupied = vehicle;
     this.resolveTraffic()?.releaseDriver(vehicle.id);
     this.resolveOccupants()?.claimDriverSeat(vehicle, player.id);
@@ -491,7 +618,7 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     const occupants = this.resolveOccupants();
     if (!transition || !occupants) return;
     transition.elapsed += delta;
-    const seat = occupants.seatWorldPosition(transition.vehicle, 'driver');
+    const seat = occupants.seatWorldPosition(transition.vehicle, transition.seat);
     const target = transition.target;
     const moveStart = OCCUPANTS.DOOR_OPEN_MS;
     const closeStart = moveStart + OCCUPANTS.EXIT_MS;
@@ -506,13 +633,24 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
       );
     }
     if (transition.elapsed < finish) return;
-    this.completeVehicleExit(player, transition.vehicle, target);
+    this.completeVehicleExit(player, transition, target);
   }
 
-  private completeVehicleExit(player: Player, vehicle: Vehicle, position: Vector2): void {
+  private completeVehicleExit(
+    player: Player,
+    transition: Pick<VehicleExitTransition, 'vehicle' | 'seat' | 'mode'>,
+    position: Vector2,
+  ): void {
+    const { vehicle } = transition;
     this.exitTransition = null;
-    this.vehicleOccupied = null;
-    vehicle.setDriverId(null);
+    if (transition.mode === 'driver') {
+      this.vehicleOccupied = null;
+      vehicle.setDriverId(null);
+    } else {
+      this.passengerVehicle = null;
+      this.passengerSeat = null;
+      this.resolveOccupants()?.releasePlayerPassengerSeat(vehicle);
+    }
     player.sprite.enableBody(true, position.x, position.y, true, true);
     player.movement.setEnabled(true);
     player.stopMoving();
@@ -522,14 +660,16 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     this.bus.emit(EventKeys.VehicleDoor, {
       open: false,
       vehicleId: vehicle.id,
-      seat: 'driver',
+      seat: transition.seat,
     });
     this.bus.emit(EventKeys.PlayerExitedVehicle, { vehicleId: vehicle.id });
-    this.bus.emit(EventKeys.EngineStateChanged, { running: false });
+    if (transition.mode === 'driver') {
+      this.bus.emit(EventKeys.EngineStateChanged, { running: false });
+    }
   }
 
   private forceExitVehicle(player: Player): void {
-    const vehicle = this.vehicleOccupied;
+    const vehicle = this.vehicleOccupied ?? this.passengerVehicle;
     if (!vehicle) return;
     const side = vehicle.movement.heading + Math.PI / 2;
     const distance = vehicle.def.width / 2 + PLAYER.RADIUS + PlayerController.EXIT_CLEARANCE;
@@ -539,14 +679,19 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     };
     const safePosition = this.resolveSafeVehicleExitPosition(vehicle, position, true);
     if (!safePosition) return;
-    vehicle.setPlayerDriven(false);
-    this.completeVehicleExit(player, vehicle, safePosition);
+    const mode = this.vehicleOccupied ? 'driver' : 'passenger';
+    const seat = mode === 'driver' ? 'driver' : (this.passengerSeat ?? 'rear-right');
+    if (mode === 'driver') vehicle.setPlayerDriven(false);
+    this.completeVehicleExit(player, { vehicle, seat, mode }, safePosition);
   }
 
   private cancelEntry(player: Player): void {
     const transition = this.entryTransition;
     this.entryTransition = null;
     if (!transition) return;
+    if (transition.mode === 'passenger') {
+      this.resolveOccupants()?.releasePlayerPassengerSeat(transition.vehicle);
+    }
     const query = getWorldQuery();
     const position = query
       ? (query.resolveSafePedestrianPosition(transition.start, PLAYER.RADIUS, {
@@ -602,17 +747,14 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     this.deathPosition = { x: position.x, y: position.y };
     this.respawnTimerMs = PlayerController.RESPAWN_DELAY_MS;
     if (this.entryTransition) {
-      this.resolveTraffic()?.setDriverStopped(this.entryTransition.vehicle, false);
+      const transition = this.entryTransition;
+      if (transition.mode === 'driver') this.resolveTraffic()?.setDriverStopped(transition.vehicle, false);
+      else this.resolveOccupants()?.releasePlayerPassengerSeat(transition.vehicle);
       this.entryTransition = null;
     }
     this.exitTransition = null;
 
-    const vehicle = this.vehicleOccupied;
-    if (vehicle) {
-      vehicle.setPlayerDriven(false);
-      vehicle.setDriverId(null);
-      this.vehicleOccupied = null;
-    }
+    this.clearPlayerVehicleState();
   }
 
   /** Arm the jail timer and immobilise the player after being busted. */
@@ -624,22 +766,35 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     this.arrestPosition = { x: position.x, y: position.y };
     this.jailTimerMs = PlayerController.RESPAWN_DELAY_MS;
     if (this.entryTransition) {
-      this.resolveTraffic()?.setDriverStopped(this.entryTransition.vehicle, false);
+      const transition = this.entryTransition;
+      if (transition.mode === 'driver') this.resolveTraffic()?.setDriverStopped(transition.vehicle, false);
+      else this.resolveOccupants()?.releasePlayerPassengerSeat(transition.vehicle);
       this.entryTransition = null;
     }
     this.exitTransition = null;
 
-    const vehicle = this.vehicleOccupied;
-    if (vehicle) {
-      vehicle.setPlayerDriven(false);
-      vehicle.setDriverId(null);
-      this.vehicleOccupied = null;
-    }
+    this.clearPlayerVehicleState();
 
     player.stopMoving();
     player.movement.setEnabled(false);
     const body = player.sprite.body as Phaser.Physics.Arcade.Body;
     body.setVelocity(0, 0);
+  }
+
+  /** Drop either driving or passenger ownership without disturbing a service driver. */
+  private clearPlayerVehicleState(): void {
+    const drivenVehicle = this.vehicleOccupied;
+    if (drivenVehicle) {
+      drivenVehicle.setPlayerDriven(false);
+      drivenVehicle.setDriverId(null);
+      this.vehicleOccupied = null;
+    }
+    const passengerVehicle = this.passengerVehicle;
+    if (passengerVehicle) {
+      this.resolveOccupants()?.releasePlayerPassengerSeat(passengerVehicle);
+      this.passengerVehicle = null;
+      this.passengerSeat = null;
+    }
   }
 
   /** Count the respawn timer down and revive the player when it elapses. */

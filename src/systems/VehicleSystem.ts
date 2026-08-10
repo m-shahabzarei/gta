@@ -205,6 +205,11 @@ export class VehicleSystem extends BaseSceneManager {
         continue;
       }
 
+      // Scheduled buses and taxis own route, passenger, and paid-trip state.
+      // TrafficSystem already applies its regular distance-based driver LOD;
+      // generic vehicle cleanup must not erase that service state.
+      if (vehicle.sprite.getData('persistentTransitService') === true) continue;
+
       if (playerPos && !vehicle.isPlayerDriven) {
         const dx = vehicle.sprite.x - playerPos.x;
         const dy = vehicle.sprite.y - playerPos.y;

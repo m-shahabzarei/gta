@@ -31,6 +31,8 @@ export interface VehicleOccupantRecord {
   personality: NpcPersonality;
   reaction: WitnessReaction;
   color: number;
+  /** Transit-only destination; undefined for ordinary vehicle occupants. */
+  transitDestinationStopId?: string;
 }
 
 export interface CompletedVehicleExit {
@@ -38,5 +40,5 @@ export interface CompletedVehicleExit {
   occupant: VehicleOccupantRecord;
   x: number;
   y: number;
-  reason: 'police-deploy' | 'carjack' | 'passenger-escape';
+  reason: 'police-deploy' | 'carjack' | 'passenger-escape' | 'transit-exit';
 }

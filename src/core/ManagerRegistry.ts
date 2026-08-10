@@ -42,6 +42,7 @@ import { VehicleSystem } from '@/systems/VehicleSystem';
 import { VehicleOccupantSystem } from '@/systems/VehicleOccupantSystem';
 import { PedestrianSystem } from '@/systems/PedestrianSystem';
 import { TrafficSystem } from '@/systems/TrafficSystem';
+import { TransportationSystem } from '@/systems/TransportationSystem';
 import { EmergencyResponseSystem } from '@/systems/EmergencyResponseSystem';
 import { CrimeSystem } from '@/systems/CrimeSystem';
 import { WantedSystem } from '@/systems/WantedSystem';
@@ -105,6 +106,7 @@ export class ManagerRegistry {
       new VehicleOccupantSystem(this.game),
       new PedestrianSystem(this.game),
       new TrafficSystem(this.game),
+      new TransportationSystem(this.game),
       new EmergencyResponseSystem(this.game),
       new CrimeSystem(this.game),
       new WantedSystem(this.game),

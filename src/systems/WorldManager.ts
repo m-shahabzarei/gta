@@ -169,10 +169,14 @@ const PEDESTRIAN_BLOCKED_SET = new Set<number>(PEDESTRIAN_BLOCKED_TILE_TYPES);
 const MAX_BENCHES = 150;
 /** One bench is sampled per this many sidewalk spawn points, roughly. */
 const BENCH_STRIDE = 45;
-/** Maximum bus stops placed across the city. */
+/** Maximum lane-backed transit stops placed across the three cities. */
 const MAX_BUS_STOPS = 90;
-/** One bus stop is sampled per this many sidewalk spawn points, roughly. */
-const BUS_STOP_STRIDE = 86;
+/** A stop must leave this much lane distance free at either junction. */
+const BUS_STOP_JUNCTION_CLEARANCE = 80;
+/** Keep shelters apart so platforms do not visually or physically overlap. */
+const BUS_STOP_SPACING = 176;
+/** Every stop exposes a small, bounded queue rather than a single NPC slot. */
+const BUS_STOP_WAITING_CAPACITY = 3;
 /** Cosmetic sit-facing choices, cycled deterministically per bench. */
 const CARDINAL_FACINGS = [0, Math.PI / 2, Math.PI, -Math.PI / 2] as const;
 
@@ -375,6 +379,18 @@ interface RoadBuildResult {
   edges: RoadEdge[];
 }
 
+/** A fully validated stop candidate before per-city density limits are applied. */
+interface TransitStopCandidate {
+  cityId: CityId;
+  laneId: string;
+  approachPosition: Vector2;
+  laneDistance: number;
+  laneLength: number;
+  heading: number;
+  platformPosition: Vector2;
+  waitingPositions: Vector2[];
+}
+
 interface ArchitectureOwnershipAudit {
   unownedBuildingTiles: number;
   footprintMismatches: number;
@@ -568,7 +584,7 @@ class CityGenerator {
     const roadSpawns = this.sampleDrivable(roadNodes, roadEdges, tiles);
     const buildingEntrances = this.buildEntrancesFromPlan(tiles, this.plannedBuildings);
     const benches = this.sampleBenches(sidewalkSpawns);
-    const busStops = this.sampleBusStops(sidewalkSpawns, benches);
+    const busStops = this.sampleBusStops(roadNodes, roadEdges, tiles, benches);
     const trafficLights = this.buildTrafficLights(roadNodes, cities);
     const intersections = this.buildIntersectionData(
       roadNodes,
@@ -4706,23 +4722,228 @@ class CityGenerator {
     }));
   }
 
-  /** Scatter bus stops across sidewalks so pedestrians can wait for transit. */
-  private sampleBusStops(sidewalkSpawns: Vector2[], benches: readonly BenchSite[]): BusStopSite[] {
-    if (sidewalkSpawns.length === 0) return [];
-    const occupied = new Set(benches.map((bench) => `${bench.x},${bench.y}`));
-    const candidates = sidewalkSpawns.filter((point) => !occupied.has(`${point.x},${point.y}`));
-    if (candidates.length === 0) return [];
-    const count = Math.min(
-      MAX_BUS_STOPS,
-      Math.max(1, Math.floor(candidates.length / BUS_STOP_STRIDE)),
+  /**
+   * Build curb-side stops from the same directed outer lanes consumed by traffic.
+   * This intentionally runs after road-edge validation: a stop cannot exist unless
+   * a real bus can enter, stop clear of both junctions, and continue on that lane.
+   */
+  private sampleBusStops(
+    nodes: readonly RoadNode[],
+    edges: readonly RoadEdge[],
+    tiles: number[][],
+    benches: readonly BenchSite[],
+  ): BusStopSite[] {
+    const nodesById = new Map(nodes.map((node) => [node.id, node]));
+    const candidatesByCity: Record<CityId, TransitStopCandidate[]> = {
+      tehran: [],
+      yazd: [],
+      gilan: [],
+    };
+
+    for (const edge of edges) {
+      if (
+        !edge.navigationAllowed ||
+        !edge.trafficAllowed ||
+        edge.highwayComponent !== undefined ||
+        edge.roadClass === 'highway' ||
+        edge.roadClass === 'service'
+      ) {
+        continue;
+      }
+      const from = nodesById.get(edge.fromNodeId);
+      const to = nodesById.get(edge.toNodeId);
+      if (!from || !to) continue;
+      const cityId = this.cityIdAtPoint((from.x + to.x) / 2, (from.y + to.y) / 2);
+      if (!cityId) continue;
+
+      const legalDirections: Array<readonly [RoadNode, RoadNode]> = [];
+      if (edge.direction !== 'reverse') legalDirections.push([from, to]);
+      if (edge.direction !== 'forward') legalDirections.push([to, from]);
+      for (const [origin, destination] of legalDirections) {
+        const candidate = this.createBusStopCandidate(cityId, edge, origin, destination, tiles);
+        if (candidate) candidatesByCity[cityId].push(candidate);
+      }
+    }
+
+    const stops: BusStopSite[] = [];
+    const targetByCity: Record<CityId, number> = { tehran: 52, yazd: 16, gilan: 22 };
+    for (const cityId of ['tehran', 'yazd', 'gilan'] as const) {
+      const candidates = candidatesByCity[cityId];
+      candidates.sort((first, second) => {
+        const firstRank = this.transitStopRank(first.laneId);
+        const secondRank = this.transitStopRank(second.laneId);
+        return firstRank - secondRank || first.laneId.localeCompare(second.laneId);
+      });
+      const cityTarget = Math.min(targetByCity[cityId], MAX_BUS_STOPS - stops.length);
+      for (const candidate of candidates) {
+        if (stops.filter((stop) => stop.cityId === cityId).length >= cityTarget) break;
+        if (!this.busStopPlatformIsClear(candidate.platformPosition, stops, benches)) continue;
+        const facing = Math.atan2(
+          candidate.approachPosition.y - candidate.platformPosition.y,
+          candidate.approachPosition.x - candidate.platformPosition.x,
+        );
+        stops.push({
+          id: `bus-stop:${cityId}:${candidate.laneId.slice('lane:'.length)}`,
+          cityId,
+          x: candidate.platformPosition.x,
+          y: candidate.platformPosition.y,
+          facing,
+          laneId: candidate.laneId,
+          approachPosition: candidate.approachPosition,
+          laneDistance: candidate.laneDistance,
+          laneLength: candidate.laneLength,
+          heading: candidate.heading,
+          capacity: BUS_STOP_WAITING_CAPACITY,
+          waitingEntityIds: [],
+          waitingPositions: candidate.waitingPositions,
+        });
+      }
+    }
+    return stops;
+  }
+
+  /** Create one legal outer-lane stopping point and its pedestrian platform. */
+  private createBusStopCandidate(
+    cityId: CityId,
+    edge: RoadEdge,
+    from: RoadNode,
+    to: RoadNode,
+    tiles: number[][],
+  ): TransitStopCandidate | null {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const physicalLength = Math.hypot(dx, dy);
+    const laneLength = physicalLength - 96;
+    if (laneLength <= BUS_STOP_JUNCTION_CLEARANCE * 2 + 2) return null;
+
+    const ux = dx / physicalLength;
+    const uy = dy / physicalLength;
+    const rightX = uy;
+    const rightY = -ux;
+    const outerLaneIndex = edge.laneCount - 1;
+    const laneOffset =
+      edge.laneCount === 1 ? 11.5 : 29.5 + Math.max(0, outerLaneIndex - 1) * 18;
+    const laneDistance = Math.max(
+      BUS_STOP_JUNCTION_CLEARANCE + 1,
+      Math.min(laneLength - BUS_STOP_JUNCTION_CLEARANCE - 1, laneLength / 2),
     );
-    const picks = this.rng.shuffle(candidates).slice(0, count);
-    return picks.map((p, i) => ({
-      x: p.x,
-      y: p.y,
-      facing: CARDINAL_FACINGS[(i + 1) % CARDINAL_FACINGS.length] ?? 0,
-      occupiedBy: null,
-    }));
+    const approachPosition = {
+      x: from.x + ux * (48 + laneDistance) + rightX * laneOffset,
+      y: from.y + uy * (48 + laneDistance) + rightY * laneOffset,
+    };
+    const platformPosition = this.findBusStopPlatform(tiles, approachPosition, ux, uy);
+    if (!platformPosition || this.cityIdAtPoint(platformPosition.x, platformPosition.y) !== cityId) {
+      return null;
+    }
+    const waitingPositions = this.findBusStopWaitingPositions(tiles, platformPosition, ux, uy);
+    if (waitingPositions.length !== BUS_STOP_WAITING_CAPACITY) return null;
+
+    return {
+      cityId,
+      laneId: `lane:${from.id}>${to.id}:${outerLaneIndex}`,
+      approachPosition,
+      laneDistance,
+      laneLength,
+      heading: Math.atan2(uy, ux),
+      platformPosition,
+      waitingPositions,
+    };
+  }
+
+  /** Locate a pedestrian-safe surface on the curb side of an outer traffic lane. */
+  private findBusStopPlatform(
+    tiles: number[][],
+    approach: Vector2,
+    ux: number,
+    uy: number,
+  ): Vector2 | null {
+    const rightX = uy;
+    const rightY = -ux;
+    const expected = { x: approach.x + rightX * 44, y: approach.y + rightY * 44 };
+    const centerTx = Math.floor(expected.x / TILE_SIZE);
+    const centerTy = Math.floor(expected.y / TILE_SIZE);
+    let selected: Vector2 | null = null;
+    let selectedScore = Infinity;
+    for (let ty = centerTy - 4; ty <= centerTy + 4; ty++) {
+      for (let tx = centerTx - 4; tx <= centerTx + 4; tx++) {
+        const tile = tiles[ty]?.[tx];
+        if (tile === undefined || PEDESTRIAN_BLOCKED_SET.has(tile)) continue;
+        const point = tileCenter(tx, ty);
+        const dx = point.x - approach.x;
+        const dy = point.y - approach.y;
+        const lateral = dx * rightX + dy * rightY;
+        const longitudinal = dx * ux + dy * uy;
+        if (lateral < 24 || lateral > 88 || Math.abs(longitudinal) > 52) continue;
+        const score = Math.abs(lateral - 44) + Math.abs(longitudinal) * 0.7;
+        if (score < selectedScore) {
+          selected = point;
+          selectedScore = score;
+        }
+      }
+    }
+    return selected;
+  }
+
+  /** Reserve distinct nearby sidewalk/plaza positions for the bounded passenger queue. */
+  private findBusStopWaitingPositions(
+    tiles: number[][],
+    platform: Vector2,
+    ux: number,
+    uy: number,
+  ): Vector2[] {
+    const centerTx = Math.floor(platform.x / TILE_SIZE);
+    const centerTy = Math.floor(platform.y / TILE_SIZE);
+    const candidates: Array<{ point: Vector2; score: number }> = [];
+    for (let ty = centerTy - 4; ty <= centerTy + 4; ty++) {
+      for (let tx = centerTx - 4; tx <= centerTx + 4; tx++) {
+        const tile = tiles[ty]?.[tx];
+        if (tile === undefined || PEDESTRIAN_BLOCKED_SET.has(tile)) continue;
+        const point = tileCenter(tx, ty);
+        const dx = point.x - platform.x;
+        const dy = point.y - platform.y;
+        const lateral = Math.abs(dx * -uy + dy * ux);
+        const longitudinal = Math.abs(dx * ux + dy * uy);
+        if (lateral > 28 || longitudinal > 50) continue;
+        candidates.push({ point, score: longitudinal + lateral * 0.35 });
+      }
+    }
+    candidates.sort((first, second) => first.score - second.score);
+    const positions: Vector2[] = [];
+    for (const candidate of candidates) {
+      if (
+        positions.every(
+          (position) => Math.hypot(position.x - candidate.point.x, position.y - candidate.point.y) >= 14,
+        )
+      ) {
+        positions.push(candidate.point);
+      }
+      if (positions.length === BUS_STOP_WAITING_CAPACITY) break;
+    }
+    return positions;
+  }
+
+  /** Reject visual fixtures too close to another shelter or a pre-existing bench. */
+  private busStopPlatformIsClear(
+    platform: Vector2,
+    stops: readonly BusStopSite[],
+    benches: readonly BenchSite[],
+  ): boolean {
+    const minimumSq = BUS_STOP_SPACING * BUS_STOP_SPACING;
+    const clearOf = (point: Vector2): boolean => {
+      const dx = point.x - platform.x;
+      const dy = point.y - platform.y;
+      return dx * dx + dy * dy >= minimumSq;
+    };
+    return stops.every(clearOf) && benches.every(clearOf);
+  }
+
+  /** Stable pseudo-random ordering without perturbing the generator's RNG stream. */
+  private transitStopRank(value: string): number {
+    let hash = CITY_SEED ^ 0x51ed270b;
+    for (let index = 0; index < value.length; index++) {
+      hash = Math.imul(hash ^ value.charCodeAt(index), 0x45d9f3b);
+    }
+    return hash >>> 0;
   }
 
   /**
@@ -6547,6 +6768,8 @@ interface DecoChunk {
   railCollisionLayer: Phaser.Tilemaps.TilemapLayer | null;
   /** Pedestrian doors stay walkable on the shared layer but remain solid to vehicles. */
   vehicleDoorCollisionLayer: Phaser.Tilemaps.TilemapLayer | null;
+  /** Shelter footprints only block vehicles, leaving the adjacent waiting platform walkable. */
+  transitStopCollisionLayer: Phaser.Tilemaps.TilemapLayer | null;
   objects: Phaser.GameObjects.GameObject[];
   detailObjects: Phaser.GameObjects.GameObject[];
   enterableRoofs: Map<string, Phaser.GameObjects.Graphics>;
@@ -6634,9 +6857,12 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
 
   /** Extra streamed blockers used only by vehicle bodies at pedestrian-sized doors. */
   public get vehicleOnlyCollisionLayers(): readonly Phaser.Tilemaps.TilemapLayer[] {
-    return Array.from(this.chunks.values()).flatMap((chunk) =>
-      chunk.vehicleDoorCollisionLayer ? [chunk.vehicleDoorCollisionLayer] : [],
-    );
+    return Array.from(this.chunks.values()).flatMap((chunk) => {
+      const layers: Phaser.Tilemaps.TilemapLayer[] = [];
+      if (chunk.vehicleDoorCollisionLayer) layers.push(chunk.vehicleDoorCollisionLayer);
+      if (chunk.transitStopCollisionLayer) layers.push(chunk.transitStopCollisionLayer);
+      return layers;
+    });
   }
 
   public get loadedChunkCount(): number {
@@ -6926,14 +7152,14 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
     }
   }
 
-  /** The nearest unoccupied bus stop within `maxDist` px of `(x, y)`, or null. */
+  /** The nearest stop with a free queue position within `maxDist` px of `(x, y)`, or null. */
   public nearestFreeBusStop(x: number, y: number, maxDist: number): BusStopSite | null {
     const map = this.mapData;
     if (!map) return null;
     let best: BusStopSite | null = null;
     let bestSq = maxDist * maxDist;
     for (const stop of map.busStops) {
-      if (stop.occupiedBy !== null) continue;
+      if (stop.waitingEntityIds.length >= stop.capacity) continue;
       const dx = stop.x - x;
       const dy = stop.y - y;
       const distSq = dx * dx + dy * dy;
@@ -6945,18 +7171,24 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
     return best;
   }
 
-  /** Claim `busStop` for `entityId`. Returns false if it's already occupied by someone else. */
+  /** Claim a distinct waiting position at `busStop` for `entityId`. */
   public claimBusStop(busStop: BusStopSite, entityId: number): boolean {
-    if (busStop.occupiedBy !== null && busStop.occupiedBy !== entityId) return false;
-    busStop.occupiedBy = entityId;
+    if (busStop.waitingEntityIds.includes(entityId)) return true;
+    if (busStop.waitingEntityIds.length >= busStop.capacity) return false;
+    busStop.waitingEntityIds.push(entityId);
     return true;
   }
 
-  /** Release `busStop` if it's currently held by `entityId` (no-op otherwise). */
+  /** Release `entityId`'s queue position if it holds one (no-op otherwise). */
   public releaseBusStop(busStop: BusStopSite, entityId: number): void {
-    if (busStop.occupiedBy === entityId) {
-      busStop.occupiedBy = null;
-    }
+    const index = busStop.waitingEntityIds.indexOf(entityId);
+    if (index >= 0) busStop.waitingEntityIds.splice(index, 1);
+  }
+
+  /** Resolve an assigned passenger's stable queue position, falling back to the platform centre. */
+  public busStopWaitingPosition(busStop: BusStopSite, entityId: number): Vector2 {
+    const index = busStop.waitingEntityIds.indexOf(entityId);
+    return busStop.waitingPositions[index] ?? { x: busStop.x, y: busStop.y };
   }
 
   // ── Public queries ──────────────────────────────────────────────────────────
@@ -7261,22 +7493,72 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
   ): void {
     for (const stop of stops) {
       if (!this.pointInChunk(stop, tx0, ty0)) continue;
-      const shelter = scene.add.rectangle(stop.x, stop.y - 4, 22, 16, 0x2b5b8a, 0.82);
-      shelter.setStrokeStyle(1, 0xd8dde7, 0.62);
-      shelter.setDepth(DepthLayers.GroundDetail);
+      // One compact shelter object keeps the art stable under streamed chunk
+      // creation. Local coordinates let the shelter follow the curb direction.
+      const fixture = scene.add.graphics();
+      fixture.setPosition(stop.x, stop.y).setRotation(stop.heading);
+      fixture.setDepth(DepthLayers.GroundDetail + 2);
 
-      const pole = scene.add.rectangle(stop.x - 12, stop.y + 7, 2, 18, 0x222831, 1);
-      pole.setDepth(DepthLayers.GroundDetail);
+      // Ground shadow and curb-side platform edge.
+      fixture.fillStyle(0x101720, 0.38);
+      fixture.fillRect(-15, 7, 31, 5);
+      fixture.fillStyle(0x5d6872, 0.85);
+      fixture.fillRect(-15, 5, 30, 2);
 
-      const sign = scene.add.text(stop.x, stop.y - 5, 'BUS', {
-        fontFamily: 'Courier New',
-        fontSize: '7px',
-        color: '#ffffff',
-      });
-      sign.setOrigin(0.5);
-      sign.setDepth(DepthLayers.GroundDetail + 1);
-      out.push(shelter, pole, sign);
+      // Back panel, glass, roof and two supports form a readable pixel shelter
+      // at gameplay scale without depending on a placeholder rectangle sprite.
+      fixture.fillStyle(0x1c2f40, 1);
+      fixture.fillRect(-12, -8, 24, 14);
+      fixture.fillStyle(0x6ca7c7, 0.82);
+      fixture.fillRect(-10, -6, 20, 8);
+      fixture.fillStyle(0xc7d9e4, 0.34);
+      fixture.fillRect(-8, -5, 6, 2);
+      fixture.fillStyle(0x1b252b, 1);
+      fixture.fillRect(-14, -11, 29, 4);
+      fixture.fillStyle(0x4a88b5, 1);
+      fixture.fillRect(-12, -10, 25, 1);
+      fixture.fillStyle(0x25313a, 1);
+      fixture.fillRect(-11, -7, 2, 17);
+      fixture.fillRect(9, -7, 2, 17);
+      fixture.fillStyle(0x7c542f, 1);
+      fixture.fillRect(-7, 3, 14, 2);
+      fixture.fillStyle(0x3b2516, 1);
+      fixture.fillRect(-6, 5, 2, 3);
+      fixture.fillRect(4, 5, 2, 3);
+
+      // Curb sign: blue board with a light bus glyph, visible even at a glance.
+      fixture.fillStyle(0x20282f, 1);
+      fixture.fillRect(-18, -5, 2, 18);
+      fixture.fillStyle(0x38bdf8, 1);
+      fixture.fillRect(-21, -11, 8, 8);
+      fixture.lineStyle(1, 0xe6f6ff, 0.95);
+      fixture.strokeRect(-21, -11, 8, 8);
+      fixture.fillStyle(0xf6fbff, 1);
+      fixture.fillRect(-19.5, -9.5, 5, 3);
+      fixture.fillStyle(0x213545, 1);
+      fixture.fillRect(-18.5, -8.5, 1, 1);
+      fixture.fillRect(-16, -8.5, 1, 1);
+      fixture.fillStyle(0x101720, 1);
+      fixture.fillRect(-19, -6.5, 1, 1);
+      fixture.fillRect(-15.5, -6.5, 1, 1);
+      out.push(fixture);
     }
+  }
+
+  /** Map stop platforms into this chunk's hidden vehicle-only collision layer. */
+  private busStopCollisionCells(tx0: number, ty0: number): Array<{ x: number; y: number }> {
+    const cells: Array<{ x: number; y: number }> = [];
+    const seen = new Set<string>();
+    for (const stop of this.map.busStops) {
+      const x = Math.floor(stop.x / TILE_SIZE) - tx0;
+      const y = Math.floor(stop.y / TILE_SIZE) - ty0;
+      if (x < 0 || y < 0 || x >= CHUNK_TILES || y >= CHUNK_TILES) continue;
+      const key = `${x},${y}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      cells.push({ x, y });
+    }
+    return cells;
   }
 
   private placeLandmarkLabels(
@@ -7323,6 +7605,7 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
     for (const object of chunk.detailObjects) object.destroy();
     for (const object of chunk.objects) object.destroy();
     chunk.vehicleDoorCollisionLayer?.destroy();
+    chunk.transitStopCollisionLayer?.destroy();
     chunk.railCollisionLayer?.destroy();
     chunk.layer.destroy();
     chunk.tilemap.destroy();
@@ -7568,6 +7851,28 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
       vehicleDoorCollisionLayer.setCollision([...VEHICLE_ONLY_SOLID_TILE_TYPES]);
     }
 
+    // Bus shelters live on pedestrian-safe platforms, not the traffic lane.
+    // Their invisible footprint layer makes that physical promise explicit for
+    // vehicle bodies without turning a waiting platform into a blocked nav tile.
+    const transitStopCells = this.busStopCollisionCells(tx0, ty0);
+    let transitStopCollisionLayer: Phaser.Tilemaps.TilemapLayer | null = null;
+    if (transitStopCells.length > 0) {
+      transitStopCollisionLayer = tilemap.createBlankLayer(
+        `transit-stop:${key}`,
+        tileset,
+        tx0 * TILE_SIZE,
+        ty0 * TILE_SIZE,
+      );
+      if (!transitStopCollisionLayer) {
+        throw new Error(`failed to create transit stop collision for ${key}`);
+      }
+      for (const cell of transitStopCells) {
+        tilemap.putTileAt(TileType.InteriorDoor, cell.x, cell.y, false, transitStopCollisionLayer);
+      }
+      transitStopCollisionLayer.setVisible(false);
+      transitStopCollisionLayer.setCollision([...VEHICLE_ONLY_SOLID_TILE_TYPES]);
+    }
+
     // Architecture is lot-scale and is painted for every resident chunk. Rich
     // props remain limited to the detailed chunk, preserving streaming cost.
     const architecture = this.architectureComposer?.paintChunk(
@@ -7605,6 +7910,7 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
       layer,
       railCollisionLayer,
       vehicleDoorCollisionLayer,
+      transitStopCollisionLayer,
       objects,
       detailObjects,
       enterableRoofs,

@@ -106,12 +106,14 @@ export interface IWorldQuery {
   claimBench(bench: BenchSite, entityId: number): boolean;
   /** Release `bench` if it's currently held by `entityId` (no-op otherwise). */
   releaseBench(bench: BenchSite, entityId: number): void;
-  /** The nearest unoccupied bus stop within `maxDist` px of `(x, y)`, or null. */
+  /** The nearest stop with an available pedestrian waiting slot within range. */
   nearestFreeBusStop(x: number, y: number, maxDist: number): BusStopSite | null;
-  /** Claim `busStop` for `entityId`. Returns false if occupied by someone else. */
+  /** Claim one bounded waiting slot. Returns false only when every slot is taken. */
   claimBusStop(busStop: BusStopSite, entityId: number): boolean;
-  /** Release `busStop` if it's currently held by `entityId` (no-op otherwise). */
+  /** Release a waiting slot if held by `entityId` (no-op otherwise). */
   releaseBusStop(busStop: BusStopSite, entityId: number): void;
+  /** Resolve the assigned waiting position for a claimed passenger. */
+  busStopWaitingPosition(busStop: BusStopSite, entityId: number): Vector2;
 }
 
 /** Read-only view of the player used by AI (implemented by PlayerController). */

@@ -708,14 +708,36 @@ export interface BenchSite {
   occupiedBy: number | null;
 }
 
-/** A bus stop where pedestrians can stand and wait for transit. */
+/**
+ * A curb-side transit stop generated from a legal directed traffic lane.
+ * `x`/`y` remain the pedestrian platform position for existing world and
+ * pedestrian APIs; the approach data pins buses to the shared traffic graph.
+ */
 export interface BusStopSite {
+  /** Stable generated id used by routes, discovery and map markers. */
+  id: string;
+  /** City whose transit configuration may serve this stop. */
+  cityId: CityId;
   x: number;
   y: number;
-  /** Facing angle (radians) used for the waiting pose. */
+  /** Facing angle (radians) used for the waiting pose and shelter art. */
   facing: number;
-  /** Entity id of the pedestrian currently waiting here, or null if free. */
-  occupiedBy: number | null;
+  /** Directed outer-lane id used by the traffic network. */
+  laneId: string;
+  /** Exact legal bus/taxi stopping point on `laneId`. */
+  approachPosition: Vector2;
+  /** Arc distance along the directed lane to the stopping point. */
+  laneDistance: number;
+  /** Total directed lane length, retained for validation diagnostics. */
+  laneLength: number;
+  /** Directed-lane heading at the bus stopping point. */
+  heading: number;
+  /** Bounded number of pedestrians able to wait at this platform. */
+  capacity: number;
+  /** Entity ids currently assigned to this stop's distinct waiting slots. */
+  waitingEntityIds: number[];
+  /** Distinct pedestrian-safe positions beside the shelter. */
+  waitingPositions: Vector2[];
 }
 
 /** A road crossing (crosswalk) pedestrians can use to safely cross traffic. */

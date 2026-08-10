@@ -347,7 +347,7 @@ function tryWaitBus(ctx: PedestrianAIContext, pos: Vector2): boolean {
   ctx.busStop = stop;
   ctx.state = 'wait-bus';
   ctx.stateTimer = 0;
-  ctx.nav.beginTravel(pos, stop, ctx.navService, 8);
+  ctx.nav.beginTravel(pos, world.busStopWaitingPosition(stop, ctx.entityId), ctx.navService, 8);
   return true;
 }
 
@@ -380,4 +380,43 @@ export function updateWaitBus(ctx: PedestrianAIContext, pos: Vector2, delta: num
 function waitAtStop(ctx: PedestrianAIContext): void {
   if (ctx.busStop) ctx.movement.setFacingAngle(ctx.busStop.facing);
   ctx.stateTimer = BUS_WAIT_MIN_MS + Math.random() * (BUS_WAIT_MAX_MS - BUS_WAIT_MIN_MS);
+}
+
+/** Walk a selected passenger to a real vehicle door before the seat transition begins. */
+export function updateTransitBoarding(
+  ctx: PedestrianAIContext,
+  pos: Vector2,
+  delta: number,
+): void {
+  if (ctx.transitBoardingReady) {
+    ctx.movement.stop();
+    return;
+  }
+  if (!ctx.transitBoardingTarget) {
+    enterWander(ctx);
+    return;
+  }
+  const result = ctx.nav.tick(
+    pos,
+    ctx.movement.facingAngle,
+    delta,
+    ctx.world,
+    ctx.traffic,
+    ctx.navService,
+    ARRIVE_RADIUS,
+  );
+  switch (result.status) {
+    case 'travelling':
+      if (result.moveDir) ctx.movement.setMoveVector(result.moveDir.x, result.moveDir.y, false);
+      return;
+    case 'arrived':
+      ctx.movement.stop();
+      ctx.transitBoardingReady = true;
+      return;
+    case 'failed':
+      enterWander(ctx);
+      return;
+    default:
+      ctx.movement.stop();
+  }
 }

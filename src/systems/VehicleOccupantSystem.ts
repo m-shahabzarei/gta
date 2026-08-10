@@ -8,7 +8,11 @@ import { ENGINE_LIMITS } from '@/config/EngineLimits';
 import { OCCUPANTS } from '@/config/Constants';
 import { EngineDiagnostics } from '@/core/EngineDiagnostics';
 import { civilianReaction, personalityFromSeed } from '@/gameplay/crime/CrimeRules';
-import { isPoliceOccupant, occupantManifestFor } from '@/gameplay/occupants/OccupantRules';
+import {
+  isPoliceOccupant,
+  occupantManifestFor,
+  passengerSeatsFor,
+} from '@/gameplay/occupants/OccupantRules';
 import type {
   CompletedVehicleExit,
   NpcPersonality,
@@ -63,6 +67,8 @@ export class VehicleOccupantSystem extends BaseSceneManager {
 
   private readonly manifests = new Map<number, VehicleOccupantRecord[]>();
   private readonly vehicleRefs = new Map<number, Vehicle>();
+  /** Player passenger seats are held separately so the player remains the sole PlayerController authority. */
+  private readonly playerSeatReservations = new Map<number, VehicleSeat>();
   private readonly exitTransitions: ExitTransition[] = [];
   private readonly boardingTransitions: BoardingTransition[] = [];
   private readonly completedExits: CompletedVehicleExit[] = [];
@@ -90,6 +96,7 @@ export class VehicleOccupantSystem extends BaseSceneManager {
     this.graphics = null;
     this.manifests.clear();
     this.vehicleRefs.clear();
+    this.playerSeatReservations.clear();
     this.exitTransitions.length = 0;
     this.boardingTransitions.length = 0;
     this.completedExits.length = 0;
@@ -108,7 +115,64 @@ export class VehicleOccupantSystem extends BaseSceneManager {
   }
 
   public occupantsFor(vehicle: Vehicle): readonly VehicleOccupantRecord[] {
+    // Service vehicles may be queried immediately after TrafficSystem creates
+    // them, before this manager's next frame update. Materialise the manifest
+    // here so a taxi/bus can never accept a rider without its driver record.
+    this.ensureManifest(vehicle);
     return this.manifests.get(vehicle.id) ?? [];
+  }
+
+  /** Dynamic passenger seats not occupied by an NPC or the local player. */
+  public availablePassengerSeats(vehicle: Vehicle): VehicleSeat[] {
+    this.ensureManifest(vehicle);
+    const occupied = new Set((this.manifests.get(vehicle.id) ?? []).map((occupant) => occupant.seat));
+    const playerSeat = this.playerSeatReservations.get(vehicle.id);
+    return passengerSeatsFor(vehicle.def.kind).filter(
+      (seat) => !occupied.has(seat) && seat !== playerSeat,
+    );
+  }
+
+  /** Create a real passenger record; the caller starts its door animation with beginBoarding(). */
+  public claimTransitPassenger(
+    vehicle: Vehicle,
+    personality: NpcPersonality,
+    destinationStopId: string,
+  ): VehicleOccupantRecord | null {
+    const seat = this.availablePassengerSeats(vehicle)[0];
+    if (!seat || this.occupantCount >= ENGINE_LIMITS.MAX_VEHICLE_OCCUPANTS) return null;
+    const id = this.nextOccupantId++;
+    return {
+      id,
+      vehicleId: vehicle.id,
+      seat,
+      role: 'passenger',
+      state: 'on-foot',
+      personality,
+      reaction: civilianReaction(personality, 'vehicle-theft'),
+      color: PASSENGER_COLOR,
+      transitDestinationStopId: destinationStopId,
+    };
+  }
+
+  /** Reserve an empty passenger seat while the PlayerController performs its own boarding animation. */
+  public reservePlayerPassengerSeat(vehicle: Vehicle): VehicleSeat | null {
+    const current = this.playerSeatReservations.get(vehicle.id);
+    if (current) return current;
+    const seat = this.availablePassengerSeats(vehicle)[0] ?? null;
+    if (seat) this.playerSeatReservations.set(vehicle.id, seat);
+    return seat;
+  }
+
+  /** Release the local player's transit seat after a completed exit or cancellation. */
+  public releasePlayerPassengerSeat(vehicle: Vehicle): void {
+    this.playerSeatReservations.delete(vehicle.id);
+  }
+
+  /** Queue a normal door-mediated transit exit for a seated passenger. */
+  public beginTransitExit(vehicle: Vehicle, occupant: VehicleOccupantRecord): boolean {
+    if (occupant.vehicleId !== vehicle.id || occupant.state !== 'seated') return false;
+    this.queueExit(vehicle, occupant, 'transit-exit', 0);
+    return true;
   }
 
   public debugSnapshot(): {
@@ -233,6 +297,10 @@ export class VehicleOccupantSystem extends BaseSceneManager {
       manifest = [];
       this.manifests.set(vehicle.id, manifest);
     }
+    if (manifest.some((candidate) => candidate.seat === occupant.seat && candidate.id !== occupant.id)) {
+      return false;
+    }
+    if (this.playerSeatReservations.get(vehicle.id) === occupant.seat) return false;
     if (!manifest.some((candidate) => candidate.id === occupant.id)) {
       manifest.push(occupant);
       this.occupantCount += 1;
@@ -310,6 +378,7 @@ export class VehicleOccupantSystem extends BaseSceneManager {
     if (records) this.occupantCount = Math.max(0, this.occupantCount - records.length);
     this.manifests.delete(vehicleId);
     this.vehicleRefs.delete(vehicleId);
+    this.playerSeatReservations.delete(vehicleId);
     this.removeTransitions(this.exitTransitions, vehicleId);
     this.removeTransitions(this.boardingTransitions, vehicleId);
   }

@@ -164,6 +164,16 @@ export class MiniMap extends UIComponent {
         building.size === 'metropolitan' ? 6 : 5,
       );
     }
+    // Transit stops remain tiny at radar scale but use a dedicated blue sign
+    // glyph rather than being confused with service-building POIs.
+    for (const stop of map.busStops) {
+      const x = stop.x * MINIMAP_SCALE;
+      const y = stop.y * MINIMAP_SCALE;
+      this.mapGfx.fillStyle(0x38bdf8, 0.95);
+      this.mapGfx.fillRect(x - 1.5, y - 3, 3, 6);
+      this.mapGfx.fillStyle(0xe6f6ff, 0.95);
+      this.mapGfx.fillRect(x - 0.5, y - 2, 1, 2);
+    }
 
     this.hasMap = true;
     this.applyViewOffset();

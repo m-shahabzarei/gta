@@ -15,7 +15,7 @@
  * (wander/idle/flee only — no sitting, conversing or witness reporting).
  */
 import type { Vector2 } from '@/core/types';
-import type { IDamageable, InteriorNpcActivity, WitnessReaction } from '@/gameplay/types';
+import type { BusStopSite, IDamageable, InteriorNpcActivity, WitnessReaction } from '@/gameplay/types';
 import { getNavigationService, getTrafficQuery, getWorldQuery } from '@/gameplay/types';
 import { Component } from '@/entities/Component';
 import type { CharacterMovementComponent } from './CharacterMovementComponent';
@@ -39,6 +39,7 @@ import {
   updateSit,
   updateTalk,
   updateTalkToNearbyNpc,
+  updateTransitBoarding,
   updateWaitBus,
   updateWander,
 } from './pedestrian/PedestrianIdleStates';
@@ -116,6 +117,43 @@ export class PedestrianAIComponent extends Component implements PedestrianPeer {
     return this.ctx?.nav.debugWaypoints ?? [];
   }
 
+  /** The platform this pedestrian is actively waiting at, if any. */
+  public get waitingBusStop(): BusStopSite | null {
+    const ctx = this.ctx;
+    return ctx?.state === 'wait-bus' ? ctx.busStop : null;
+  }
+
+  /** True after this pedestrian has walked to a selected service vehicle door. */
+  public get transitBoardingReady(): boolean {
+    const ctx = this.ctx;
+    return ctx?.state === 'transit-boarding' && ctx.transitBoardingReady;
+  }
+
+  /**
+   * Leave the waiting queue and use normal pedestrian navigation to reach the
+   * service vehicle door. The transportation system converts the NPC to an
+   * occupant only after this reports ready.
+   */
+  public beginTransitBoarding(door: Vector2): boolean {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'wait-bus' || !ctx.busStop) return false;
+    const pos = this.cachedPosition;
+    resetTransient(ctx);
+    ctx.state = 'transit-boarding';
+    ctx.stateTimer = 0;
+    ctx.transitBoardingTarget = { x: door.x, y: door.y };
+    ctx.transitBoardingReady = false;
+    ctx.nav.beginTravel(pos, ctx.transitBoardingTarget, ctx.navService, 8);
+    return true;
+  }
+
+  /** Cancel an interrupted boarding walk (for example when the bus dwell expires). */
+  public cancelTransitBoarding(): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'transit-boarding') return;
+    enterWander(ctx);
+  }
+
   /** Keep this pedestrian's ordinary wandering near an anchor, used for real interiors. */
   public setHomeArea(x: number, y: number, radius: number): void {
     if (!this.ctx) return;
@@ -164,6 +202,8 @@ export class PedestrianAIComponent extends Component implements PedestrianPeer {
       dodgeDir: { x: 0, y: 0 },
       bench: null,
       busStop: null,
+      transitBoardingTarget: null,
+      transitBoardingReady: false,
       brawlTarget: null,
       brawlSwingMs: 0,
       talkPartner: null,
@@ -259,6 +299,8 @@ export class PedestrianAIComponent extends Component implements PedestrianPeer {
     ctx.dodgeDir = { x: 0, y: 0 };
     ctx.brawlSwingMs = 0;
     ctx.despawnRequested = false;
+    ctx.transitBoardingTarget = null;
+    ctx.transitBoardingReady = false;
     ctx.vehicleDangerCheckMs = Math.random() * VEHICLE_DANGER_CHECK_INTERVAL_MS;
     this.cachedPosition = { x: this.entity.sprite.x, y: this.entity.sprite.y };
     enterWander(ctx);
@@ -308,6 +350,9 @@ export class PedestrianAIComponent extends Component implements PedestrianPeer {
         break;
       case 'wait-bus':
         updateWaitBus(ctx, pos, delta);
+        break;
+      case 'transit-boarding':
+        updateTransitBoarding(ctx, pos, delta);
         break;
       case 'talk':
         updateTalk(ctx, pos, delta);

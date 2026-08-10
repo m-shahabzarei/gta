@@ -12,6 +12,7 @@ import { COLORS, GAME_HEIGHT, GAME_WIDTH, TILE_SIZE } from '@/config/Constants';
 import { ServiceLocator } from '@/core/ServiceLocator';
 import {
   TileType,
+  type CityId,
   type MajorBuildingDefinition,
   type MajorBuildingIcon,
   type MapData,
@@ -24,6 +25,10 @@ import type { GameManager } from '@/managers/GameManager';
 import type { PlayerController } from '@/systems/PlayerController';
 import type { WorldManager } from '@/systems/WorldManager';
 import type { MissionSystem } from '@/systems/MissionSystem';
+import type { TransportationSystem } from '@/systems/TransportationSystem';
+import type { TrafficSystem } from '@/systems/TrafficSystem';
+import type { TaxiDestination, TaxiFareQuote } from '@/gameplay/transit';
+import { sampleSpline } from '@/gameplay/traffic/SplineMath';
 import type { MobilePlatform } from '@/platform';
 import { getObjectiveTarget, getWaypoint, setWaypoint } from '@/gameplay/WorldMapState';
 import {
@@ -48,6 +53,14 @@ interface MajorPoiScreenTarget {
   building: MajorBuildingDefinition;
   screen: Vector2;
   hitRadius: number;
+}
+
+/** Cached lane-accurate polyline for a public bus line. */
+interface TransitRouteLine {
+  routeId: string;
+  cityId: CityId;
+  color: number;
+  points: Vector2[];
 }
 
 const VIEW: MapRect = {
@@ -93,11 +106,17 @@ export class MapScene extends Phaser.Scene {
   private poiHoverLabel: Phaser.GameObjects.Text | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
   private cityStatusText: Phaser.GameObjects.Text | null = null;
+  private taxiQuoteText: Phaser.GameObjects.Text | null = null;
+  private taxiConfirmButton: Button | null = null;
   private readonly cityLabels: Phaser.GameObjects.Text[] = [];
   private readonly poiTargets: MajorPoiScreenTarget[] = [];
   private uiZones: Phaser.Geom.Rectangle[] = [];
   private hoveredPoiId: string | null = null;
   private selectedPoiId: string | null = null;
+  private taxiMode = false;
+  private taxiDestination: TaxiDestination | null = null;
+  private taxiFare: TaxiFareQuote | null = null;
+  private transitRouteLines: TransitRouteLine[] = [];
 
   private zoom = 1;
   private baseScale = 1;
@@ -119,6 +138,11 @@ export class MapScene extends Phaser.Scene {
   public create(): void {
     this.hoveredPoiId = null;
     this.selectedPoiId = null;
+    this.taxiDestination = null;
+    this.taxiFare = null;
+    this.taxiMode =
+      ServiceLocator.tryResolve<TransportationSystem>(ServiceKeys.Transportation)
+        ?.taxiDestinationSelectionActive ?? false;
     this.poiTargets.length = 0;
     const platform = ServiceLocator.tryResolve<MobilePlatform>(ServiceKeys.Platform);
     this.mobile = platform?.isMobile ?? false;
@@ -144,6 +168,7 @@ export class MapScene extends Phaser.Scene {
     }
 
     this.buildMap(this.mapData);
+    this.rebuildTransitRouteLines();
     this.fitWholeCity();
     this.drawCityAreas();
     this.bindInput();
@@ -207,7 +232,7 @@ export class MapScene extends Phaser.Scene {
     this.add.rectangle(0, 0, this.viewportWidth, this.viewportHeight, 0x06070d, 0.98).setOrigin(0);
     this.add.rectangle(0, 0, this.viewportWidth, topBarHeight, 0x0f111a, 0.96).setOrigin(0);
 
-    this.add.text(24, 13, 'WORLD MAP', {
+    this.add.text(24, 13, this.taxiMode ? 'TAXI DESTINATION' : 'WORLD MAP', {
       fontFamily: 'Courier New',
       fontSize: '22px',
       fontStyle: 'bold',
@@ -248,13 +273,27 @@ export class MapScene extends Phaser.Scene {
       color: this.hex(0x9aa0a6),
       wordWrap: { width: PANEL_WIDTH - 32 },
     });
-    this.cityStatusText = this.add.text(PANEL_X + 16, PANEL_Y + 332, 'CURRENT: TEHRAN', {
+    this.cityStatusText = this.add.text(
+      PANEL_X + 16,
+      PANEL_Y + (this.taxiMode ? 312 : 332),
+      'CURRENT: TEHRAN',
+      {
       fontFamily: 'Courier New',
       fontSize: '13px',
       fontStyle: 'bold',
       color: this.hex(COLORS.ACCENT),
       wordWrap: { width: PANEL_WIDTH - 32 },
-    });
+      },
+    );
+    if (this.taxiMode) {
+      this.taxiQuoteText = this.add.text(PANEL_X + 16, PANEL_Y + 338, 'Select a destination', {
+        fontFamily: 'Courier New',
+        fontSize: '12px',
+        color: this.hex(0xf6c453),
+        lineSpacing: 3,
+        wordWrap: { width: PANEL_WIDTH - 32 },
+      });
+    }
 
     const poiPanel = this.poiPanelRect();
     this.poiInfoPanel = this.add.graphics().setDepth(12).setVisible(false);
@@ -334,7 +373,7 @@ export class MapScene extends Phaser.Scene {
     const y = this.mobile ? 47 : 23;
     const height = this.mobile ? 76 : 32;
     const close = new Button(this, this.mobile ? right - 70 : this.viewportWidth - 78, y, {
-      text: 'Close',
+      text: this.taxiMode ? 'Cancel' : 'Close',
       width: this.mobile ? 140 : 96,
       height,
       onClick: () => this.closeMap(),
@@ -351,12 +390,19 @@ export class MapScene extends Phaser.Scene {
       height,
       onClick: () => this.zoomAt(1 / ZOOM_STEP, this.viewCenterScreen()),
     });
-    const clear = new Button(this, PANEL_X + PANEL_WIDTH / 2, PANEL_Y + (this.mobile ? 424 : 368), {
-      text: 'Clear Waypoint',
-      width: PANEL_WIDTH - 32,
-      height: this.mobile ? 76 : 38,
-      onClick: () => this.clearWaypoint(),
-    });
+    const clear = this.taxiMode
+      ? new Button(this, PANEL_X + PANEL_WIDTH / 2, PANEL_Y + (this.mobile ? 424 : 414), {
+          text: 'Cancel Trip',
+          width: PANEL_WIDTH - 32,
+          height: this.mobile ? 76 : 38,
+          onClick: () => this.cancelTaxiSelection(),
+        })
+      : new Button(this, PANEL_X + PANEL_WIDTH / 2, PANEL_Y + (this.mobile ? 424 : 368), {
+          text: 'Clear Waypoint',
+          width: PANEL_WIDTH - 32,
+          height: this.mobile ? 76 : 38,
+          onClick: () => this.clearWaypoint(),
+        });
     const locate = new Button(this, this.mobile ? right - 390 : this.viewportWidth - 334, y, {
       text: 'Locate',
       width: this.mobile ? 120 : 78,
@@ -369,6 +415,20 @@ export class MapScene extends Phaser.Scene {
     zoomOut.setDepth(10);
     clear.setDepth(10);
     locate.setDepth(10);
+    if (this.taxiMode) {
+      this.taxiConfirmButton = new Button(
+        this,
+        PANEL_X + PANEL_WIDTH / 2,
+        PANEL_Y + (this.mobile ? 510 : 462),
+        {
+          text: 'Confirm Fare',
+          width: PANEL_WIDTH - 32,
+          height: this.mobile ? 76 : 38,
+          onClick: () => this.confirmTaxiSelection(),
+        },
+      );
+      this.taxiConfirmButton.setEnabled(false).setDepth(10);
+    }
   }
 
   private buildMap(map: MapData): void {
@@ -429,6 +489,9 @@ export class MapScene extends Phaser.Scene {
         3.2 / this.zoom,
         landmark.kind === 'airport' || landmark.kind === 'bridge' ? 'diamond' : 'circle',
       );
+    }
+    for (const stop of map.busStops) {
+      this.drawBusStopMarker(g, stop, 3.6 / this.zoom);
     }
   }
 
@@ -494,12 +557,23 @@ export class MapScene extends Phaser.Scene {
       this.drawMarker(g, mission, OBJECTIVE_COLOR, 4.4 / this.zoom, 'diamond');
     }
 
-    const waypoint = getWaypoint();
+    const waypoint = this.taxiMode ? (this.taxiDestination?.position ?? null) : getWaypoint();
     if (waypoint) {
       this.drawMarker(g, waypoint, WAYPOINT_COLOR, 4 / this.zoom, 'diamond');
     }
 
     const player = ServiceLocator.tryResolve<PlayerController>(ServiceKeys.Player)?.playerPosition;
+    ServiceLocator.tryResolve<TransportationSystem>(ServiceKeys.Transportation)?.forEachServiceBlip(
+      (kind, position) => {
+        this.drawMarker(
+          g,
+          position,
+          kind === 'bus' ? 0x38bdf8 : 0xf6c453,
+          (kind === 'bus' ? 3.4 : 2.7) / this.zoom,
+          kind === 'bus' ? 'diamond' : 'circle',
+        );
+      },
+    );
     this.redrawPlayerOverlay(player ?? null);
     this.drawRoutePreview(player ?? null, waypoint);
     this.updateCityStatus(player ?? null);
@@ -517,15 +591,111 @@ export class MapScene extends Phaser.Scene {
     const g = this.routeLayer;
     if (!g) return;
     g.clear();
+    this.drawTransitRouteOverlays(g, start);
     if (!start || !target) return;
-    const points = this.routePreviewPoints(start, target);
+    const taxiRoute = this.taxiMode ? this.taxiFare?.route.laneIds ?? null : null;
+    const points = taxiRoute
+      ? this.laneRoutePoints(taxiRoute, start, target)
+      : this.roadRoutePreviewPoints(start, target);
+    this.strokeWorldPolyline(g, points, 2.2 / this.zoom, 0xf8d36e, 0.88);
+  }
+
+  /** Draw cached city lines only when they can be read at the current map scale. */
+  private drawTransitRouteOverlays(g: Phaser.GameObjects.Graphics, player: Vector2 | null): void {
+    const currentCityId = player ? this.cityForPoint(player)?.id ?? null : null;
+    const showAllCities = this.zoom >= 1.7;
+    for (const route of this.transitRouteLines) {
+      if (!showAllCities && currentCityId !== route.cityId) continue;
+      this.strokeWorldPolyline(g, route.points, 1.35 / this.zoom, route.color, 0.58);
+    }
+  }
+
+  /** Build the public-line geometry once when the paused map opens, never per frame. */
+  private rebuildTransitRouteLines(): void {
+    this.transitRouteLines = [];
+    const transit = this.transit();
+    const traffic = ServiceLocator.tryResolve<TrafficSystem>(ServiceKeys.Traffic);
+    if (!transit || !traffic?.roadNetwork) return;
+    const snapshot = transit.debugSnapshot();
+    for (const cityId of ['tehran', 'yazd', 'gilan'] as const) {
+      for (const route of snapshot.busRoutes[cityId]) {
+        if (!route.valid || route.stops.length < 2) continue;
+        const points: Vector2[] = [];
+        for (let index = 0; index < route.stops.length; index += 1) {
+          const from = route.stops[index];
+          const to = route.stops[(index + 1) % route.stops.length];
+          if (!from || !to) continue;
+          const preview = traffic.routePreview(from.approachPosition, to.approachPosition);
+          if (!preview) continue;
+          this.appendRoutePoints(
+            points,
+            this.laneRoutePoints(preview.laneIds, from.approachPosition, to.approachPosition),
+          );
+        }
+        if (points.length >= 2) {
+          this.transitRouteLines.push({
+            routeId: route.config.id,
+            cityId,
+            color: route.config.color,
+            points,
+          });
+        }
+      }
+    }
+  }
+
+  /** Turn legal lane ids into a sparse, render-friendly road polyline. */
+  private laneRoutePoints(
+    laneIds: readonly string[],
+    start?: Vector2,
+    end?: Vector2,
+  ): Vector2[] {
+    const network = ServiceLocator.tryResolve<TrafficSystem>(ServiceKeys.Traffic)?.roadNetwork;
+    if (!network) return start && end ? [start, end] : [];
+    const points: Vector2[] = [];
+    if (start) this.appendRoutePoint(points, start);
+    for (const laneId of laneIds) {
+      const lane = network.lane(laneId);
+      if (!lane) continue;
+      const step = Math.max(48, Math.min(160, lane.spline.length / 10));
+      for (let distance = 0; distance < lane.spline.length; distance += step) {
+        this.appendRoutePoint(points, sampleSpline(lane.spline, distance).point);
+      }
+      this.appendRoutePoint(points, sampleSpline(lane.spline, lane.spline.length).point);
+    }
+    if (end) this.appendRoutePoint(points, end);
+    return points;
+  }
+
+  private roadRoutePreviewPoints(start: Vector2, target: Vector2): Vector2[] {
+    const preview = ServiceLocator.tryResolve<TrafficSystem>(ServiceKeys.Traffic)?.routePreview(start, target);
+    return preview ? this.laneRoutePoints(preview.laneIds, start, target) : this.routePreviewPoints(start, target);
+  }
+
+  private appendRoutePoints(target: Vector2[], source: readonly Vector2[]): void {
+    for (const point of source) this.appendRoutePoint(target, point);
+  }
+
+  private appendRoutePoint(target: Vector2[], point: Vector2): void {
+    const previous = target[target.length - 1];
+    if (previous && Phaser.Math.Distance.Between(previous.x, previous.y, point.x, point.y) < 2) return;
+    target.push({ x: point.x, y: point.y });
+  }
+
+  private strokeWorldPolyline(
+    g: Phaser.GameObjects.Graphics,
+    points: readonly Vector2[],
+    width: number,
+    color: number,
+    alpha: number,
+  ): void {
     if (points.length < 2) return;
     const first = points[0];
     if (!first) return;
-    g.lineStyle(2.2 / this.zoom, 0xf8d36e, 0.88);
+    g.lineStyle(width, color, alpha);
     g.beginPath();
     g.moveTo(first.x / TILE_SIZE, first.y / TILE_SIZE);
-    for (let index = 1; index < points.length; index++) {
+    for (let index = 1; index < points.length; index += 1) {
       const point = points[index];
       if (point) g.lineTo(point.x / TILE_SIZE, point.y / TILE_SIZE);
     }
@@ -600,6 +770,22 @@ export class MapScene extends Phaser.Scene {
 
     g.fillCircle(x, y, radius);
     g.strokeCircle(x, y, radius);
+  }
+
+  /** Dedicated transit sign used on the full map instead of a generic POI dot. */
+  private drawBusStopMarker(
+    g: Phaser.GameObjects.Graphics,
+    point: Vector2,
+    size: number,
+  ): void {
+    const x = point.x / TILE_SIZE;
+    const y = point.y / TILE_SIZE;
+    g.fillStyle(0x38bdf8, 1);
+    g.fillRect(x - size * 0.42, y - size, size * 0.84, size * 2);
+    g.lineStyle(Math.max(0.45, size * 0.24), 0xe6f6ff, 0.95);
+    g.strokeRect(x - size * 0.42, y - size, size * 0.84, size * 2);
+    g.fillStyle(0x07111c, 1);
+    g.fillCircle(x, y - size * 0.35, Math.max(0.45, size * 0.22));
   }
 
   private redrawPoiMarkers(): void {
@@ -691,6 +877,50 @@ export class MapScene extends Phaser.Scene {
     return best;
   }
 
+  /** Bus platforms and landmark pins are first-class taxi targets, not generic map clicks. */
+  private findTaxiDestinationAtScreen(x: number, y: number): TaxiDestination | null {
+    const map = this.mapData;
+    if (!map) return null;
+    let result: TaxiDestination | null = null;
+    let bestDistanceSq = Infinity;
+    const consider = (destination: TaxiDestination, hitRadius: number): void => {
+      const screen = this.worldToMapScreen(destination.position);
+      const dx = screen.x - x;
+      const dy = screen.y - y;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq > hitRadius * hitRadius || distanceSq >= bestDistanceSq) return;
+      result = destination;
+      bestDistanceSq = distanceSq;
+    };
+    for (const stop of map.busStops) {
+      consider(
+        {
+          id: `bus-stop:${stop.id}`,
+          label: `Bus stop ${stop.id.replace(/^bus-stop:[^:]+:/, '')}`,
+          position: { ...stop.approachPosition },
+          cityId: stop.cityId,
+          source: 'bus-stop',
+        },
+        12,
+      );
+    }
+    for (const landmark of map.landmarks) {
+      const cityId = landmark.cityId ?? this.cityForPoint(landmark.position)?.id;
+      if (!cityId) continue;
+      consider(
+        {
+          id: `landmark:${landmark.id}`,
+          label: landmark.name,
+          position: { ...landmark.position },
+          cityId,
+          source: 'landmark',
+        },
+        13,
+      );
+    }
+    return result;
+  }
+
   private updatePoiHover(x: number, y: number): void {
     const target = this.isInView(x, y) ? this.findPoiAtScreen(x, y) : null;
     this.setHoveredPoi(target?.building ?? null);
@@ -707,6 +937,16 @@ export class MapScene extends Phaser.Scene {
   }
 
   private selectPoi(building: MajorBuildingDefinition): void {
+    if (this.taxiMode) {
+      this.selectTaxiDestination({
+        id: `major:${building.id}`,
+        label: building.name,
+        position: { ...building.entrancePosition },
+        cityId: building.city,
+        source: 'landmark',
+      });
+      return;
+    }
     this.selectedPoiId = building.id;
     setWaypoint(building.entrancePosition);
     this.showStatus(`${this.poiTypeLabel(building)} waypoint set`);
@@ -923,6 +1163,10 @@ export class MapScene extends Phaser.Scene {
       const poi = this.findPoiAtScreen(pointer.x, pointer.y);
       if (poi) {
         this.selectPoi(poi.building);
+      } else if (this.taxiMode) {
+        const destination = this.findTaxiDestinationAtScreen(pointer.x, pointer.y);
+        if (destination) this.selectTaxiDestination(destination);
+        else this.placeWaypoint(pointer.x, pointer.y);
       } else {
         this.placeWaypoint(pointer.x, pointer.y);
       }
@@ -989,6 +1233,10 @@ export class MapScene extends Phaser.Scene {
       x: Phaser.Math.Clamp(mapPoint.x, 0, map.widthTiles) * map.tileSize,
       y: Phaser.Math.Clamp(mapPoint.y, 0, map.heightTiles) * map.tileSize,
     };
+    if (this.taxiMode) {
+      this.selectTaxiMapPoint(worldPoint);
+      return;
+    }
     setWaypoint(worldPoint);
     this.selectedPoiId = null;
     this.updatePoiInfoPanel();
@@ -997,11 +1245,93 @@ export class MapScene extends Phaser.Scene {
   }
 
   private clearWaypoint(): void {
+    if (this.taxiMode) {
+      this.cancelTaxiSelection();
+      return;
+    }
     setWaypoint(null);
     this.selectedPoiId = null;
     this.updatePoiInfoPanel();
     this.showStatus('Waypoint cleared');
     this.refreshMarkers();
+  }
+
+  private selectTaxiDestination(destination: TaxiDestination): void {
+    const transit = this.transit();
+    const fare = transit?.previewTaxiDestination(destination) ?? null;
+    if (!fare) {
+      this.showStatus('Taxi cannot reach that destination by road');
+      return;
+    }
+    this.taxiDestination = destination;
+    this.taxiFare = fare;
+    this.taxiQuoteText?.setText(
+      [
+        destination.label,
+        `Base $${fare.baseFare}  ${fare.distanceKm.toFixed(1)} km`,
+        `Distance $${fare.distanceCost}  Total $${fare.total}`,
+      ].join('\n'),
+    );
+    this.taxiConfirmButton?.setEnabled(true);
+    this.showStatus('Confirm fare to start the trip');
+    this.refreshMarkers();
+  }
+
+  private selectTaxiMapPoint(position: Vector2): void {
+    const transit = this.transit();
+    const cityId = this.cityForPoint(position)?.id;
+    if (!cityId) {
+      this.showStatus('Choose a point inside a city service area');
+      return;
+    }
+    const fare = transit?.previewTaxiMapPoint(position, 'Map pin') ?? null;
+    if (!fare) {
+      this.showStatus('Choose a reachable point inside this taxi service area');
+      return;
+    }
+    const destination: TaxiDestination = {
+      id: `map:${Math.round(position.x)}:${Math.round(position.y)}`,
+      label: 'Map pin',
+      position: { ...position },
+      cityId,
+      source: 'map',
+    };
+    this.taxiDestination = destination;
+    this.taxiFare = fare;
+    this.taxiQuoteText?.setText(
+      [
+        'Map pin',
+        `Base $${fare.baseFare}  ${fare.distanceKm.toFixed(1)} km`,
+        `Distance $${fare.distanceCost}  Total $${fare.total}`,
+      ].join('\n'),
+    );
+    this.taxiConfirmButton?.setEnabled(true);
+    this.showStatus('Confirm fare to start the trip');
+    this.refreshMarkers();
+  }
+
+  private confirmTaxiSelection(): void {
+    if (!this.taxiFare) {
+      this.showStatus('Select a destination first');
+      return;
+    }
+    const result = this.transit()?.confirmTaxiFare() ?? 'invalid-trip';
+    if (result === 'paid') {
+      this.taxiMode = false;
+      ServiceLocator.tryResolve<GameManager>(ServiceKeys.Game)?.resumeGame();
+      return;
+    }
+    if (result === 'insufficient-funds') {
+      this.showStatus('Insufficient funds');
+      return;
+    }
+    this.showStatus('Taxi trip is no longer available');
+  }
+
+  private cancelTaxiSelection(): void {
+    this.transit()?.cancelTaxiDestination();
+    this.taxiMode = false;
+    ServiceLocator.tryResolve<GameManager>(ServiceKeys.Game)?.resumeGame();
   }
 
   private currentMissionMarker(): Vector2 | null {
@@ -1013,7 +1343,15 @@ export class MapScene extends Phaser.Scene {
   }
 
   private closeMap(): void {
+    if (this.taxiMode) {
+      this.cancelTaxiSelection();
+      return;
+    }
     ServiceLocator.tryResolve<GameManager>(ServiceKeys.Game)?.resumeGame();
+  }
+
+  private transit(): TransportationSystem | null {
+    return ServiceLocator.tryResolve<TransportationSystem>(ServiceKeys.Transportation);
   }
 
   private enableMenuCursor(): void {

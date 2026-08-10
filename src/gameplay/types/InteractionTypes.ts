@@ -6,6 +6,7 @@ export type InteractionKind =
   | 'safehouse'
   | 'gas'
   | 'mission'
+  | 'transit'
   | 'vehicle'
   | 'npc'
   | 'interior'

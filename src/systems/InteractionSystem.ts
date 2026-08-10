@@ -20,6 +20,7 @@ import type { WorldManager } from '@/systems/WorldManager';
 import type { PlayerController } from '@/systems/PlayerController';
 import type { VehicleSystem } from '@/systems/VehicleSystem';
 import type { MissionSystem } from '@/systems/MissionSystem';
+import type { TransportationSystem } from '@/systems/TransportationSystem';
 import { Pedestrian } from '@/entities/Pedestrian';
 import { EntityCategory, type EntityManager } from '@/systems/EntityManager';
 
@@ -88,6 +89,10 @@ export class InteractionSystem extends BaseSceneManager {
       return;
     }
 
+    // Transportation owns its own door, passenger and fare transitions. Its
+    // EventKeys.PlayerInteract subscriber receives this same input event.
+    if (target.kind === 'transit') return;
+
     if (target.kind === 'safehouse') {
       const ok = ServiceLocator.tryResolve<SaveManager>(ServiceKeys.Save)?.save(0, 'Safe House') ?? false;
       this.bus.emit(EventKeys.UIToast, {
@@ -113,6 +118,15 @@ export class InteractionSystem extends BaseSceneManager {
   /** Find the current highest-priority target around a position. */
   private findTarget(pos: Vector2): InteractionTarget | null {
     const candidates: InteractionTarget[] = [];
+    const transit = this.resolveTransit()?.interactionAt(pos);
+    if (transit) {
+      candidates.push({
+        kind: 'transit',
+        prompt: transit.prompt,
+        distanceSq: transit.distanceSq,
+        priority: -1,
+      });
+    }
     const interior = this.nearestInteriorInteraction(pos);
     if (interior) {
       candidates.push({
@@ -290,5 +304,9 @@ export class InteractionSystem extends BaseSceneManager {
 
   private resolveWorld(): WorldManager | null {
     return ServiceLocator.tryResolve<WorldManager>(ServiceKeys.World);
+  }
+
+  private resolveTransit(): TransportationSystem | null {
+    return ServiceLocator.tryResolve<TransportationSystem>(ServiceKeys.Transportation);
   }
 }

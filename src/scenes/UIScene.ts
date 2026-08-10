@@ -22,6 +22,7 @@ import { GameState } from '@/core/types';
 import type { Unsubscribe, Vector2 } from '@/core/types';
 import { GameHud } from '@/ui/hud/GameHud';
 import { MiniMap } from '@/ui/hud/MiniMap';
+import { TransitHud } from '@/ui/hud/TransitHud';
 import { GameplayDebugOverlay } from '@/ui/hud/GameplayDebugOverlay';
 import type { MiniMapBlip } from '@/ui/hud/MiniMap';
 import type { WorldManager } from '@/systems/WorldManager';
@@ -30,12 +31,14 @@ import type { WantedSystem } from '@/systems/WantedSystem';
 import type { VehicleSystem } from '@/systems/VehicleSystem';
 import type { GameManager } from '@/managers/GameManager';
 import type { MobilePlatform } from '@/platform';
+import type { TransportationSystem } from '@/systems/TransportationSystem';
 import { MobileControls } from '@/ui/mobile';
 import { getObjectiveTarget, getWaypoint, setObjectiveTarget } from '@/gameplay/WorldMapState';
 
 export class UIScene extends Phaser.Scene {
   private hud: GameHud | null = null;
   private minimap: MiniMap | null = null;
+  private transitHud: TransitHud | null = null;
   private deathFade: Phaser.GameObjects.Rectangle | null = null;
   private gameplayDebug: GameplayDebugOverlay | null = null;
   private mobileControls: MobileControls | null = null;
@@ -60,6 +63,7 @@ export class UIScene extends Phaser.Scene {
     const mobile = this.mobilePlatform?.isMobile ?? false;
     this.hud = new GameHud(this, mobile);
     this.minimap = new MiniMap(this, mobile ? 120 : 176);
+    this.transitHud = new TransitHud(this, mobile);
     this.gameplayDebug = new GameplayDebugOverlay(this);
     if (this.mobilePlatform?.isMobile) {
       this.mobileControls = new MobileControls(this, this.mobilePlatform);
@@ -149,6 +153,9 @@ export class UIScene extends Phaser.Scene {
         );
       }
     }
+    this.transitHud?.setRide(
+      ServiceLocator.tryResolve<TransportationSystem>(ServiceKeys.Transportation)?.playerRide ?? null,
+    );
   }
 
   private formatDistrict(district: string): string {
@@ -168,6 +175,7 @@ export class UIScene extends Phaser.Scene {
       layout.safe.left + mapRadius + 14,
       layout.safe.top + mapRadius + 14,
     );
+    this.transitHud?.setMobileLayout(layout.width, layout.height, layout.safe);
     this.mobileControls?.layoutControls();
   }
 
@@ -217,6 +225,16 @@ export class UIScene extends Phaser.Scene {
           blips.push({ x: veh.sprite.x, y: veh.sprite.y, color: 0x8a8f98, size: 2 });
         }
       }
+      ServiceLocator.tryResolve<TransportationSystem>(ServiceKeys.Transportation)?.forEachServiceBlip(
+        (kind, position) => {
+          blips.push({
+            x: position.x,
+            y: position.y,
+            color: kind === 'bus' ? 0x38bdf8 : 0xf6c453,
+            size: kind === 'bus' ? 3 : 2.5,
+          });
+        },
+      );
     } catch {
       // Systems may briefly be detached during scene transitions — ignore.
     }
@@ -286,12 +304,14 @@ export class UIScene extends Phaser.Scene {
     this.applyCursorState(false);
     this.hud?.destroy();
     this.minimap?.destroy();
+    this.transitHud?.destroy();
     this.deathFade?.destroy();
     this.gameplayDebug?.destroy();
     this.mobileControls?.destroy();
     this.mobileLayoutUnsub?.();
     this.hud = null;
     this.minimap = null;
+    this.transitHud = null;
     this.deathFade = null;
     this.gameplayDebug = null;
     this.mobileControls = null;

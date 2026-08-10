@@ -24,6 +24,8 @@ export function resetTransient(ctx: PedestrianAIContext): void {
   ctx.talkPartner = null;
   ctx.helpTarget = null;
   ctx.brawlTarget = null;
+  ctx.transitBoardingTarget = null;
+  ctx.transitBoardingReady = false;
   ctx.nav.cancel(ctx.navService);
 }
 

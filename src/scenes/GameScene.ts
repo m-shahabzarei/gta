@@ -92,6 +92,7 @@ export class GameScene extends Phaser.Scene {
     this.attach(ServiceKeys.Occupants);
     this.attach(ServiceKeys.Pedestrian);
     this.attach(ServiceKeys.Traffic);
+    this.attach(ServiceKeys.Transportation);
     this.attach(ServiceKeys.Emergency);
     this.attach(ServiceKeys.Crime);
     this.attach(ServiceKeys.Wanted);

@@ -2,6 +2,18 @@ import type { VehicleKind, VehicleOccupantRole, VehicleSeat } from '@/gameplay/t
 
 export type OccupantSeatSpec = readonly [VehicleSeat, VehicleOccupantRole];
 
+/** Seats that may be claimed dynamically by real transit passengers. */
+export function passengerSeatsFor(kind: VehicleKind): readonly VehicleSeat[] {
+  switch (kind) {
+    case 'taxi':
+      return ['rear-right'];
+    case 'bus':
+      return ['front-passenger', 'rear-left', 'rear-right', 'passenger-4', 'passenger-5'];
+    default:
+      return [];
+  }
+}
+
 /** Canonical ownership/passenger manifest for every vehicle kind. */
 export function occupantManifestFor(kind: VehicleKind): readonly OccupantSeatSpec[] {
   switch (kind) {
@@ -28,19 +40,9 @@ export function occupantManifestFor(kind: VehicleKind): readonly OccupantSeatSpe
         ['front-passenger', 'firefighter'],
       ];
     case 'taxi':
-      return [
-        ['driver', 'taxi-driver'],
-        ['rear-right', 'passenger'],
-      ];
+      return [['driver', 'taxi-driver']];
     case 'bus':
-      return [
-        ['driver', 'bus-driver'],
-        ['front-passenger', 'passenger'],
-        ['rear-left', 'passenger'],
-        ['rear-right', 'passenger'],
-        ['passenger-4', 'passenger'],
-        ['passenger-5', 'passenger'],
-      ];
+      return [['driver', 'bus-driver']];
     case 'van':
     case 'suv':
       return [

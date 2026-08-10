@@ -40,6 +40,8 @@ export enum ServiceKeys {
   Pedestrian = 'PedestrianSystem',
   /** Spawns and updates AI traffic and drives the traffic lights. */
   Traffic = 'TrafficSystem',
+  /** City-specific bus, taxi, passenger, fare and transit-map coordination. */
+  Transportation = 'TransportationSystem',
   /** Registry of all vehicles; handles damage, explosions and occupancy. */
   Vehicle = 'VehicleSystem',
   /** Persistent people seated in vehicles and their door/exit transitions. */

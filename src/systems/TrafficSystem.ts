@@ -36,6 +36,7 @@ import { EntityCategory, type EntityManager } from '@/systems/EntityManager';
 import { CIVILIAN_VEHICLE_KINDS, VEHICLES } from '@/data';
 import { Random } from '@/utils';
 import { responseProfileForLevel } from '@/gameplay/police/PoliceResponseRules';
+import type { TrafficRoutePreview } from '@/gameplay/transit';
 
 interface IWorldRef extends IWorldQuery {
   readonly map: MapData;
@@ -172,6 +173,48 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
 
   public get validationReport(): TrafficValidationReport {
     return this.validator?.report ?? { passed: true, checkedVehicles: 0, failures: [] };
+  }
+
+  /** Read-only access for systems that need to validate lane-backed authored data. */
+  public get roadNetwork(): TrafficNetwork | null {
+    return this.network;
+  }
+
+  /**
+   * Summarise a legal cached lane route without creating a second navigator.
+   * Transit, map quotes, and diagnostics all consume this same graph query.
+   */
+  public routePreview(from: Vector2, to: Vector2): TrafficRoutePreview | null {
+    const network = this.network;
+    if (!network) return null;
+    const start = network.nearestLane(from, undefined, true);
+    const goal = network.nearestLane(to, undefined, true);
+    if (!start || !goal) return null;
+    // Player fares, destination previews, and authored bus lines need a
+    // complete route. Ambient drivers continue using their sliced replan API.
+    const route = network.findCompleteRoute(start.id, goal.id);
+    if (!route || route.length === 0) return null;
+
+    const startDistance = network.projectPoint(from, start).distance;
+    const goalDistance = network.projectPoint(to, goal).distance;
+    let distancePx = 0;
+    if (route.length === 1) {
+      distancePx = Math.max(0, goalDistance - startDistance);
+    } else {
+      for (let index = 0; index < route.length; index++) {
+        const lane = route[index];
+        if (!lane) continue;
+        if (index === 0) distancePx += Math.max(0, lane.spline.length - startDistance);
+        else if (index === route.length - 1) distancePx += Math.max(0, goalDistance);
+        else distancePx += lane.spline.length;
+      }
+    }
+    return {
+      laneIds: route.map((lane) => lane.id),
+      distancePx,
+      start: { x: from.x, y: from.y },
+      end: { x: to.x, y: to.y },
+    };
   }
 
   protected override onInit(): void {
@@ -655,6 +698,9 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       }
       if (!player || car.isPlayerDriven) continue;
       if (car.sprite.getData('policeResponseActive') === true) continue;
+      // Scheduled transit owns passenger/service state that cannot survive a
+      // generic visual retirement. It still receives the normal driver LOD.
+      if (car.sprite.getData('persistentTransitService') === true) continue;
       const dx = car.sprite.x - player.x;
       const dy = car.sprite.y - player.y;
       const distanceSq = dx * dx + dy * dy;
@@ -685,7 +731,10 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       const vehicle = this.vehicleSystem?.vehicles.find((candidate) => candidate.id === vehicleId);
       this.pendingDespawns.delete(vehicleId);
       if (!vehicle || vehicle.isPlayerDriven) continue;
-      if (vehicle.sprite.getData('policeResponseActive') === true) {
+      if (
+        vehicle.sprite.getData('policeResponseActive') === true ||
+        vehicle.sprite.getData('persistentTransitService') === true
+      ) {
         this.drivers.get(vehicleId)?.forceReplan();
         continue;
       }

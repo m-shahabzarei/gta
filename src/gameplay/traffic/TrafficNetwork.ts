@@ -27,7 +27,12 @@ const PARKING_OFFSET = 39;
 const JUNCTION_CLEARANCE = 48;
 const LANE_INDEX_CELL = 320;
 const ROUTE_CACHE_SIZE = 4096;
+/** One-off transit/map searches may be complete, but are still explicitly bounded and cached. */
+const COMPLETE_ROUTE_CACHE_SIZE = 1024;
 const ROUTE_SEARCH_EXPANSION_BUDGET = 24;
+/** A complete player-facing route is assembled from bounded native A* slices. */
+const COMPLETE_ROUTE_SLICE_EXPANSIONS = 128;
+const COMPLETE_ROUTE_MAX_SLICES = 256;
 const CONNECTOR_HANDLE_MIN = 12;
 const CONNECTOR_HANDLE_MAX = 35;
 
@@ -106,6 +111,11 @@ export class TrafficNetwork {
   private readonly laneIndex = new Map<string, TrafficLane[]>();
   private readonly parkingIndex = new Map<string, ParkingSpace[]>();
   private readonly routeCache = new LruCache<string, readonly TrafficLane[]>(ROUTE_CACHE_SIZE);
+  private readonly completeRouteCache = new LruCache<string, readonly TrafficLane[]>(
+    COMPLETE_ROUTE_CACHE_SIZE,
+  );
+  /** Lazily built SCC index used by authored services to avoid invalid directed loops. */
+  private strongComponentByLaneId: Map<string, number> | null = null;
   private readonly graph: LaneGraph;
   private routeCacheHitsValue = 0;
   private routeCacheMissesValue = 0;
@@ -285,6 +295,58 @@ export class TrafficNetwork {
     return route.length > 0 ? route : null;
   }
 
+  /**
+   * Resolve an exact legal lane route for player-facing quotes and authored
+   * transit lines. Unlike {@link findRoute}, this never turns an A* partial
+   * result into a destination route; drivers retain the short sliced query for
+   * their per-vehicle replanning budget.
+   */
+  public findCompleteRoute(startId: string, goalId: string): readonly TrafficLane[] | null {
+    const start = this.lanesById.get(startId);
+    const goal = this.lanesById.get(goalId);
+    if (!start || !goal) return null;
+    const key = `${startId}|${goalId}`;
+    const cached = this.completeRouteCache.get(key);
+    if (cached !== undefined) return cached.length > 0 ? cached : null;
+
+    // This API is event-driven (route authoring, fare selection, map open),
+    // never called from the traffic update loop. Reuse the driver's bounded A*
+    // policy in forward slices instead of one world-wide search, which avoids
+    // freezing the game while still rejecting an incomplete destination route.
+    const route: TrafficLane[] = [start];
+    const reached = new Set<string>([start.id]);
+    let current = start;
+    for (let slice = 0; slice < COMPLETE_ROUTE_MAX_SLICES && current.id !== goal.id; slice += 1) {
+      const result = findPath(this.graph, current, goal, {
+        maxExpansions: COMPLETE_ROUTE_SLICE_EXPANSIONS,
+        allowPartial: true,
+      });
+      const segment = result?.path ?? [];
+      if (segment.length < 2) break;
+      for (const lane of segment.slice(1)) route.push(lane);
+      const next = segment[segment.length - 1];
+      if (!next || reached.has(next.id)) break;
+      reached.add(next.id);
+      current = next;
+    }
+    if (current.id !== goal.id) route.length = 0;
+    this.completeRouteCache.set(key, route);
+    return route.length > 0 ? route : null;
+  }
+
+  /** Return the directed strongly-connected component for a lane, if it exists. */
+  public strongComponentId(laneId: string): number | null {
+    if (!this.lanesById.has(laneId)) return null;
+    this.ensureStrongComponents();
+    return this.strongComponentByLaneId?.get(laneId) ?? null;
+  }
+
+  /** A same-component pair is guaranteed to have legal directed paths both ways. */
+  public sharesStrongComponent(firstLaneId: string, secondLaneId: string): boolean {
+    const first = this.strongComponentId(firstLaneId);
+    return first !== null && first === this.strongComponentId(secondLaneId);
+  }
+
   /** Every ambient trip has a concrete reachable destination lane. */
   public chooseDestination(
     startId: string,
@@ -307,6 +369,67 @@ export class TrafficNetwork {
     return lastTravel && lastTravel.id !== start.id
       ? lastTravel
       : this.farthestReachableTravelLane(start);
+  }
+
+  /**
+   * Iterative Kosaraju traversal avoids recursive stack depth on country-size
+   * lane graphs. It is calculated once, only when an authored transit route
+   * needs a directed-cycle check; vehicle movement continues to use A*.
+   */
+  private ensureStrongComponents(): void {
+    if (this.strongComponentByLaneId) return;
+    const reverse = new Map<string, string[]>();
+    for (const lane of this.laneList) reverse.set(lane.id, []);
+    for (const lane of this.laneList) {
+      for (const nextId of lane.connectionIds) {
+        const incoming = reverse.get(nextId);
+        if (incoming) incoming.push(lane.id);
+      }
+    }
+
+    const visited = new Set<string>();
+    const finishOrder: string[] = [];
+    for (const seed of this.laneList) {
+      if (visited.has(seed.id)) continue;
+      const stack: Array<{ laneId: string; edgeIndex: number }> = [{ laneId: seed.id, edgeIndex: 0 }];
+      visited.add(seed.id);
+      while (stack.length > 0) {
+        const frame = stack[stack.length - 1];
+        if (!frame) break;
+        const lane = this.lanesById.get(frame.laneId);
+        const nextId = lane?.connectionIds[frame.edgeIndex];
+        if (nextId !== undefined) {
+          frame.edgeIndex += 1;
+          if (!visited.has(nextId) && this.lanesById.has(nextId)) {
+            visited.add(nextId);
+            stack.push({ laneId: nextId, edgeIndex: 0 });
+          }
+          continue;
+        }
+        stack.pop();
+        finishOrder.push(frame.laneId);
+      }
+    }
+
+    const components = new Map<string, number>();
+    let componentId = 0;
+    for (let index = finishOrder.length - 1; index >= 0; index -= 1) {
+      const seedId = finishOrder[index];
+      if (!seedId || components.has(seedId)) continue;
+      const stack = [seedId];
+      components.set(seedId, componentId);
+      while (stack.length > 0) {
+        const laneId = stack.pop();
+        if (!laneId) continue;
+        for (const previousId of reverse.get(laneId) ?? []) {
+          if (components.has(previousId)) continue;
+          components.set(previousId, componentId);
+          stack.push(previousId);
+        }
+      }
+      componentId += 1;
+    }
+    this.strongComponentByLaneId = components;
   }
 
   public parkingSpacesNear(
