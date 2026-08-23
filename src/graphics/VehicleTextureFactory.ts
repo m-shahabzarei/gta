@@ -618,7 +618,7 @@ export class VehicleTextureFactory {
     if (damaged) this.damageOverlay(g, ox, bx, bw, h);
   }
 
-  /** City bus: long teal body, side window strips, roof hatches. */
+  /** City bus: long livery body, repeated passenger windows, door and three axles. */
   private bus(g: Phaser.GameObjects.Graphics, ox: number, damaged: boolean): void {
     const w = 28;
     const h = 72;
@@ -631,21 +631,44 @@ export class VehicleTextureFactory {
     const bw = w - 4;
     const teal = 0x1f7a8c;
     this.shell(g, ox, bx, bw, h, teal, 3);
-    this.cabinGlass(g, ox, bx, bw, 4, 7, -1, 0, damaged);
-    // Roof deck.
-    g.fillStyle(shade(teal, 0.12), 1);
-    g.fillRoundedRect(ox + bx + 2, 13, bw - 4, h - 19, 2);
-    // Side window strips.
-    g.fillStyle(PALETTE.glass, 1);
-    g.fillRect(ox + bx + 1, 16, 2, h - 26);
-    g.fillRect(ox + bx + bw - 3, 16, 2, h - 26);
-    // Roof hatches.
+    this.cabinGlass(g, ox, bx, bw, 4, 8, h - 12, 5, damaged);
+    // Long roof deck framed by the cream body, with a high-contrast route
+    // strip so it cannot be mistaken for a sedan at normal gameplay zoom.
+    g.fillStyle(0xe9ece9, 1);
+    g.fillRoundedRect(ox + bx + 2, 14, bw - 4, h - 27, 2);
+    g.fillStyle(shade(teal, 0.1), 1);
+    g.fillRoundedRect(ox + bx + 3, 17, bw - 6, h - 33, 2);
+    g.fillStyle(0xf4c85a, 1);
+    g.fillRect(ox + bx + 1, 13, bw - 2, 3);
+    g.fillStyle(0x16303d, 1);
+    g.fillRect(ox + bx + 5, 8, bw - 10, 3);
+    g.fillStyle(0xe6f6ff, 0.9);
+    g.fillRect(ox + bx + 7, 9, bw - 14, 1);
+
+    // Repeated passenger windows create a clear bus silhouette in the
+    // top-down view. They sit on both side walls, not in a generic car cabin.
+    for (const y of [19, 28, 37, 46]) {
+      g.fillStyle(PALETTE.glass, 1);
+      g.fillRect(ox + bx + 1, y, 3, 6);
+      g.fillRect(ox + bx + bw - 4, y, 3, 6);
+      g.fillStyle(PALETTE.glassLight, 0.72);
+      g.fillRect(ox + bx + 2, y + 1, 1, 3);
+      g.fillRect(ox + bx + bw - 3, y + 1, 1, 3);
+    }
+    // Twin rear doors on the curb side and a lower livery stripe.
+    g.fillStyle(0x152431, 1);
+    g.fillRect(ox + bx + bw - 4, 53, 3, 11);
+    g.fillStyle(0x92c7dc, 0.9);
+    g.fillRect(ox + bx + bw - 3, 54, 1, 9);
+    g.fillStyle(0xf4c85a, 1);
+    g.fillRect(ox + bx + 1, 56, bw - 2, 2);
+
+    // Roof hatches and rear ventilation panel.
     g.fillStyle(shade(teal, 0.3), 1);
     g.fillRoundedRect(ox + Math.round(w / 2) - 4, 22, 8, 6, 1);
-    g.fillRoundedRect(ox + Math.round(w / 2) - 4, h - 26, 8, 6, 1);
-    // Accent stripe.
-    g.fillStyle(PALETTE.accent, 1);
-    g.fillRect(ox + bx + 1, Math.round(h * 0.5), bw - 2, 2);
+    g.fillRoundedRect(ox + Math.round(w / 2) - 4, 40, 8, 6, 1);
+    g.fillStyle(0x1b3542, 1);
+    g.fillRect(ox + bx + 5, h - 9, bw - 10, 2);
     this.lights(g, ox, bx, bw, h, damaged);
     if (damaged) this.damageOverlay(g, ox, bx, bw, h);
   }

@@ -126,6 +126,21 @@ export interface TrafficDestination {
   readonly laneId: string;
   readonly position: Vector2;
   readonly purpose: 'ambient' | 'service' | 'emergency' | 'parking' | 'respawn';
+  /** Exact lane arc used by lane-bound curb stops; absent for generic targets. */
+  readonly laneDistance?: number;
+  /** Required lane tangent at an exact curb stop; absent for generic targets. */
+  readonly heading?: number;
+}
+
+/**
+ * An exact legal stopping target on a named directed traffic lane. This keeps
+ * services from resolving a visually nearby but opposite-direction lane.
+ */
+export interface TrafficLaneStopTarget {
+  readonly laneId: string;
+  readonly laneDistance: number;
+  readonly position: Vector2;
+  readonly heading: number;
 }
 
 export type TrafficPersonalityName =
@@ -201,6 +216,8 @@ export interface TrafficDriverDebug {
   readonly laneId: string | null;
   readonly targetLaneId: string | null;
   readonly destination: TrafficDestination | null;
+  readonly laneDistance: number;
+  readonly distanceToDestination: number | null;
   readonly currentSpeed: number;
   readonly desiredSpeed: number;
   readonly steeringAngle: number;

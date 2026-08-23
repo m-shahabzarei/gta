@@ -15,8 +15,12 @@ import { PLAYER, VEHICLE } from '@/config/Constants';
 import type { ISerializable } from '@/core/interfaces';
 import type { Json, Vector2 } from '@/core/types';
 import {
+  BUS_STOPPING_CONFIG,
   CITY_TRANSIT_CONFIG,
   calculateTaxiFare,
+  type BusRouteSegment,
+  type BusRouteStopValidation,
+  type BusRouteValidation,
   type BusServiceSnapshot,
   type BusServiceState,
   type BusRouteConfig,
@@ -25,9 +29,11 @@ import {
   type TaxiFareQuote,
   type TaxiServiceSnapshot,
   type TaxiState,
+  type TrafficRoutePreview,
   type TransitRideSnapshot,
   type TransportationDebugSnapshot,
 } from '@/gameplay/transit';
+import type { TrafficLaneStopTarget } from '@/gameplay/traffic';
 import type { BusStopSite, CityId, VehicleOccupantRecord } from '@/gameplay/types';
 import type { Vehicle } from '@/entities/Vehicle';
 import type { Pedestrian } from '@/entities/Pedestrian';
@@ -47,6 +53,12 @@ interface BusRuntime {
   currentStopIndex: number;
   targetStopIndex: number;
   dwellRemainingMs: number;
+  /** Boarding is enabled only while this exact bus is stopped at its assigned curb. */
+  boardingActive: boolean;
+  /** Keep the curb dwell open while the local player crosses a bus door. */
+  playerBoardingInProgress: boolean;
+  playerExitInProgress: boolean;
+  playerTransitionDeadline: number;
   recoveryAttempts: number;
   nextRecoveryAt: number;
 }
@@ -56,7 +68,16 @@ interface TaxiRuntime {
   vehicle: Vehicle;
   state: TaxiState;
   roamTarget: Vector2 | null;
+  /** Newly spawned local reserve taxis hold briefly at a legal curb before roaming. */
+  idleUntil: number;
+  /** A rebalanced taxi waits at its reached local curb instead of immediately roaming away. */
+  standAtNextTarget: boolean;
+  /** Pedestrian-side reference point selected when the player hails this taxi. */
   playerRequestPosition: Vector2 | null;
+  /** Legal lane point where the driver stops for pickup. */
+  pickupPosition: Vector2 | null;
+  /** Legal lane point where the driver stops near the selected destination. */
+  dropoffPosition: Vector2 | null;
   destination: TaxiDestination | null;
   fare: TaxiFareQuote | null;
   farePaid: boolean;
@@ -74,26 +95,51 @@ interface PassengerPlan {
   phase: 'waiting' | 'walking-to-door';
 }
 
+interface TaxiRoadTarget {
+  position: Vector2;
+  route: TrafficRoutePreview;
+}
+
+/** One authored bus line awaiting its bounded startup resolution pass. */
+interface RouteInitializationTask {
+  cityId: CityId;
+  config: BusRouteConfig;
+}
+
 export interface TransitInteraction {
   prompt: string;
-  kind: 'board-bus' | 'take-taxi' | 'call-taxi' | 'exit-transit' | 'view-bus-stop';
+  kind: 'board-bus' | 'call-taxi' | 'enter-taxi' | 'exit-transit';
   distanceSq: number;
 }
 
 const SERVICE_TICK_MS = 200;
 const PASSENGER_PLAN_TICK_MS = 900;
 const SERVICE_RESPAWN_MS = 1800;
-const TAXI_HAIL_TIMEOUT_MS = 12000;
+const TAXI_PICKUP_TIMEOUT_MS = 90000;
+const TAXI_WAITING_FOR_PASSENGER_TIMEOUT_MS = 30000;
 const TAXI_BOARD_TIMEOUT_MS = 4500;
-const TAXI_STOP_RANGE = 34;
-const BUS_STOP_RANGE = 28;
-const BUS_RECOVERY_DELAY_MS = 1400;
+const TAXI_STOP_RANGE = 26;
+const BUS_STOP_RANGE = BUS_STOPPING_CONFIG.stoppingRadius;
+const BUS_RECOVERY_DELAY_MS = BUS_STOPPING_CONFIG.recoveryDelayMs;
 const TAXI_RECOVERY_DELAY_MS = 1200;
-const MAX_RECOVERY_ATTEMPTS = 3;
+const MAX_RECOVERY_ATTEMPTS = BUS_STOPPING_CONFIG.maxRecoveryAttempts;
 const ROUTE_STOP_CANDIDATE_LIMIT = 8;
+/** Keep the cheap geometric cycle selection local to each landmark's nearby curbs. */
+const ROUTE_CYCLE_CANDIDATE_LIMIT = 5;
 const BUS_INTERACTION_RANGE = 68;
+const BUS_PLAYER_TRANSITION_GRACE_MS = 1200;
+const BUS_STATIONARY_BLOCKER_RECOVERY_MS = 7000;
 const TAXI_INTERACTION_RANGE = VEHICLE.ENTER_RANGE + 10;
-const STOP_INTERACTION_RANGE = Math.max(PLAYER.INTERACT_RANGE, 60);
+const TAXI_PICKUP_SEARCH_RADIUS = 148;
+const TAXI_PICKUP_JUNCTION_CLEARANCE = 92;
+const TAXI_PICKUP_CLEARANCE = 54;
+const TAXI_PICKUP_ARRIVAL_RANGE = 44;
+const TAXI_DROPOFF_ARRIVAL_RANGE = 48;
+const SERVICE_STOP_SPEED = 3.5;
+const TAXI_ENCOUNTER_MIN_SPAWN_DISTANCE = 168;
+const TAXI_ENCOUNTER_PREFERRED_SPAWN_DISTANCE = 360;
+const TAXI_ENCOUNTER_LANE_LIMIT = 18;
+const TAXI_SERVICE_TARGET_LIMIT = 18;
 
 /**
  * Scene-bound, save-compatible public transport system. Persistent service
@@ -116,11 +162,17 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   private readonly taxis = new Map<number, TaxiRuntime>();
   private readonly passengerPlans = new Map<number, PassengerPlan>();
   private readonly discoveredStopIds = new Set<string>();
+  /** Route authoring can require exact graph searches, so it is scheduled one line per frame. */
+  private readonly routeInitializationQueue: RouteInitializationTask[] = [];
   private runtimeReady = false;
   private serviceAccumulatorMs = 0;
   private passengerPlanAccumulatorMs = 0;
   private nextSpawnAttemptAt = 0;
-  private taxiRoamOrdinal = 0;
+  private readonly taxiRoamOrdinals: Record<CityId, number> = {
+    tehran: 0,
+    yazd: 0,
+    gilan: 0,
+  };
 
   protected onInit(): void {
     this.subscribe(EventKeys.PlayerInteract, (position) => this.handlePlayerInteraction(position));
@@ -131,6 +183,8 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   protected onAttach(_scene: Phaser.Scene): void {
     this.resetRuntime();
     this.resolveServices();
+    // Queueing is intentionally cheap. Exact lane-route authoring is performed
+    // one configured line per later frame so this scene transition can paint.
     this.initializeRuntime();
   }
 
@@ -148,6 +202,7 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   public update(time: number, delta: number): void {
     this.resolveServices();
     this.initializeRuntime();
+    this.processRouteInitialization();
     if (!this.runtimeReady) return;
 
     this.serviceAccumulatorMs += Math.min(delta, SERVICE_TICK_MS * 4);
@@ -189,14 +244,20 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         tehran: {
           routes: CITY_TRANSIT_CONFIG.tehran.busRoutes.length,
           taxis: CITY_TRANSIT_CONFIG.tehran.taxi.population,
+          taxiEncounterRadius: CITY_TRANSIT_CONFIG.tehran.taxi.encounterRadius,
+          guaranteedNearbyTaxis: CITY_TRANSIT_CONFIG.tehran.taxi.guaranteedNearby,
         },
         yazd: {
           routes: CITY_TRANSIT_CONFIG.yazd.busRoutes.length,
           taxis: CITY_TRANSIT_CONFIG.yazd.taxi.population,
+          taxiEncounterRadius: CITY_TRANSIT_CONFIG.yazd.taxi.encounterRadius,
+          guaranteedNearbyTaxis: CITY_TRANSIT_CONFIG.yazd.taxi.guaranteedNearby,
         },
         gilan: {
           routes: CITY_TRANSIT_CONFIG.gilan.busRoutes.length,
           taxis: CITY_TRANSIT_CONFIG.gilan.taxi.population,
+          taxiEncounterRadius: CITY_TRANSIT_CONFIG.gilan.taxi.encounterRadius,
+          guaranteedNearbyTaxis: CITY_TRANSIT_CONFIG.gilan.taxi.guaranteedNearby,
         },
       },
       busRoutes: { tehran: routes('tehran'), yazd: routes('yazd'), gilan: routes('gilan') },
@@ -257,30 +318,27 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   /** Select a map destination and produce a lane-route-based quote without charging the player. */
   public previewTaxiDestination(destination: TaxiDestination): TaxiFareQuote | null {
     const taxi = this.currentPlayerTaxi();
-    const traffic = this.traffic;
     const world = this.world;
     if (
       !taxi ||
-      taxi.state !== 'WAITING_FOR_PLAYER' ||
+      !this.isTaxiDestinationSelectionState(taxi.state) ||
       destination.cityId !== taxi.cityId ||
-      !traffic ||
       !world
     ) {
       return null;
     }
-    const route = traffic.routePreview(
-      { x: taxi.vehicle.sprite.x, y: taxi.vehicle.sprite.y },
-      destination.position,
-    );
-    if (!route || route.laneIds.length === 0) return null;
+    const target = this.resolveTaxiRoadTarget(taxi, destination.position, false);
+    if (!target || target.route.laneIds.length === 0) return null;
     const quote = calculateTaxiFare(
       CITY_TRANSIT_CONFIG[taxi.cityId].taxi,
-      route,
+      target.route,
       world.trafficDensityAt(taxi.vehicle.sprite.x, taxi.vehicle.sprite.y),
     );
     taxi.destination = { ...destination, position: { ...destination.position } };
+    taxi.dropoffPosition = { ...target.position };
     taxi.fare = quote;
     taxi.validLaneRoute = true;
+    this.setTaxiState(taxi, 'FARE_CONFIRMATION');
     return quote;
   }
 
@@ -303,7 +361,15 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     const taxi = this.currentPlayerTaxi();
     const player = this.player?.player;
     const traffic = this.traffic;
-    if (!taxi || !player || !traffic || taxi.state !== 'WAITING_FOR_PLAYER' || !taxi.destination || !taxi.fare) {
+    if (
+      !taxi ||
+      !player ||
+      !traffic ||
+      taxi.state !== 'FARE_CONFIRMATION' ||
+      !taxi.destination ||
+      !taxi.dropoffPosition ||
+      !taxi.fare
+    ) {
       return 'invalid-trip';
     }
     if (taxi.farePaid) return 'already-paid';
@@ -312,10 +378,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       return 'insufficient-funds';
     }
     taxi.farePaid = true;
-    taxi.state = 'IN_SERVICE';
-    taxi.stateSince = this.now();
+    this.setTaxiState(taxi, 'IN_SERVICE');
     taxi.validLaneRoute = true;
-    traffic.configureDriver(taxi.vehicle, () => taxi.destination?.position ?? null, TAXI_STOP_RANGE, false);
+    traffic.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
     this.bus.emit(EventKeys.UIToast, {
       message: `Taxi fare paid: $${taxi.fare.total}`,
       durationMs: 1800,
@@ -326,12 +391,13 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   /** Cancel a pre-payment taxi selection and let the player exit at the current safe curb. */
   public cancelTaxiDestination(): boolean {
     const taxi = this.currentPlayerTaxi();
-    if (!taxi || taxi.state !== 'WAITING_FOR_PLAYER') return false;
-    const exit = this.safeTransitExitPosition(taxi.vehicle, null);
+    if (!taxi || !this.isTaxiDestinationSelectionState(taxi.state)) return false;
+    const exit = this.safeTransitExitPosition(taxi.vehicle, null, taxi.playerRequestPosition);
     if (!exit || !this.player?.beginPassengerExit(exit)) return false;
-    taxi.state = 'COMPLETED';
-    taxi.stateSince = this.now();
+    this.traffic?.setDriverStopped(taxi.vehicle, true);
+    this.setTaxiState(taxi, 'PASSENGER_EXITING');
     taxi.destination = null;
+    taxi.dropoffPosition = null;
     taxi.fare = null;
     taxi.farePaid = false;
     return true;
@@ -340,36 +406,50 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   /** Interaction query consumed before generic vehicle/npc targets. */
   public interactionAt(position: Vector2): TransitInteraction | null {
     const ride = this.playerRideSnapshot();
-    if (ride?.canExit) {
-      return { prompt: 'E  Exit transit', kind: 'exit-transit', distanceSq: 0 };
+    if (ride) {
+      if (ride.canExit) {
+        return {
+          prompt: ride.kind === 'bus' ? 'EXIT BUS  E' : 'EXIT TAXI  E',
+          kind: 'exit-transit',
+          distanceSq: 0,
+        };
+      }
+      // A passenger cannot hail, enter, or hijack another service vehicle.
+      return null;
     }
-    const taxi = this.nearestTaxi(position, TAXI_INTERACTION_RANGE, ['AVAILABLE', 'WAITING_FOR_PLAYER']);
-    if (taxi) {
+    const pickupTaxi = this.nearestTaxi(
+      position,
+      TAXI_INTERACTION_RANGE,
+      ['WAITING_FOR_PASSENGER'],
+      (candidate) => this.taxiCanBoard(candidate),
+    );
+    if (pickupTaxi) {
       return {
-        prompt: taxi.state === 'WAITING_FOR_PLAYER' ? 'E  Take taxi' : 'E  Take taxi',
-        kind: 'take-taxi',
-        distanceSq: this.distanceSq(position, taxi.vehicle.sprite),
+        prompt: 'ENTER TAXI  E',
+        kind: 'enter-taxi',
+        distanceSq: this.distanceSq(position, pickupTaxi.vehicle.sprite),
+      };
+    }
+    const availableTaxi = this.nearestTaxi(
+      position,
+      TAXI_INTERACTION_RANGE,
+      ['AVAILABLE'],
+      (candidate) => this.isTaxiHireable(candidate),
+    );
+    if (availableTaxi) {
+      return {
+        prompt: 'CALL TAXI  E',
+        kind: 'call-taxi',
+        distanceSq: this.distanceSq(position, availableTaxi.vehicle.sprite),
       };
     }
     const bus = this.nearestBoardableBus(position);
     if (bus) {
       return {
-        prompt: `E  Board ${bus.route.config.id}`,
+        prompt: 'BOARD BUS  E',
         kind: 'board-bus',
         distanceSq: this.distanceSq(position, bus.vehicle.sprite),
       };
-    }
-    const stop = this.nearestBusStop(position, STOP_INTERACTION_RANGE);
-    if (stop) {
-      return {
-        prompt: 'E  View bus service',
-        kind: 'view-bus-stop',
-        distanceSq: this.distanceSq(position, stop),
-      };
-    }
-    const city = this.world?.cityAt(position.x, position.y)?.id;
-    if (city && this.nearestTaxiForCity(city)) {
-      return { prompt: 'E  Call taxi', kind: 'call-taxi', distanceSq: 0 };
     }
     return null;
   }
@@ -382,7 +462,11 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   /** Whether MapScene should operate as a fare-confirmation destination picker. */
   public get taxiDestinationSelectionActive(): boolean {
     const taxi = this.currentPlayerTaxi();
-    return taxi?.state === 'WAITING_FOR_PLAYER' && this.player?.playerIsTransitPassenger === true;
+    return Boolean(
+      taxi &&
+        this.isTaxiDestinationSelectionState(taxi.state) &&
+        this.player?.playerIsTransitPassenger === true,
+    );
   }
 
   public get pendingTaxiFare(): TaxiFareQuote | null {
@@ -400,7 +484,7 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     return this.runtimeReady && bus ? this.beginBusBoarding(bus) : false;
   }
 
-  /** Start a player boarding transition for an available or hailed taxi. */
+  /** Start a player boarding transition only after the hailed taxi has stopped at its pickup curb. */
   public requestTaxiBoarding(vehicleId: number): boolean {
     const taxi = this.taxis.get(vehicleId);
     return this.runtimeReady && taxi ? this.beginTaxiBoarding(taxi) : false;
@@ -412,16 +496,19 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     const vehicle = player?.currentVehicle;
     if (!player?.playerIsTransitPassenger || !vehicle) return false;
     const bus = this.buses.get(vehicle.id);
-    if (bus?.state === 'dwelling') {
+    if (bus?.state === 'STOPPED_AT_STOP' && bus.boardingActive && this.busIsAtCurrentStop(bus)) {
       const exit = this.safeTransitExitPosition(vehicle, this.currentBusStop(bus));
-      return exit ? player.beginPassengerExit(exit) : false;
+      if (!exit || !player.beginPassengerExit(exit)) return false;
+      bus.playerExitInProgress = true;
+      bus.dwellRemainingMs = Math.max(bus.dwellRemainingMs, BUS_PLAYER_TRANSITION_GRACE_MS);
+      return true;
     }
     const taxi = this.taxis.get(vehicle.id);
-    if (taxi && (taxi.state === 'ARRIVING' || taxi.state === 'WAITING_FOR_PLAYER')) {
-      const exit = this.safeTransitExitPosition(vehicle, null);
+    if (taxi && taxi.state === 'ARRIVING' && this.taxiIsAtDropoff(taxi)) {
+      const exit = this.safeTransitExitPosition(taxi.vehicle, null, taxi.destination?.position);
       if (!exit || !player.beginPassengerExit(exit)) return false;
-      taxi.state = 'COMPLETED';
-      taxi.stateSince = this.now();
+      this.traffic?.setDriverStopped(taxi.vehicle, true);
+      this.setTaxiState(taxi, 'PASSENGER_EXITING');
       return true;
     }
     return false;
@@ -449,10 +536,43 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   }
 
   private initializeRuntime(): void {
-    if (this.runtimeReady) return;
+    if (this.runtimeReady || this.routeInitializationQueue.length > 0) return;
     if (!this.world || !this.traffic || !this.vehicles || !this.occupants || !this.pedestrians) return;
     if (!this.traffic.roadNetwork || this.world.map.busStops.length === 0) return;
-    this.resolveConfiguredRoutes();
+    this.resolvedRoutes.clear();
+    for (const stop of this.world.map.busStops) stop.routeIds.length = 0;
+    for (const cityId of ['tehran', 'yazd', 'gilan'] as const) {
+      for (const config of CITY_TRANSIT_CONFIG[cityId].busRoutes) {
+        this.routeInitializationQueue.push({ cityId, config });
+      }
+    }
+    if (this.routeInitializationQueue.length === 0) this.finishRouteInitialization();
+  }
+
+  /** Resolve one configured line after a frame boundary, preserving authored config order. */
+  private processRouteInitialization(): void {
+    if (this.runtimeReady || this.routeInitializationQueue.length === 0) return;
+    const task = this.routeInitializationQueue.shift();
+    const traffic = this.traffic;
+    if (!task || !traffic) return;
+
+    const resolvedStops = this.resolveRouteStops(task.cityId, task.config, traffic);
+    const route = this.buildResolvedBusRoute(task.cityId, task.config, resolvedStops);
+    if (route.valid) {
+      for (const stop of route.stops) {
+        if (!stop.routeIds.includes(task.config.id)) stop.routeIds.push(task.config.id);
+      }
+    }
+    const routes = this.resolvedRoutes.get(task.cityId) ?? [];
+    routes.push(route);
+    this.resolvedRoutes.set(task.cityId, routes);
+    this.logRouteValidation(route);
+
+    if (this.routeInitializationQueue.length === 0) this.finishRouteInitialization();
+  }
+
+  /** Enable service spawning only after every configured route has a diagnostic result. */
+  private finishRouteInitialization(): void {
     this.runtimeReady = true;
     this.nextSpawnAttemptAt = 0;
   }
@@ -465,25 +585,192 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     this.processPassengerBoardingWalks();
   }
 
-  private resolveConfiguredRoutes(): void {
-    const world = this.world;
-    const traffic = this.traffic;
-    if (!world || !traffic) return;
-    this.resolvedRoutes.clear();
-    for (const cityId of ['tehran', 'yazd', 'gilan'] as const) {
-      const routes = CITY_TRANSIT_CONFIG[cityId].busRoutes.map((config) => {
-        const resolvedStops = this.resolveRouteStops(cityId, config, traffic);
-        const stops = resolvedStops ?? [];
-        const valid = config.active && resolvedStops !== null && stops.length >= 3;
-        return {
-          config,
-          stops,
-          valid,
-          issue: valid ? undefined : 'Unable to resolve a complete directed road route for all anchors',
-        } satisfies ResolvedBusRoute;
-      });
-      this.resolvedRoutes.set(cityId, routes);
+  /** Expose deterministic per-stop diagnostics to development tooling. */
+  public validateBusRoutes(): readonly BusRouteValidation[] {
+    return (['tehran', 'yazd', 'gilan'] as const).flatMap((cityId) =>
+      (this.resolvedRoutes.get(cityId) ?? []).map((route) => route.validation),
+    );
+  }
+
+  private buildResolvedBusRoute(
+    cityId: CityId,
+    config: BusRouteConfig,
+    resolvedStops: BusStopSite[] | null,
+  ): ResolvedBusRoute {
+    const stops = resolvedStops ?? [];
+    if (!config.active) {
+      return {
+        config,
+        stops,
+        segments: [],
+        validation: {
+          cityId,
+          routeId: config.id,
+          routeName: config.name,
+          stops: [],
+          connectivity: 'INVALID',
+        },
+        valid: false,
+        issue: 'Route is disabled',
+      };
     }
+    if (stops.length < 3) {
+      return {
+        config,
+        stops,
+        segments: [],
+        validation: {
+          cityId,
+          routeId: config.id,
+          routeName: config.name,
+          stops: config.anchors.map((anchor, index) => ({
+            index,
+            stopId: anchor.id,
+            status: 'ERROR',
+            issue: 'No valid directional road-connected stop resolved for anchor',
+          })),
+          connectivity: 'INVALID',
+        },
+        valid: false,
+        issue: 'Unable to resolve a complete directed road route for all anchors',
+      };
+    }
+
+    const { segments, validation } = this.validateResolvedBusRoute(cityId, config, stops);
+    const issue =
+      validation.connectivity === 'VALID'
+        ? undefined
+        : validation.stops.find((stop) => stop.status === 'ERROR')?.issue ??
+          'No valid road connection between ordered stops';
+    return {
+      config,
+      stops,
+      segments,
+      validation,
+      valid: validation.connectivity === 'VALID',
+      issue,
+    };
+  }
+
+  /**
+   * Validate the exact generated curb records and cache every complete directed
+   * lane segment. This runs when routes are authored/resolved, never per frame.
+   */
+  private validateResolvedBusRoute(
+    cityId: CityId,
+    config: BusRouteConfig,
+    stops: readonly BusStopSite[],
+  ): { segments: readonly BusRouteSegment[]; validation: BusRouteValidation } {
+    const network = this.traffic?.roadNetwork;
+    const stopReports: BusRouteStopValidation[] = stops.map((stop, index) => ({
+      index,
+      stopId: stop.id,
+      status: 'OK',
+    }));
+    const markInvalid = (index: number, issue: string): void => {
+      const report = stopReports[index];
+      if (!report || report.status === 'ERROR') return;
+      report.status = 'ERROR';
+      report.issue = issue;
+    };
+    if (!network) {
+      for (let index = 0; index < stops.length; index += 1) {
+        markInvalid(index, 'Traffic road graph is unavailable');
+      }
+      return {
+        segments: [],
+        validation: {
+          cityId,
+          routeId: config.id,
+          routeName: config.name,
+          stops: stopReports,
+          connectivity: 'INVALID',
+        },
+      };
+    }
+
+    for (let index = 0; index < stops.length; index += 1) {
+      const stop = stops[index];
+      if (!stop) continue;
+      if (
+        !Number.isFinite(stop.x) ||
+        !Number.isFinite(stop.y) ||
+        !Number.isFinite(stop.stopPosition.x) ||
+        !Number.isFinite(stop.stopPosition.y)
+      ) {
+        markInvalid(index, 'Invalid world or stopping position');
+        continue;
+      }
+      const lane = network.lane(stop.laneId);
+      if (!lane || lane.kind !== 'travel') {
+        markInvalid(index, 'No valid road connection');
+        continue;
+      }
+      if (lane.fromNodeId !== stop.roadNodeId || lane.toNodeId !== stop.resumeNodeId) {
+        markInvalid(index, 'Road-node direction does not match stop lane');
+        continue;
+      }
+      if (stop.laneDistance <= 0 || stop.laneDistance >= lane.spline.length) {
+        markInvalid(index, 'Stopping distance is outside its road lane');
+        continue;
+      }
+      const pose = network.pointAt(lane, stop.laneDistance);
+      if (this.distanceSq(stop.stopPosition, pose.point) > 2 * 2) {
+        markInvalid(index, 'Stopping position is not attached to its road lane');
+        continue;
+      }
+      const directionDot =
+        stop.approachDirection.x * pose.tangent.x + stop.approachDirection.y * pose.tangent.y;
+      if (directionDot < 0.98) {
+        markInvalid(index, 'Approach direction does not match its road lane');
+      }
+    }
+
+    const segments: BusRouteSegment[] = [];
+    for (let index = 0; index < stops.length; index += 1) {
+      const from = stops[index];
+      const to = stops[(index + 1) % stops.length];
+      if (!from || !to) continue;
+      const route = network.findCompleteRoute(from.laneId, to.laneId);
+      if (!route || route.length === 0) {
+        const issue = 'No valid road connection from previous stop';
+        segments.push({ fromStopId: from.id, toStopId: to.id, laneIds: [], valid: false, issue });
+        markInvalid((index + 1) % stops.length, issue);
+        continue;
+      }
+      segments.push({
+        fromStopId: from.id,
+        toStopId: to.id,
+        laneIds: route.map((lane) => lane.id),
+        valid: true,
+      });
+    }
+    const connectivity =
+      stopReports.every((stop) => stop.status === 'OK') && segments.every((segment) => segment.valid)
+        ? 'VALID'
+        : 'INVALID';
+    return {
+      segments,
+      validation: {
+        cityId,
+        routeId: config.id,
+        routeName: config.name,
+        stops: stopReports,
+        connectivity,
+      },
+    };
+  }
+
+  private logRouteValidation(route: ResolvedBusRoute): void {
+    const summary = route.validation.stops
+      .map((stop) => `${String(stop.index + 1).padStart(2, '0')}:${stop.status}`)
+      .join(' ');
+    if (route.validation.connectivity === 'VALID') {
+      this.log.debug(`${route.config.name} ${summary} Route connectivity: VALID`);
+      return;
+    }
+    const issue = route.validation.stops.find((stop) => stop.status === 'ERROR')?.issue ?? route.issue;
+    this.log.warn(`${route.config.name} route connectivity INVALID: ${issue ?? 'unknown route error'}`);
   }
 
   /**
@@ -499,54 +786,113 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     const world = this.world;
     const network = traffic.roadNetwork;
     if (!world || !network) return null;
-    const candidates = config.anchors.map((anchor) => {
-      const landmark = anchor.landmarkIds
+    const landmarks = config.anchors.map((anchor) =>
+      anchor.landmarkIds
         .map((id) => world.map.landmarks.find((candidate) => candidate.id === id))
-        .find((candidate) => candidate?.cityId === cityId);
-      return landmark
-        ? this.nearestStopsTo(landmark.position, cityId, new Set<string>(), ROUTE_STOP_CANDIDATE_LIMIT)
-        : [];
+        .find((candidate) => candidate?.cityId === cityId) ?? null,
+    );
+    if (landmarks.some((landmark) => landmark === null)) return null;
+    const anchoredCandidates = landmarks.map((landmark) => {
+      if (!landmark) return [];
+      return this.nearestStopsTo(
+        landmark.position,
+        cityId,
+        new Set<string>(),
+        ROUTE_STOP_CANDIDATE_LIMIT,
+      );
     });
-    if (candidates.some((entry) => entry.length === 0)) return null;
+    if (anchoredCandidates.some((entry) => entry.length === 0)) return null;
 
-    // Pick one component represented near every landmark. Strong connectivity
-    // proves the complete directed loop before any bus spawns, without a burst
-    // of expensive A* searches while the game scene is starting.
+    // Every selected curb must share a directed SCC so the cycle is possible
+    // in both directions. Pick the smallest geographic loop from the nearby
+    // candidates first; exact lane routes are then resolved and validated once
+    // for that chosen loop. Running every candidate pair through full A* here
+    // could perform hundreds of country-scale searches in the New Game click.
     const commonComponents = new Set<number>();
-    for (const stop of candidates[0] ?? []) {
+    for (const stop of anchoredCandidates[0] ?? []) {
       const component = network.strongComponentId(stop.laneId);
       if (component !== null) commonComponents.add(component);
     }
-    for (let index = 1; index < candidates.length; index += 1) {
+    for (let index = 1; index < anchoredCandidates.length; index += 1) {
       for (const component of Array.from(commonComponents)) {
-        if (!(candidates[index] ?? []).some((stop) => network.strongComponentId(stop.laneId) === component)) {
+        if (!(anchoredCandidates[index] ?? []).some((stop) => network.strongComponentId(stop.laneId) === component)) {
           commonComponents.delete(component);
         }
       }
     }
+
+    let selected: { stops: BusStopSite[]; score: number } | null = null;
     for (const component of commonComponents) {
-      const selected: BusStopSite[] = [];
-      const used = new Set<string>();
-      const selectDistinct = (index: number): boolean => {
-        if (index >= candidates.length) return true;
-        for (const stop of candidates[index] ?? []) {
-          if (used.has(stop.id) || network.strongComponentId(stop.laneId) !== component) continue;
-          selected.push(stop);
-          used.add(stop.id);
-          if (selectDistinct(index + 1)) return true;
-          used.delete(stop.id);
-          selected.pop();
-        }
-        return false;
-      };
-      if (selectDistinct(0)) return selected;
+      const layers = anchoredCandidates.map((candidates) =>
+        candidates
+          .filter((stop) => network.strongComponentId(stop.laneId) === component)
+          .slice(0, ROUTE_CYCLE_CANDIDATE_LIMIT),
+      );
+      if (layers.some((layer) => layer.length === 0)) continue;
+      const cycle = this.lowestCostDirectedStopCycle(layers);
+      if (cycle && (!selected || cycle.score < selected.score)) selected = cycle;
     }
-    return null;
+    return selected?.stops ?? null;
+  }
+
+  /**
+   * Resolve a small authored stop cycle using local geographic cost only. The
+   * selected directed curb lanes have already passed the same-SCC test, and the
+   * exact graph routes are built by `validateResolvedBusRoute` immediately
+   * afterward. Keeping candidate scoring geometry-only bounds New Game work.
+   */
+  private lowestCostDirectedStopCycle(
+    layers: readonly (readonly BusStopSite[])[],
+  ): { stops: BusStopSite[]; score: number } | null {
+    const pairCosts = new Map<string, number>();
+    const routeCost = (from: BusStopSite, to: BusStopSite): number | null => {
+      if (from.id === to.id) return null;
+      const key = `${from.id}|${to.id}`;
+      const cached = pairCosts.get(key);
+      if (cached !== undefined) return cached;
+      const distance = Math.hypot(from.stopPosition.x - to.stopPosition.x, from.stopPosition.y - to.stopPosition.y);
+      pairCosts.set(key, distance);
+      return distance;
+    };
+
+    let best: { stops: BusStopSite[]; score: number } | null = null;
+    const selected: BusStopSite[] = [];
+    const used = new Set<string>();
+    const visit = (index: number, travelDistance: number): void => {
+      if (best && travelDistance >= best.score) return;
+      if (index >= layers.length) {
+        const first = selected[0];
+        const last = selected[selected.length - 1];
+        if (!first || !last) return;
+        const closingDistance = routeCost(last, first);
+        if (closingDistance === null) return;
+        const score = travelDistance + closingDistance;
+        if (!best || score < best.score) {
+          best = { stops: selected.slice(), score };
+        }
+        return;
+      }
+      for (const stop of layers[index] ?? []) {
+        if (used.has(stop.id)) continue;
+        const previous = selected[selected.length - 1];
+        const legDistance = previous ? routeCost(previous, stop) : 0;
+        if (legDistance === null) continue;
+        selected.push(stop);
+        used.add(stop.id);
+        visit(index + 1, travelDistance + legDistance);
+        used.delete(stop.id);
+        selected.pop();
+      }
+    };
+    visit(0, 0);
+    return best;
   }
 
   private ensureServicePopulation(time: number): void {
     if (time < this.nextSpawnAttemptAt) return;
     let needsAnotherAttempt = false;
+    const playerPosition = this.player?.playerPosition ?? null;
+    const playerCity = playerPosition ? (this.world?.cityAt(playerPosition.x, playerPosition.y)?.id ?? null) : null;
     for (const cityId of ['tehran', 'yazd', 'gilan'] as const) {
       for (const route of this.resolvedRoutes.get(cityId) ?? []) {
         if (!route.valid) continue;
@@ -557,11 +903,36 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
           if (!this.spawnBus(cityId, route)) needsAnotherAttempt = true;
         }
       }
-      const taxiCount = Array.from(this.taxis.values()).filter(
+      let taxiCount = Array.from(this.taxis.values()).filter(
         (taxi) => taxi.cityId === cityId && !taxi.vehicle.isDestroyed,
       ).length;
+      const config = CITY_TRANSIT_CONFIG[cityId].taxi;
+      let nearbyAvailable =
+        playerCity === cityId && playerPosition
+          ? this.nearbyAvailableTaxiCount(cityId, playerPosition, config.encounterRadius)
+          : 0;
       for (let count = taxiCount; count < CITY_TRANSIT_CONFIG[cityId].taxi.population; count++) {
-        if (!this.spawnTaxi(cityId)) needsAnotherAttempt = true;
+        const reserveLocalTaxi =
+          playerCity === cityId &&
+          playerPosition !== null &&
+          nearbyAvailable < config.guaranteedNearby;
+        if (!this.spawnTaxi(cityId, reserveLocalTaxi ? playerPosition : null, reserveLocalTaxi)) {
+          needsAnotherAttempt = true;
+          continue;
+        }
+        taxiCount += 1;
+        if (reserveLocalTaxi) nearbyAvailable += 1;
+      }
+      if (
+        playerCity === cityId &&
+        playerPosition &&
+        nearbyAvailable < config.guaranteedNearby &&
+        !this.retargetAvailableTaxiForEncounter(cityId, playerPosition)
+      ) {
+        // A normal service taxi may be on the far side of a large city. It is
+        // never teleported: this starts an ordinary legal drive toward a local
+        // curb target so the next encounter is a real world vehicle.
+        needsAnotherAttempt = true;
       }
     }
     this.nextSpawnAttemptAt = time + (needsAnotherAttempt ? SERVICE_RESPAWN_MS : SERVICE_RESPAWN_MS * 3);
@@ -579,9 +950,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     for (let startIndex = 0; startIndex < route.stops.length; startIndex += 1) {
       const start = route.stops[startIndex];
       if (!start) continue;
-      const vehicle = traffic.spawnServiceVehicle(
+      const vehicle = traffic.spawnServiceVehicleAtLaneStop(
         'bus',
-        start.approachPosition,
+        this.busLaneStopTarget(start),
         null,
         BUS_STOP_RANGE,
       );
@@ -591,66 +962,78 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         this.vehicles?.removeVehicle(vehicle);
         return false;
       }
-      vehicle.sprite.setData('persistentTransitService', true);
-      vehicle.sprite.setData('transitServiceKind', 'bus');
+      this.vehicles?.markPersistentTransitService(vehicle, 'bus');
       vehicle.sprite.setData('transitRouteId', route.config.id);
       const runtime: BusRuntime = {
         cityId,
         route,
         vehicle,
-        // A route starts at a real curb stop, so riders can board immediately
-        // instead of waiting for the bus to complete an arbitrary first loop.
-        state: 'dwelling',
+        // A route starts at its exact legal curb target, so riders can board
+        // immediately instead of waiting for an arbitrary first loop.
+        state: 'BOARDING',
         currentStopIndex: startIndex,
         targetStopIndex: startIndex,
         dwellRemainingMs: route.config.stopDurationMs,
+        boardingActive: false,
+        playerBoardingInProgress: false,
+        playerExitInProgress: false,
+        playerTransitionDeadline: 0,
         recoveryAttempts: 0,
         nextRecoveryAt: 0,
       };
       this.buses.set(vehicle.id, runtime);
-      traffic.setDriverStopped(vehicle, true);
-      this.beginBusPassengerBoarding(runtime);
+      if (!this.configureBusDriver(runtime, true)) {
+        this.buses.delete(vehicle.id);
+        traffic.releaseDriver(vehicle.id);
+        this.vehicles?.removeVehicle(vehicle);
+        continue;
+      }
       return true;
     }
     return false;
   }
 
-  private spawnTaxi(cityId: CityId): boolean {
+  private spawnTaxi(
+    cityId: CityId,
+    preferredPosition: Vector2 | null = null,
+    holdForPlayer = false,
+  ): boolean {
     const traffic = this.traffic;
     const occupants = this.occupants;
-    const start = this.nextTaxiRoadTarget(cityId);
-    if (!traffic || !occupants || !start) return false;
-    const vehicle = traffic.spawnServiceVehicle(
-      'taxi',
-      start,
-      null,
-      TAXI_STOP_RANGE,
-    );
-    if (!vehicle) return false;
-    if (!this.hasServiceDriver(vehicle, 'taxi-driver')) {
-      traffic.releaseDriver(vehicle.id);
-      this.vehicles?.removeVehicle(vehicle);
-      return false;
+    if (!traffic || !occupants) return false;
+    for (const start of this.taxiSpawnTargets(cityId, preferredPosition)) {
+      const vehicle = traffic.spawnServiceVehicle('taxi', start, null, TAXI_STOP_RANGE);
+      if (!vehicle) continue;
+      if (!this.hasServiceDriver(vehicle, 'taxi-driver')) {
+        traffic.releaseDriver(vehicle.id);
+        this.vehicles?.removeVehicle(vehicle);
+        continue;
+      }
+      this.vehicles?.markPersistentTransitService(vehicle, 'taxi');
+      const runtime: TaxiRuntime = {
+        cityId,
+        vehicle,
+        state: 'AVAILABLE',
+        roamTarget: this.nextTaxiRoadTarget(cityId),
+        idleUntil: holdForPlayer ? this.now() + CITY_TRANSIT_CONFIG[cityId].taxi.standDurationMs : 0,
+        standAtNextTarget: false,
+        playerRequestPosition: null,
+        pickupPosition: null,
+        dropoffPosition: null,
+        destination: null,
+        fare: null,
+        farePaid: false,
+        stateSince: this.now(),
+        recoveryAttempts: 0,
+        nextRecoveryAt: 0,
+        validLaneRoute: true,
+      };
+      this.taxis.set(vehicle.id, runtime);
+      traffic.configureDriver(vehicle, () => this.taxiTarget(vehicle.id), TAXI_STOP_RANGE, false);
+      if (runtime.idleUntil > 0) traffic.setDriverStopped(vehicle, true);
+      return true;
     }
-    vehicle.sprite.setData('persistentTransitService', true);
-    vehicle.sprite.setData('transitServiceKind', 'taxi');
-    const runtime: TaxiRuntime = {
-      cityId,
-      vehicle,
-      state: 'AVAILABLE',
-      roamTarget: this.nextTaxiRoadTarget(cityId),
-      playerRequestPosition: null,
-      destination: null,
-      fare: null,
-      farePaid: false,
-      stateSince: this.now(),
-      recoveryAttempts: 0,
-      nextRecoveryAt: 0,
-      validLaneRoute: true,
-    };
-    this.taxis.set(vehicle.id, runtime);
-    traffic.configureDriver(vehicle, () => this.taxiTarget(vehicle.id), TAXI_STOP_RANGE, false);
-    return true;
+    return false;
   }
 
   private updateBus(bus: BusRuntime, time: number, delta: number): void {
@@ -662,37 +1045,227 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     const driver = traffic?.driverFor(bus.vehicle) ?? null;
     if (!traffic || !driver) return;
 
-    if (bus.state === 'dwelling') {
+    const serviceRecoveryReason = traffic.consumeServiceRecovery(bus.vehicle.id);
+    if (serviceRecoveryReason !== null) {
+      this.beginBusRecovery(bus, `Traffic driver escalation: ${serviceRecoveryReason}`);
+    }
+
+    if (bus.state === 'BOARDING') {
+      if (!this.busIsAtCurrentStop(bus)) {
+        this.beginBusRecovery(bus, 'Bus lost its assigned stop before boarding');
+        return;
+      }
+      bus.boardingActive = true;
+      this.beginBusPassengerBoarding(bus);
+      bus.state = 'STOPPED_AT_STOP';
+      return;
+    }
+
+    if (bus.state === 'STOPPED_AT_STOP') {
+      if (bus.playerBoardingInProgress) {
+        if (this.player?.playerIsTransitPassenger && this.player.currentVehicle?.id === bus.vehicle.id) {
+          bus.playerBoardingInProgress = false;
+        } else if (time < bus.playerTransitionDeadline) {
+          bus.dwellRemainingMs = Math.max(bus.dwellRemainingMs, BUS_PLAYER_TRANSITION_GRACE_MS);
+          return;
+        } else {
+          bus.playerBoardingInProgress = false;
+        }
+      }
+      if (bus.playerExitInProgress) {
+        if (this.player?.currentVehicle?.id === bus.vehicle.id) {
+          bus.dwellRemainingMs = Math.max(bus.dwellRemainingMs, BUS_PLAYER_TRANSITION_GRACE_MS);
+          return;
+        }
+        bus.playerExitInProgress = false;
+      }
       bus.dwellRemainingMs = Math.max(0, bus.dwellRemainingMs - delta);
       if (bus.dwellRemainingMs > 0) return;
+      bus.boardingActive = false;
       this.cancelOutstandingBoarders(bus);
-      bus.state = 'approaching';
+      bus.state = 'DEPARTING_STOP';
       bus.targetStopIndex = this.nextStopIndex(bus.route, bus.currentStopIndex);
-      traffic.configureDriver(bus.vehicle, () => this.busTarget(bus.vehicle.id), BUS_STOP_RANGE, false);
-      return;
-    }
-    if (driver.arrived) {
-      bus.currentStopIndex = bus.targetStopIndex;
-      bus.state = 'dwelling';
-      bus.dwellRemainingMs = bus.route.config.stopDurationMs;
-      bus.recoveryAttempts = 0;
-      traffic.setDriverStopped(bus.vehicle, true);
-      this.disembarkBusPassengers(bus);
-      this.beginBusPassengerBoarding(bus);
-      return;
-    }
-    if (driver.state === 'Recovering' && time >= bus.nextRecoveryAt) {
-      bus.nextRecoveryAt = time + BUS_RECOVERY_DELAY_MS;
-      bus.recoveryAttempts += 1;
-      if (bus.recoveryAttempts <= MAX_RECOVERY_ATTEMPTS) {
-        driver.forceReplan();
-      } else {
-        // Skip only the unreachable stop. The bus remains on its legal current lane.
-        bus.targetStopIndex = this.nextStopIndex(bus.route, bus.targetStopIndex);
-        bus.recoveryAttempts = 0;
-        traffic.configureDriver(bus.vehicle, () => this.busTarget(bus.vehicle.id), BUS_STOP_RANGE, false);
+      if (!this.configureBusDriver(bus, false)) {
+        this.beginBusRecovery(bus, 'Next stop has no valid directional lane target');
       }
+      return;
     }
+
+    if (bus.state === 'DEPARTING_STOP') {
+      if (!driver.arrived) bus.state = 'FOLLOWING_ROUTE';
+      return;
+    }
+
+    if (driver.arrived && this.busIsAtTargetStop(bus)) {
+      this.arriveAtBusStop(bus);
+      return;
+    }
+
+    const blocker = driver.debug.collisionPrediction;
+    if (
+      blocker?.kind === 'stopped-traffic' &&
+      blocker.distance <= 42 &&
+      driver.debug.recovery.blockedSeconds >= BUS_STATIONARY_BLOCKER_RECOVERY_MS / 1000
+    ) {
+      const blockerVehicle =
+        blocker.entityId === null
+          ? null
+          : this.vehicles?.vehicles.find((candidate) => candidate.id === blocker.entityId) ?? null;
+      const blockerDriver = blockerVehicle ? traffic.driverFor(blockerVehicle) : null;
+      // A managed road vehicle already owns a bounded wait/reverse/replan/
+      // despawn recovery sequence. Treating its normal signal queue as an
+      // unreachable bus leg makes the service repeatedly discard its cached
+      // segment even though the obstruction is about to resolve lawfully.
+      // Bus recovery remains for genuinely unmanaged or invalid blockers.
+      if (blockerDriver) return;
+      if (traffic.requestServiceRecoveryLaneChange(bus.vehicle)) {
+        this.log.debug(`${bus.route.config.id}: changing to a clear adjacent lane around stationary vehicle ${blocker.entityId ?? 'unknown'}`);
+      } else {
+        this.beginBusRecovery(bus, `Stationary traffic blocks current lane (${blocker.entityId ?? 'unknown'})`);
+      }
+      return;
+    }
+
+    // A successful replan changes the traffic driver out of Recovering. Keep
+    // the service state in sync so it does not keep retrying and eventually
+    // skip a reachable stop after motion has already resumed.
+    if (
+      bus.state === 'RECOVERING' &&
+      bus.recoveryAttempts > 0 &&
+      driver.state !== 'Recovering'
+    ) {
+      bus.state = 'FOLLOWING_ROUTE';
+      bus.recoveryAttempts = 0;
+      bus.nextRecoveryAt = 0;
+      return;
+    }
+
+    if (driver.state === 'Recovering' || bus.state === 'RECOVERING') {
+      this.recoverBus(bus, time, driver);
+      return;
+    }
+
+    if (bus.state === 'FOLLOWING_ROUTE' && this.busShouldBeginApproach(bus)) {
+      bus.state = 'APPROACHING_STOP';
+      return;
+    }
+    if (bus.state === 'APPROACHING_STOP' && this.busShouldAlignWithStop(bus)) {
+      bus.state = 'ALIGNING_WITH_STOP';
+      return;
+    }
+    if (bus.state === 'ALIGNING_WITH_STOP' && !this.busHasTargetDirection(bus)) {
+      this.beginBusRecovery(bus, 'Bus is no longer aligned with its directional stop lane');
+    }
+  }
+
+  private arriveAtBusStop(bus: BusRuntime): void {
+    const traffic = this.traffic;
+    bus.currentStopIndex = bus.targetStopIndex;
+    // Enter the explicit boarding phase on every arrival. Previously only a
+    // newly spawned bus passed through BOARDING; later curb arrivals disabled
+    // boarding and remained at the stop with no boardable passenger phase.
+    bus.state = 'BOARDING';
+    bus.boardingActive = false;
+    bus.dwellRemainingMs = bus.route.config.stopDurationMs;
+    bus.recoveryAttempts = 0;
+    traffic?.setDriverStopped(bus.vehicle, true);
+    this.disembarkBusPassengers(bus);
+  }
+
+  private beginBusRecovery(bus: BusRuntime, reason: string): void {
+    if (bus.state !== 'RECOVERING') {
+      bus.state = 'RECOVERING';
+      bus.nextRecoveryAt = 0;
+      bus.boardingActive = false;
+      this.cancelOutstandingBoarders(bus);
+      this.traffic?.resumeServiceDriver(bus.vehicle);
+      this.traffic?.setDriverStopped(bus.vehicle, false);
+      this.log.warn(`${bus.route.config.id}: recovering before ${this.targetBusStop(bus)?.id ?? 'unknown stop'} (${reason})`);
+    }
+  }
+
+  /** Recover a genuinely blocked target, only skipping it after bounded legal replans fail. */
+  private recoverBus(bus: BusRuntime, time: number, driver: { forceReplan(): void }): void {
+    if (time < bus.nextRecoveryAt) return;
+    bus.nextRecoveryAt = time + BUS_RECOVERY_DELAY_MS;
+    bus.recoveryAttempts += 1;
+    if (bus.recoveryAttempts <= MAX_RECOVERY_ATTEMPTS) {
+      // Reinstall the cached segment (or an exact recovery segment from the
+      // current lane) rather than leaving a persistent bus in the generic
+      // driver's despawn/replan loop.
+      if (!this.configureBusDriver(bus, false)) driver.forceReplan();
+      return;
+    }
+
+    const skipped = this.targetBusStop(bus);
+    this.log.warn(
+      `${bus.route.config.id}: skipping stop ${skipped?.id ?? 'unknown'} after ${MAX_RECOVERY_ATTEMPTS} failed route recoveries`,
+    );
+    bus.targetStopIndex = this.nextStopIndex(bus.route, bus.targetStopIndex);
+    bus.recoveryAttempts = 0;
+    bus.state = 'FOLLOWING_ROUTE';
+    if (!this.configureBusDriver(bus, false)) {
+      bus.state = 'UNAVAILABLE';
+      this.log.warn(`${bus.route.config.id}: next stop target is invalid; bus service is unavailable`);
+    }
+  }
+
+  /** Configure one cached, named lane target. No nearest-lane inference is permitted for buses. */
+  private configureBusDriver(bus: BusRuntime, stopped: boolean): boolean {
+    const traffic = this.traffic;
+    const stop = this.targetBusStop(bus);
+    if (!traffic || !stop) return false;
+    return traffic.configureDriverAtLaneStop(
+      bus.vehicle,
+      () => this.busTarget(bus.vehicle.id),
+      this.busLaneStopTarget(stop),
+      BUS_STOP_RANGE,
+      stopped,
+      stopped ? null : this.plannedBusSegment(bus),
+    );
+  }
+
+  /**
+   * Normal departures consume the exact segment cached during route
+   * validation. Recovery and intentionally skipped stops fall back to the
+   * shared driver's bounded replanning because they are no longer on the
+   * authored source-to-target edge.
+   */
+  private plannedBusSegment(bus: BusRuntime): readonly string[] | null {
+    if (bus.targetStopIndex !== this.nextStopIndex(bus.route, bus.currentStopIndex)) return null;
+    const segment = bus.route.segments[bus.currentStopIndex] ?? null;
+    const current = this.currentBusStop(bus);
+    const target = this.targetBusStop(bus);
+    if (
+      !segment ||
+      !segment.valid ||
+      !current ||
+      !target ||
+      segment.fromStopId !== current.id ||
+      segment.toStopId !== target.id ||
+      segment.laneIds.length === 0
+    ) {
+      return null;
+    }
+    const currentLaneId = this.traffic?.driverFor(bus.vehicle)?.debug?.laneId ?? null;
+    if (currentLaneId && !segment.laneIds.includes(currentLaneId)) {
+      // This only runs after a genuine recovery request. It is an exact,
+      // cached road-graph search, never a per-frame query, and gives the bus a
+      // safe alternate approach if it has been displaced from its normal leg.
+      const recoverySegment = this.traffic?.roadNetwork?.findCompleteRoute(currentLaneId, target.laneId) ?? null;
+      if (recoverySegment && recoverySegment.length > 0) return recoverySegment.map((lane) => lane.id);
+      return null;
+    }
+    return segment.laneIds;
+  }
+
+  private busLaneStopTarget(stop: BusStopSite): TrafficLaneStopTarget {
+    return {
+      laneId: stop.laneId,
+      laneDistance: stop.laneDistance,
+      position: { ...stop.stopPosition },
+      heading: stop.heading,
+    };
   }
 
   private updateTaxi(taxi: TaxiRuntime, time: number): void {
@@ -705,43 +1278,58 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     if (!traffic || !driver) return;
 
     if (taxi.state === 'AVAILABLE') {
+      if (taxi.idleUntil > time) return;
+      if (taxi.idleUntil !== 0) {
+        taxi.idleUntil = 0;
+        traffic.setDriverStopped(taxi.vehicle, false);
+      }
       if (driver.arrived) {
+        if (taxi.standAtNextTarget) {
+          taxi.standAtNextTarget = false;
+          taxi.idleUntil = time + CITY_TRANSIT_CONFIG[taxi.cityId].taxi.standDurationMs;
+          traffic.setDriverStopped(taxi.vehicle, true);
+          return;
+        }
         taxi.roamTarget = this.nextTaxiRoadTarget(taxi.cityId);
         traffic.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
       }
-    } else if (taxi.state === 'APPROACHING_PLAYER') {
-      const playerPosition = this.player?.playerPosition;
-      if (!playerPosition || time - taxi.stateSince > TAXI_HAIL_TIMEOUT_MS) {
+    } else if (taxi.state === 'APPROACHING_PICKUP') {
+      if (!taxi.playerRequestPosition || !taxi.pickupPosition || time - taxi.stateSince > TAXI_PICKUP_TIMEOUT_MS) {
         this.returnTaxiToService(taxi);
-      } else if (driver.arrived) {
-        taxi.state = 'WAITING_FOR_PLAYER';
-        taxi.stateSince = time;
+      } else if (this.taxiIsAtPickup(taxi)) {
+        this.setTaxiState(taxi, 'WAITING_FOR_PASSENGER');
+        taxi.recoveryAttempts = 0;
         traffic.setDriverStopped(taxi.vehicle, true);
+      }
+    } else if (taxi.state === 'WAITING_FOR_PASSENGER') {
+      if (time - taxi.stateSince > TAXI_WAITING_FOR_PASSENGER_TIMEOUT_MS) {
+        this.returnTaxiToService(taxi);
       }
     } else if (taxi.state === 'PASSENGER_BOARDING') {
       if (this.player?.playerIsTransitPassenger && this.player.currentVehicle?.id === taxi.vehicle.id) {
-        taxi.state = 'WAITING_FOR_PLAYER';
-        taxi.stateSince = time;
+        this.setTaxiState(taxi, 'DESTINATION_SELECTION');
         traffic.setDriverStopped(taxi.vehicle, true);
-        this.bus.emit(EventKeys.UIToast, { message: 'Choose a taxi destination on the map' });
         ServiceLocator.tryResolve<GameManager>(ServiceKeys.Game)?.openMap();
       } else if (time - taxi.stateSince > TAXI_BOARD_TIMEOUT_MS) {
         this.occupants?.releasePlayerPassengerSeat(taxi.vehicle);
         this.returnTaxiToService(taxi);
       }
     } else if (taxi.state === 'IN_SERVICE') {
-      if (driver.arrived) {
-        taxi.state = 'ARRIVING';
-        taxi.stateSince = time;
+      if (this.taxiIsAtDropoff(taxi)) {
+        this.setTaxiState(taxi, 'ARRIVING');
+        taxi.recoveryAttempts = 0;
         traffic.setDriverStopped(taxi.vehicle, true);
-        this.bus.emit(EventKeys.UIToast, { message: 'Taxi has arrived. Press E to exit.' });
       }
-    } else if (taxi.state === 'ARRIVING' || taxi.state === 'COMPLETED') {
+    } else if (taxi.state === 'ARRIVING') {
       if (this.player?.currentVehicle?.id !== taxi.vehicle.id) this.returnTaxiToService(taxi);
+    } else if (taxi.state === 'PASSENGER_EXITING') {
+      if (this.player?.currentVehicle?.id !== taxi.vehicle.id) this.returnTaxiToService(taxi);
+    } else if (taxi.state === 'RETURNING_TO_SERVICE') {
+      this.setTaxiState(taxi, 'AVAILABLE');
     }
 
     if (
-      (taxi.state === 'AVAILABLE' || taxi.state === 'APPROACHING_PLAYER' || taxi.state === 'IN_SERVICE') &&
+      (taxi.state === 'AVAILABLE' || taxi.state === 'APPROACHING_PICKUP' || taxi.state === 'IN_SERVICE') &&
       driver.state === 'Recovering' &&
       time >= taxi.nextRecoveryAt
     ) {
@@ -750,8 +1338,10 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       if (taxi.recoveryAttempts <= MAX_RECOVERY_ATTEMPTS) driver.forceReplan();
       else {
         taxi.recoveryAttempts = 0;
-        if (taxi.state === 'IN_SERVICE' && taxi.destination) {
-          traffic.configureDriver(taxi.vehicle, () => taxi.destination?.position ?? null, TAXI_STOP_RANGE, false);
+        if (taxi.state === 'IN_SERVICE' && taxi.dropoffPosition) {
+          traffic.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
+        } else if (taxi.state === 'APPROACHING_PICKUP' && taxi.pickupPosition) {
+          traffic.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
         } else {
           taxi.roamTarget = this.nextTaxiRoadTarget(taxi.cityId);
           traffic.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
@@ -799,7 +1389,7 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     const stop = this.currentBusStop(bus);
     const pedestrians = this.pedestrians?.pedestrians ?? [];
     const occupants = this.occupants;
-    if (!stop || !occupants) return;
+    if (!bus.boardingActive || !stop || !occupants) return;
     for (const pedestrian of pedestrians) {
       const plan = this.passengerPlans.get(pedestrian.id);
       if (
@@ -827,7 +1417,11 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       const plan = this.passengerPlans.get(pedestrian.id);
       if (!plan || plan.phase !== 'walking-to-door' || !pedestrian.ai.transitBoardingReady) continue;
       const bus = Array.from(this.buses.values()).find(
-        (candidate) => candidate.route.config.id === plan.routeId && candidate.state === 'dwelling',
+        (candidate) =>
+          candidate.route.config.id === plan.routeId &&
+          candidate.state === 'STOPPED_AT_STOP' &&
+          candidate.boardingActive &&
+          this.busIsAtCurrentStop(candidate),
       );
       if (!bus) {
         pedestrian.ai.cancelTransitBoarding();
@@ -903,8 +1497,13 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       this.exitPlayerTransit();
       return;
     }
-    if (interaction.kind === 'take-taxi') {
-      const taxi = this.nearestTaxi(position, TAXI_INTERACTION_RANGE, ['AVAILABLE', 'WAITING_FOR_PLAYER']);
+    if (interaction.kind === 'enter-taxi') {
+      const taxi = this.nearestTaxi(
+        position,
+        TAXI_INTERACTION_RANGE,
+        ['WAITING_FOR_PASSENGER'],
+        (candidate) => this.taxiCanBoard(candidate),
+      );
       if (taxi) this.requestTaxiBoarding(taxi.vehicle.id);
       return;
     }
@@ -913,29 +1512,21 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       if (bus) this.requestBusBoarding(bus.vehicle.id);
       return;
     }
-    if (interaction.kind === 'view-bus-stop') {
-      const stop = this.nearestBusStop(position, STOP_INTERACTION_RANGE);
-      if (stop) {
-        this.discoveredStopIds.add(stop.id);
-        const names = (this.resolvedRoutes.get(stop.cityId) ?? [])
-          .filter((route) => route.stops.some((candidate) => candidate.id === stop.id))
-          .map((route) => route.config.id)
-          .join(', ');
-        this.bus.emit(EventKeys.UIToast, {
-          message: names ? `Bus service: ${names}` : 'No bus service is currently assigned here',
-        });
-      }
-      return;
-    }
     if (interaction.kind === 'call-taxi') {
-      this.requestTaxi(position);
+      const taxi = this.nearestTaxi(
+        position,
+        TAXI_INTERACTION_RANGE,
+        ['AVAILABLE'],
+        (candidate) => this.isTaxiHireable(candidate),
+      );
+      if (taxi) this.requestTaxi(taxi, position);
     }
   }
 
   private beginBusBoarding(bus: BusRuntime): boolean {
     const occupants = this.occupants;
     const player = this.player;
-    if (!occupants || !player || bus.state !== 'dwelling') return false;
+    if (!occupants || !player || !this.busCanBoard(bus)) return false;
     const seat = occupants.reservePlayerPassengerSeat(bus.vehicle);
     if (!seat) {
       this.bus.emit(EventKeys.UIToast, { message: 'Bus is full' });
@@ -945,6 +1536,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       occupants.releasePlayerPassengerSeat(bus.vehicle);
       return false;
     }
+    bus.playerBoardingInProgress = true;
+    bus.playerTransitionDeadline = this.now() + BUS_PLAYER_TRANSITION_GRACE_MS;
+    bus.dwellRemainingMs = Math.max(bus.dwellRemainingMs, BUS_PLAYER_TRANSITION_GRACE_MS);
     return true;
   }
 
@@ -956,19 +1550,18 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       !occupants ||
       !player ||
       !traffic ||
-      (taxi.state !== 'AVAILABLE' && taxi.state !== 'WAITING_FOR_PLAYER')
+      !this.taxiCanBoard(taxi)
     ) {
       return false;
     }
     const seat = occupants.reservePlayerPassengerSeat(taxi.vehicle);
-    if (!seat) {
+    if (seat !== 'rear-right') {
+      if (seat) occupants.releasePlayerPassengerSeat(taxi.vehicle);
       this.bus.emit(EventKeys.UIToast, { message: 'Taxi is occupied' });
       return false;
     }
     traffic.setDriverStopped(taxi.vehicle, true);
-    taxi.state = 'PASSENGER_BOARDING';
-    taxi.stateSince = this.now();
-    taxi.playerRequestPosition = null;
+    this.setTaxiState(taxi, 'PASSENGER_BOARDING');
     if (!player.beginPassengerBoarding(taxi.vehicle, seat)) {
       occupants.releasePlayerPassengerSeat(taxi.vehicle);
       this.returnTaxiToService(taxi);
@@ -977,27 +1570,40 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     return true;
   }
 
-  private requestTaxi(position: Vector2): void {
-    const cityId = this.world?.cityAt(position.x, position.y)?.id;
-    const taxi = cityId ? this.nearestTaxiForCity(cityId) : null;
+  private requestTaxi(taxi: TaxiRuntime, position: Vector2): void {
     const traffic = this.traffic;
-    if (!taxi || !traffic) return;
-    taxi.state = 'APPROACHING_PLAYER';
-    taxi.stateSince = this.now();
+    if (!traffic || !this.isTaxiHireable(taxi)) return;
+    const pickup = this.resolveTaxiRoadTarget(taxi, position, true);
+    if (!pickup) {
+      this.bus.emit(EventKeys.UIToast, { message: 'No safe taxi pickup is available here', durationMs: 1800 });
+      return;
+    }
     taxi.playerRequestPosition = { x: position.x, y: position.y };
+    taxi.pickupPosition = { ...pickup.position };
+    taxi.dropoffPosition = null;
+    taxi.destination = null;
+    taxi.fare = null;
+    taxi.farePaid = false;
+    taxi.validLaneRoute = true;
+    taxi.recoveryAttempts = 0;
+    taxi.idleUntil = 0;
+    taxi.standAtNextTarget = false;
+    this.setTaxiState(taxi, 'APPROACHING_PICKUP');
     traffic.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
-    this.bus.emit(EventKeys.UIToast, { message: 'Taxi is approaching through traffic' });
   }
 
   private returnTaxiToService(taxi: TaxiRuntime): void {
     const traffic = this.traffic;
-    taxi.state = 'AVAILABLE';
-    taxi.stateSince = this.now();
+    this.setTaxiState(taxi, 'RETURNING_TO_SERVICE');
     taxi.playerRequestPosition = null;
+    taxi.pickupPosition = null;
+    taxi.dropoffPosition = null;
     taxi.destination = null;
     taxi.fare = null;
     taxi.farePaid = false;
     taxi.recoveryAttempts = 0;
+    taxi.idleUntil = 0;
+    taxi.standAtNextTarget = false;
     taxi.roamTarget = this.nextTaxiRoadTarget(taxi.cityId);
     taxi.validLaneRoute = true;
     if (traffic) {
@@ -1007,20 +1613,222 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
 
   private busTarget(vehicleId: number): Vector2 | null {
     const bus = this.buses.get(vehicleId);
-    const target = bus?.route.stops[bus.targetStopIndex];
-    return target ? target.approachPosition : null;
+    const target = bus ? this.targetBusStop(bus) : null;
+    return target ? target.stopPosition : null;
   }
 
   private taxiTarget(vehicleId: number): Vector2 | null {
     const taxi = this.taxis.get(vehicleId);
     if (!taxi) return null;
-    if (taxi.state === 'APPROACHING_PLAYER') return taxi.playerRequestPosition;
-    if (taxi.state === 'IN_SERVICE') return taxi.destination?.position ?? null;
+    if (
+      taxi.state === 'APPROACHING_PICKUP' ||
+      taxi.state === 'WAITING_FOR_PASSENGER' ||
+      taxi.state === 'PASSENGER_BOARDING' ||
+      taxi.state === 'DESTINATION_SELECTION' ||
+      taxi.state === 'FARE_CONFIRMATION'
+    ) {
+      return taxi.pickupPosition;
+    }
+    if (
+      taxi.state === 'IN_SERVICE' ||
+      taxi.state === 'ARRIVING' ||
+      taxi.state === 'PASSENGER_EXITING'
+    ) {
+      return taxi.dropoffPosition;
+    }
     return taxi.roamTarget;
+  }
+
+  private setTaxiState(taxi: TaxiRuntime, state: TaxiState): void {
+    taxi.state = state;
+    taxi.stateSince = this.now();
+  }
+
+  private isTaxiDestinationSelectionState(state: TaxiState): boolean {
+    return state === 'DESTINATION_SELECTION' || state === 'FARE_CONFIRMATION';
+  }
+
+  /** A parked service vehicle must be both near its curb target and genuinely stopped. */
+  private isVehicleStoppedAt(
+    vehicle: Vehicle,
+    target: Vector2 | null,
+    range: number,
+    requireDriverArrival = false,
+  ): boolean {
+    if (!target || vehicle.isDestroyed || !vehicle.sprite.active) return false;
+    if (this.distanceSq({ x: vehicle.sprite.x, y: vehicle.sprite.y }, target) > range * range) {
+      return false;
+    }
+    if (Math.abs(vehicle.movement.speed) > SERVICE_STOP_SPEED) return false;
+    return !requireDriverArrival || this.traffic?.driverFor(vehicle)?.arrived === true;
+  }
+
+  private busIsAtCurrentStop(bus: BusRuntime): boolean {
+    const stop = this.currentBusStop(bus);
+    return this.busIsStoppedAt(bus, stop, false);
+  }
+
+  private busIsAtTargetStop(bus: BusRuntime): boolean {
+    return this.busIsStoppedAt(bus, this.targetBusStop(bus), true);
+  }
+
+  private busCanBoard(bus: BusRuntime): boolean {
+    return Boolean(
+      bus.state === 'STOPPED_AT_STOP' &&
+        bus.boardingActive &&
+        bus.dwellRemainingMs > 0 &&
+        this.busIsAtCurrentStop(bus) &&
+        this.hasServiceDriver(bus.vehicle, 'bus-driver') &&
+        this.occupants?.availablePassengerSeats(bus.vehicle).length,
+    );
+  }
+
+  private taxiHasDriverAndPassengerSeat(taxi: TaxiRuntime): boolean {
+    return Boolean(
+      taxi.vehicle.def.kind === 'taxi' &&
+        !taxi.vehicle.isDestroyed &&
+        taxi.vehicle.sprite.active &&
+        this.hasServiceDriver(taxi.vehicle, 'taxi-driver') &&
+        this.occupants?.availablePassengerSeats(taxi.vehicle).includes('rear-right'),
+    );
+  }
+
+  private isTaxiHireable(taxi: TaxiRuntime): boolean {
+    return taxi.state === 'AVAILABLE' && this.taxiHasDriverAndPassengerSeat(taxi);
+  }
+
+  private taxiIsAtPickup(taxi: TaxiRuntime): boolean {
+    return this.isVehicleStoppedAt(
+      taxi.vehicle,
+      taxi.pickupPosition,
+      TAXI_PICKUP_ARRIVAL_RANGE,
+      true,
+    );
+  }
+
+  private taxiCanBoard(taxi: TaxiRuntime): boolean {
+    return (
+      taxi.state === 'WAITING_FOR_PASSENGER' &&
+      this.taxiHasDriverAndPassengerSeat(taxi) &&
+      this.taxiIsAtPickup(taxi)
+    );
+  }
+
+  private taxiIsAtDropoff(taxi: TaxiRuntime): boolean {
+    return this.isVehicleStoppedAt(
+      taxi.vehicle,
+      taxi.dropoffPosition,
+      TAXI_DROPOFF_ARRIVAL_RANGE,
+      true,
+    );
+  }
+
+  /**
+   * Pick a reachable travel-lane point near a pedestrian/world destination.
+   * This runs only when a taxi is hailed or a map pin is selected, and uses
+   * the road network's spatial lane index instead of a per-frame world scan.
+   */
+  private resolveTaxiRoadTarget(
+    taxi: TaxiRuntime,
+    requested: Vector2,
+    requireClearCurb: boolean,
+  ): TaxiRoadTarget | null {
+    const traffic = this.traffic;
+    const world = this.world;
+    const network = traffic?.roadNetwork;
+    if (!traffic || !world || !network) return null;
+    let selected: TaxiRoadTarget | null = null;
+    let selectedScore = Infinity;
+    for (const lane of network.nearbyTravelLanes(requested, TAXI_PICKUP_SEARCH_RADIUS)) {
+      const projection = network.projectPoint(requested, lane);
+      const clearance = Math.min(
+        TAXI_PICKUP_JUNCTION_CLEARANCE,
+        Math.max(52, Math.floor(lane.spline.length * 0.22)),
+      );
+      if (lane.spline.length <= clearance * 2 + TAXI_STOP_RANGE * 2) continue;
+      const distance = Phaser.Math.Clamp(
+        projection.distance,
+        clearance,
+        lane.spline.length - clearance,
+      );
+      const position = network.pointAt(lane, distance).point;
+      if (world.cityAt(position.x, position.y)?.id !== taxi.cityId) continue;
+      if (requireClearCurb && !this.isTaxiCurbClear(taxi.vehicle, position)) continue;
+      const route = traffic.routePreview(
+        { x: taxi.vehicle.sprite.x, y: taxi.vehicle.sprite.y },
+        position,
+      );
+      if (!route || route.laneIds.length === 0) continue;
+      const score = Math.hypot(position.x - requested.x, position.y - requested.y) +
+        Math.min(route.distancePx * 0.025, 120);
+      if (score < selectedScore) {
+        selected = { position: { x: position.x, y: position.y }, route };
+        selectedScore = score;
+      }
+    }
+    return selected;
+  }
+
+  /** One request-time clearance test avoids selecting a stopping point already occupied by a vehicle. */
+  private isTaxiCurbClear(taxi: Vehicle, position: Vector2): boolean {
+    const minimumSq = TAXI_PICKUP_CLEARANCE * TAXI_PICKUP_CLEARANCE;
+    for (const vehicle of this.vehicles?.vehicles ?? []) {
+      if (vehicle.id === taxi.id || vehicle.isDestroyed || !vehicle.sprite.active) continue;
+      if (this.distanceSq(position, vehicle.sprite) < minimumSq) return false;
+    }
+    return true;
   }
 
   private currentBusStop(bus: BusRuntime): BusStopSite | null {
     return bus.route.stops[bus.currentStopIndex] ?? null;
+  }
+
+  private targetBusStop(bus: BusRuntime): BusStopSite | null {
+    return bus.route.stops[bus.targetStopIndex] ?? null;
+  }
+
+  /** The bus must be at its named road lane, at a small curb radius, moving slowly, and aligned. */
+  private busIsStoppedAt(
+    bus: BusRuntime,
+    stop: BusStopSite | null,
+    requireDriverArrival: boolean,
+  ): boolean {
+    if (!stop || !this.isVehicleStoppedAt(bus.vehicle, stop.stopPosition, BUS_STOP_RANGE, requireDriverArrival)) {
+      return false;
+    }
+    const driver = this.traffic?.driverFor(bus.vehicle) ?? null;
+    const debug = driver?.debug ?? null;
+    if (debug?.laneId !== stop.laneId) return false;
+    return Math.abs(Phaser.Math.Angle.Wrap(bus.vehicle.movement.heading - stop.heading)) <= BUS_STOPPING_CONFIG.headingToleranceRadians;
+  }
+
+  private busHasTargetDirection(bus: BusRuntime): boolean {
+    const stop = this.targetBusStop(bus);
+    const debug = this.traffic?.driverFor(bus.vehicle)?.debug ?? null;
+    if (!stop || !debug || debug.laneId !== stop.laneId) return false;
+    return Math.abs(Phaser.Math.Angle.Wrap(bus.vehicle.movement.heading - stop.heading)) <= BUS_STOPPING_CONFIG.headingToleranceRadians;
+  }
+
+  private busDistanceAlongTargetLane(bus: BusRuntime): number | null {
+    const stop = this.targetBusStop(bus);
+    const debug = this.traffic?.driverFor(bus.vehicle)?.debug ?? null;
+    if (!stop || !debug || debug.laneId !== stop.laneId) return null;
+    return stop.laneDistance - debug.laneDistance;
+  }
+
+  private busShouldBeginApproach(bus: BusRuntime): boolean {
+    const remaining = this.busDistanceAlongTargetLane(bus);
+    return remaining !== null && remaining <= BUS_STOPPING_CONFIG.approachDistance && remaining >= -BUS_STOP_RANGE;
+  }
+
+  private busShouldAlignWithStop(bus: BusRuntime): boolean {
+    const remaining = this.busDistanceAlongTargetLane(bus);
+    return (
+      remaining !== null &&
+      remaining <= BUS_STOPPING_CONFIG.alignmentDistance &&
+      remaining >= -BUS_STOP_RANGE &&
+      this.busHasTargetDirection(bus)
+    );
   }
 
   private nextStopIndex(route: ResolvedBusRoute, index: number): number {
@@ -1043,52 +1851,171 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     return candidates.slice(0, Math.max(1, limit)).map((candidate) => candidate.stop);
   }
 
-  private nextTaxiRoadTarget(cityId: CityId): Vector2 | null {
+  /**
+   * Return city service targets with the central, physically generated bus
+   * stops first. This makes an available taxi discoverable near a city arrival
+   * point instead of scattering every initial service vehicle across a map that
+   * is several kilometres wide.
+   */
+  private taxiServiceTargets(cityId: CityId): Vector2[] {
     const world = this.world;
-    if (!world) return null;
-    const config = CITY_TRANSIT_CONFIG[cityId];
-    const points: Vector2[] = [];
-    for (const landmarkId of config.taxi.serviceLandmarkIds) {
-      const landmark = world.map.landmarks.find(
-        (candidate) => candidate.id === landmarkId && candidate.cityId === cityId,
+    if (!world) return [];
+    const city = world.map.cities.find((candidate) => candidate.id === cityId) ?? null;
+    const stops = world.map.busStops
+      .filter((stop) => stop.cityId === cityId)
+      .sort((left, right) => {
+        const leftDistance = city ? this.distanceSq(left.approachPosition, city.center) : 0;
+        const rightDistance = city ? this.distanceSq(right.approachPosition, city.center) : 0;
+        return leftDistance - rightDistance || left.id.localeCompare(right.id);
+      });
+    const landmarks = CITY_TRANSIT_CONFIG[cityId].taxi.serviceLandmarkIds
+      .map((id) => world.map.landmarks.find((candidate) => candidate.id === id && candidate.cityId === cityId))
+      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+    const targets: Vector2[] = [];
+    const seen = new Set<string>();
+    const add = (point: Vector2): void => {
+      const key = `${Math.round(point.x)},${Math.round(point.y)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      targets.push({ x: point.x, y: point.y });
+    };
+
+    // Interleave central stop coverage and commercial landmarks so the local
+    // reserve is easy to find while the remaining fleet still covers the city.
+    const maximum = Math.max(stops.length, landmarks.length);
+    for (let index = 0; index < maximum; index += 1) {
+      const stop = stops[index];
+      const landmark = landmarks[index];
+      if (stop) add(stop.approachPosition);
+      if (landmark) add(landmark.position);
+    }
+    return targets;
+  }
+
+  /** Candidate road targets for one real taxi materialization, ordered locally first when needed. */
+  private taxiSpawnTargets(cityId: CityId, preferredPosition: Vector2 | null): Vector2[] {
+    const serviceTargets = this.taxiServiceTargets(cityId);
+    if (serviceTargets.length === 0) return [];
+    const targets: Vector2[] = [];
+    const seen = new Set<string>();
+    const add = (point: Vector2): void => {
+      const key = `${Math.round(point.x)},${Math.round(point.y)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      targets.push({ x: point.x, y: point.y });
+    };
+
+    if (preferredPosition) {
+      for (const point of this.localTaxiSpawnTargets(cityId, preferredPosition)) add(point);
+    }
+
+    const offset = this.taxiRoamOrdinals[cityId] % serviceTargets.length;
+    this.taxiRoamOrdinals[cityId] = (offset + 1) % serviceTargets.length;
+    for (let index = 0; index < serviceTargets.length && targets.length < TAXI_SERVICE_TARGET_LIMIT; index += 1) {
+      const point = serviceTargets[(offset + index) % serviceTargets.length];
+      if (point) add(point);
+    }
+    return targets;
+  }
+
+  /**
+   * Find legal lane points around an active player without scanning the entire
+   * city. The normal service-vehicle spawner performs the final occupancy and
+   * lane-clearance validation before it creates anything.
+   */
+  private localTaxiSpawnTargets(cityId: CityId, position: Vector2): Vector2[] {
+    const network = this.traffic?.roadNetwork;
+    const world = this.world;
+    const config = CITY_TRANSIT_CONFIG[cityId].taxi;
+    if (!network || !world) return [];
+    const candidates: Array<{ point: Vector2; score: number }> = [];
+    const seen = new Set<string>();
+    for (const lane of network.nearbyTravelLanes(position, config.encounterRadius, TAXI_ENCOUNTER_LANE_LIMIT)) {
+      const projection = network.projectPoint(position, lane);
+      const clearance = Math.min(
+        TAXI_PICKUP_JUNCTION_CLEARANCE,
+        Math.max(52, Math.floor(lane.spline.length * 0.22)),
       );
-      if (landmark) points.push(landmark.position);
+      if (lane.spline.length <= clearance * 2 + TAXI_STOP_RANGE * 2) continue;
+      for (const offset of [-TAXI_ENCOUNTER_PREFERRED_SPAWN_DISTANCE, TAXI_ENCOUNTER_PREFERRED_SPAWN_DISTANCE]) {
+        const laneDistance = Phaser.Math.Clamp(
+          projection.distance + offset,
+          clearance,
+          lane.spline.length - clearance,
+        );
+        const point = network.pointAt(lane, laneDistance).point;
+        if (world.cityAt(point.x, point.y)?.id !== cityId) continue;
+        const distance = Math.hypot(point.x - position.x, point.y - position.y);
+        if (distance < TAXI_ENCOUNTER_MIN_SPAWN_DISTANCE || distance > config.encounterRadius) continue;
+        const key = `${Math.round(point.x)},${Math.round(point.y)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        candidates.push({ point: { x: point.x, y: point.y }, score: Math.abs(distance - TAXI_ENCOUNTER_PREFERRED_SPAWN_DISTANCE) });
+      }
     }
-    for (const stop of world.map.busStops) {
-      if (stop.cityId === cityId) points.push(stop.approachPosition);
-    }
+    candidates.sort((left, right) => left.score - right.score);
+    return candidates.map((candidate) => candidate.point);
+  }
+
+  private nextTaxiRoadTarget(cityId: CityId): Vector2 | null {
+    const points = this.taxiServiceTargets(cityId);
     if (points.length === 0) return null;
-    const point = points[this.taxiRoamOrdinal++ % points.length];
+    const ordinal = this.taxiRoamOrdinals[cityId] % points.length;
+    this.taxiRoamOrdinals[cityId] = (ordinal + 1) % points.length;
+    const point = points[ordinal];
     return point ? { x: point.x, y: point.y } : null;
+  }
+
+  private nearbyAvailableTaxiCount(cityId: CityId, position: Vector2, radius: number): number {
+    const maximumSq = radius * radius;
+    let count = 0;
+    for (const taxi of this.taxis.values()) {
+      if (taxi.cityId !== cityId || !this.isTaxiHireable(taxi)) continue;
+      if (this.distanceSq(position, taxi.vehicle.sprite) <= maximumSq) count += 1;
+    }
+    return count;
+  }
+
+  /** Retarget a real, unoccupied taxi through the normal traffic driver; it is never teleported. */
+  private retargetAvailableTaxiForEncounter(cityId: CityId, position: Vector2): boolean {
+    const traffic = this.traffic;
+    const target = this.localTaxiSpawnTargets(cityId, position)[0] ?? null;
+    if (!traffic || !target) return false;
+    const radiusSq = CITY_TRANSIT_CONFIG[cityId].taxi.encounterRadius ** 2;
+    const candidate = Array.from(this.taxis.values())
+      .filter(
+        (taxi) =>
+          taxi.cityId === cityId &&
+          !taxi.standAtNextTarget &&
+          taxi.idleUntil === 0 &&
+          this.isTaxiHireable(taxi) &&
+          this.distanceSq(position, taxi.vehicle.sprite) > radiusSq,
+      )
+      .sort(
+        (left, right) =>
+          this.distanceSq(position, left.vehicle.sprite) - this.distanceSq(position, right.vehicle.sprite),
+      )[0];
+    if (!candidate) return false;
+    candidate.roamTarget = target;
+    candidate.standAtNextTarget = true;
+    candidate.recoveryAttempts = 0;
+    traffic.configureDriver(candidate.vehicle, () => this.taxiTarget(candidate.vehicle.id), TAXI_STOP_RANGE, false);
+    return true;
   }
 
   private nearestTaxi(
     position: Vector2,
     range: number,
     states: readonly TaxiState[],
+    predicate: (taxi: TaxiRuntime) => boolean = () => true,
   ): TaxiRuntime | null {
     const maxSq = range * range;
     let selected: TaxiRuntime | null = null;
     let selectedSq = maxSq;
     for (const taxi of this.taxis.values()) {
-      if (!states.includes(taxi.state)) continue;
+      if (!states.includes(taxi.state) || !predicate(taxi)) continue;
       const distanceSq = this.distanceSq(position, taxi.vehicle.sprite);
       if (distanceSq <= selectedSq) {
-        selected = taxi;
-        selectedSq = distanceSq;
-      }
-    }
-    return selected;
-  }
-
-  private nearestTaxiForCity(cityId: CityId): TaxiRuntime | null {
-    let selected: TaxiRuntime | null = null;
-    let selectedSq = Infinity;
-    const playerPosition = this.player?.playerPosition;
-    for (const taxi of this.taxis.values()) {
-      if (taxi.cityId !== cityId || taxi.state !== 'AVAILABLE') continue;
-      const distanceSq = playerPosition ? this.distanceSq(playerPosition, taxi.vehicle.sprite) : 0;
-      if (distanceSq < selectedSq) {
         selected = taxi;
         selectedSq = distanceSq;
       }
@@ -1100,25 +2027,12 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     let selected: BusRuntime | null = null;
     let selectedSq = BUS_INTERACTION_RANGE * BUS_INTERACTION_RANGE;
     for (const bus of this.buses.values()) {
-      if (bus.state !== 'dwelling' || this.occupants?.availablePassengerSeats(bus.vehicle).length === 0) {
+      if (!this.busCanBoard(bus)) {
         continue;
       }
       const distanceSq = this.distanceSq(position, bus.vehicle.sprite);
       if (distanceSq <= selectedSq) {
         selected = bus;
-        selectedSq = distanceSq;
-      }
-    }
-    return selected;
-  }
-
-  private nearestBusStop(position: Vector2, range: number): BusStopSite | null {
-    let selected: BusStopSite | null = null;
-    let selectedSq = range * range;
-    for (const stop of this.world?.map.busStops ?? []) {
-      const distanceSq = this.distanceSq(position, stop);
-      if (distanceSq <= selectedSq) {
-        selected = stop;
         selectedSq = distanceSq;
       }
     }
@@ -1154,8 +2068,8 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         currentStop: labelFor(bus.currentStopIndex, current),
         nextStop: labelFor(this.nextStopIndex(bus.route, bus.currentStopIndex), next),
         upcomingStops: bus.route.stops.map((stop, index) => labelFor(index, stop)),
-        status: bus.state === 'dwelling' ? 'At stop' : 'In service',
-        canExit: bus.state === 'dwelling',
+        status: bus.state === 'STOPPED_AT_STOP' ? 'At stop' : 'In service',
+        canExit: bus.state === 'STOPPED_AT_STOP' && bus.boardingActive && this.busIsAtCurrentStop(bus),
       };
     }
     const taxi = this.taxis.get(vehicle.id);
@@ -1165,21 +2079,33 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       vehicleId: vehicle.id,
       destination: taxi.destination?.label,
       status:
-        taxi.state === 'WAITING_FOR_PLAYER'
+        taxi.state === 'DESTINATION_SELECTION'
           ? 'Choose destination'
+          : taxi.state === 'FARE_CONFIRMATION'
+            ? 'Confirm fare'
           : taxi.state === 'ARRIVING'
             ? 'Arrived'
             : taxi.state === 'IN_SERVICE'
               ? 'En route'
               : 'Boarding',
       fareTotal: taxi.fare?.total,
-      canExit: taxi.state === 'ARRIVING' || taxi.state === 'WAITING_FOR_PLAYER',
+      canExit: taxi.state === 'ARRIVING' && this.taxiIsAtDropoff(taxi),
     };
   }
 
-  private safeTransitExitPosition(vehicle: Vehicle, stop: BusStopSite | null): Vector2 | null {
-    const requested = stop?.waitingPositions[0] ?? null;
-    if (requested) return { x: requested.x, y: requested.y };
+  private safeTransitExitPosition(
+    vehicle: Vehicle,
+    stop: BusStopSite | null,
+    preferred: Vector2 | null = null,
+  ): Vector2 | null {
+    const requested = stop?.waitingPositions[0] ?? preferred;
+    if (requested) {
+      const safe = this.world?.resolveSafePedestrianPosition(requested, PLAYER.RADIUS, {
+        maxDistance: 96,
+        segmentStart: { x: vehicle.sprite.x, y: vehicle.sprite.y },
+      });
+      if (safe) return safe;
+    }
     const heading = vehicle.sprite.rotation + Math.PI / 2;
     const distance = vehicle.def.width * 0.5 + PLAYER.RADIUS + 8;
     return {
@@ -1196,6 +2122,10 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     ).length +
       Number(this.player?.playerIsTransitPassenger && this.player.currentVehicle?.id === bus.vehicle.id);
     const target = bus.route.stops[bus.targetStopIndex];
+    const driverDebug = this.traffic?.driverFor(bus.vehicle)?.debug ?? null;
+    const distanceToStop = target
+      ? Math.hypot(bus.vehicle.sprite.x - target.stopPosition.x, bus.vehicle.sprite.y - target.stopPosition.y)
+      : null;
     return {
       vehicleId: bus.vehicle.id,
       cityId: bus.cityId,
@@ -1206,20 +2136,45 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       currentStopId: current?.id ?? '',
       nextStopId: next?.id ?? '',
       dwellRemainingMs: bus.dwellRemainingMs,
+      boardingActive: bus.boardingActive,
+      position: { x: bus.vehicle.sprite.x, y: bus.vehicle.sprite.y },
+      targetStopPosition: target ? { ...target.stopPosition } : null,
+      targetLaneId: target?.laneId ?? null,
+      targetLaneDistance: target?.laneDistance ?? null,
+      currentLaneId: driverDebug?.laneId ?? null,
+      currentLaneDistance: driverDebug?.laneDistance ?? null,
+      distanceToStop,
+      headingErrorRadians: target
+        ? Math.abs(Phaser.Math.Angle.Wrap(bus.vehicle.movement.heading - target.heading))
+        : null,
+      driverState: driverDebug?.state ?? null,
       passengerCount,
       passengerCapacity: bus.route.config.passengerCapacity,
-      validLaneRoute: Boolean(target && this.traffic?.routePreview(bus.vehicle.position, target.approachPosition)),
+      validLaneRoute: Boolean(
+        target &&
+          bus.route.segments.every((segment) => segment.valid) &&
+          this.traffic?.roadNetwork?.lane(target.laneId)?.kind === 'travel',
+      ),
     };
   }
 
   private taxiSnapshot(taxi: TaxiRuntime): TaxiServiceSnapshot {
+    const occupants = this.occupants?.occupantsFor(taxi.vehicle) ?? [];
+    const driver = this.traffic?.driverFor(taxi.vehicle) ?? null;
+    const playerPosition = this.player?.playerPosition ?? null;
     return {
       vehicleId: taxi.vehicle.id,
       cityId: taxi.cityId,
       state: taxi.state,
-      hasDriver: (this.occupants?.occupantsFor(taxi.vehicle) ?? []).some(
+      position: { x: taxi.vehicle.sprite.x, y: taxi.vehicle.sprite.y },
+      hasDriver: occupants.some(
         (occupant) => occupant.seat === 'driver' && occupant.role === 'taxi-driver',
       ),
+      hasPassenger: occupants.some((occupant) => occupant.seat !== 'driver'),
+      driverState: driver?.state ?? null,
+      distanceToPlayer: playerPosition
+        ? Math.hypot(taxi.vehicle.sprite.x - playerPosition.x, taxi.vehicle.sprite.y - playerPosition.y)
+        : null,
       destination: taxi.destination,
       fare: taxi.fare,
       validLaneRoute: taxi.validLaneRoute,
@@ -1250,8 +2205,11 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     this.serviceAccumulatorMs = 0;
     this.passengerPlanAccumulatorMs = 0;
     this.nextSpawnAttemptAt = 0;
-    this.taxiRoamOrdinal = 0;
+    this.taxiRoamOrdinals.tehran = 0;
+    this.taxiRoamOrdinals.yazd = 0;
+    this.taxiRoamOrdinals.gilan = 0;
     this.resolvedRoutes.clear();
+    this.routeInitializationQueue.length = 0;
     this.buses.clear();
     this.taxis.clear();
     this.passengerPlans.clear();

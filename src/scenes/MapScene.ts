@@ -1268,8 +1268,9 @@ export class MapScene extends Phaser.Scene {
     this.taxiQuoteText?.setText(
       [
         destination.label,
-        `Base $${fare.baseFare}  ${fare.distanceKm.toFixed(1)} km`,
-        `Distance $${fare.distanceCost}  Total $${fare.total}`,
+        `DISTANCE  ${fare.distanceKm.toFixed(1)} km`,
+        `FARE  Base $${fare.baseFare} + Road $${fare.distanceCost}`,
+        `TOTAL  $${fare.total}`,
       ].join('\n'),
     );
     this.taxiConfirmButton?.setEnabled(true);
@@ -1301,8 +1302,9 @@ export class MapScene extends Phaser.Scene {
     this.taxiQuoteText?.setText(
       [
         'Map pin',
-        `Base $${fare.baseFare}  ${fare.distanceKm.toFixed(1)} km`,
-        `Distance $${fare.distanceCost}  Total $${fare.total}`,
+        `DISTANCE  ${fare.distanceKm.toFixed(1)} km`,
+        `FARE  Base $${fare.baseFare} + Road $${fare.distanceCost}`,
+        `TOTAL  $${fare.total}`,
       ].join('\n'),
     );
     this.taxiConfirmButton?.setEnabled(true);

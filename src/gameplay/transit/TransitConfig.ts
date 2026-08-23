@@ -4,6 +4,16 @@ import type { CityTransitConfig, TaxiConfig, TaxiFareQuote, TrafficRoutePreview 
 /** World scale used only for player-facing distance/fare presentation. */
 export const TRANSIT_PIXELS_PER_KILOMETER = 4000;
 
+/** Shared curb-service tuning; deliberately small enough to reject adjacent lanes. */
+export const BUS_STOPPING_CONFIG = {
+  stoppingRadius: 28,
+  approachDistance: 260,
+  alignmentDistance: 76,
+  headingToleranceRadians: 0.42,
+  recoveryDelayMs: 1400,
+  maxRecoveryAttempts: 3,
+} as const;
+
 const stop = (id: string, label: string, ...landmarkIds: string[]) => ({
   id,
   label,
@@ -81,6 +91,9 @@ export const CITY_TRANSIT_CONFIG: Record<CityId, CityTransitConfig> = {
     ],
     taxi: {
       population: 9,
+      encounterRadius: 720,
+      guaranteedNearby: 1,
+      standDurationMs: 30000,
       baseFare: 20,
       perKilometerFare: 11,
       trafficFareFactor: 0.18,
@@ -132,6 +145,9 @@ export const CITY_TRANSIT_CONFIG: Record<CityId, CityTransitConfig> = {
     ],
     taxi: {
       population: 3,
+      encounterRadius: 640,
+      guaranteedNearby: 1,
+      standDurationMs: 30000,
       baseFare: 14,
       perKilometerFare: 8,
       trafficFareFactor: 0.07,
@@ -182,6 +198,9 @@ export const CITY_TRANSIT_CONFIG: Record<CityId, CityTransitConfig> = {
     ],
     taxi: {
       population: 4,
+      encounterRadius: 640,
+      guaranteedNearby: 1,
+      standDurationMs: 30000,
       baseFare: 16,
       perKilometerFare: 9,
       trafficFareFactor: 0.1,

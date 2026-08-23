@@ -118,6 +118,13 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
   /** Where the player was arrested, used to pick the nearest police station. */
   private arrestPosition: Vector2 | null = null;
 
+  /**
+   * Continue-game loading happens from the main menu before this scene creates
+   * the player entity. Retain that validated payload until `onAttach` can apply
+   * it to the real inventory instead of silently dropping the saved wallet.
+   */
+  private pendingSaveData: Json | null = null;
+
   /** Subscribe to death (respawn loop), destroyed-vehicle ejection and rewards. */
   protected onInit(): void {
     this.subscribe(EventKeys.PlayerDied, (payload) => this.onPlayerDied(payload.position));
@@ -126,6 +133,9 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     this.subscribe(EventKeys.VehicleDestroyed, (payload) =>
       this.onVehicleDestroyed(payload.vehicleId),
     );
+    this.subscribe(EventKeys.GameNew, () => {
+      this.pendingSaveData = null;
+    });
     this.log.debug('player controller ready');
   }
 
@@ -182,8 +192,16 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
       camera.follow(this.playerEntity.sprite);
     }
 
+    const pending = this.pendingSaveData;
+    this.pendingSaveData = null;
+    if (pending !== null) this.applySavedState(player, pending);
+
     this.bus.emit(EventKeys.PlayerSpawned, { x: spawn.x, y: spawn.y });
     player.publishInitialVitals();
+    // HUD presentation mirrors the inventory's real wallet. A later save load
+    // replaces this value through InventoryComponent.setMoney; no UI-only money
+    // default is involved.
+    this.bus.emit(EventKeys.MoneyChanged, { total: player.inventory.money, delta: 0 });
   }
 
   /** Destroy the player entity on scene teardown. */
@@ -1033,9 +1051,19 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
    */
   public deserialize(data: Json): void {
     const player = this.playerEntity;
-    if (!player || typeof data !== 'object' || data === null || Array.isArray(data)) {
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
       return;
     }
+    if (!player) {
+      this.pendingSaveData = data;
+      return;
+    }
+    this.applySavedState(player, data);
+  }
+
+  /** Apply one previously validated save section to an already constructed player. */
+  private applySavedState(player: Player, data: Json): void {
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) return;
     const record = data as { [key: string]: Json };
 
     const x = record.x;

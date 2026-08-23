@@ -135,6 +135,7 @@ console.error = (...args) => { window.__smokeErrors.push(args.map(String).join('
 '@
   }
   if (-not $menuReady) { throw 'Main menu did not become ready after world validation.' }
+  $newGameStartup = [Diagnostics.Stopwatch]::StartNew()
   Evaluate-Cdp $socket @'
 (() => {
   const active = window.game?.phaser?.scene?.getScenes(true)?.map(scene => scene.scene.key) ?? [];
@@ -144,6 +145,9 @@ console.error = (...args) => { window.__smokeErrors.push(args.map(String).join('
   return true;
 })()
 '@ | Out-Null
+  $newGameStartup.Stop()
+  $newGameStartupMs = [Math]::Round($newGameStartup.Elapsed.TotalMilliseconds, 1)
+  Write-Host "New Game startup: $newGameStartupMs ms"
 
   $snapshot = $null
   for ($attempt = 0; $attempt -lt 45; $attempt++) {
@@ -156,7 +160,7 @@ console.error = (...args) => { window.__smokeErrors.push(args.map(String).join('
   const traffic = managers.find(manager => manager.key === 'TrafficSystem');
   const world = managers.find(manager => manager.key === 'WorldManager');
   return {
-    ready: scenes.includes('GameScene') && Boolean(traffic),
+    ready: scenes.includes('GameScene') && scenes.includes('UIScene') && Boolean(traffic),
     scenes,
     traffic: traffic ? {
       ...(traffic.trafficDebugSnapshot?.() ?? {}),
@@ -483,6 +487,7 @@ console.error = (...args) => { window.__smokeErrors.push(args.map(String).join('
 })()
 '@
   Add-Member -InputObject $snapshot -NotePropertyName cutawayRoofOwnership -NotePropertyValue $roofProbe -Force
+  Add-Member -InputObject $snapshot -NotePropertyName newGameStartupMs -NotePropertyValue $newGameStartupMs -Force
 
   if ($City) {
     Evaluate-Cdp $socket @"
@@ -695,6 +700,12 @@ console.error = (...args) => { window.__smokeErrors.push(args.map(String).join('
 
   $snapshot | ConvertTo-Json -Depth 12
   if (-not $snapshot.ready) { throw 'Game scene did not become ready.' }
+  if ([double]$snapshot.newGameStartupMs -gt 10000) {
+    throw "New Game blocked the browser for $($snapshot.newGameStartupMs) ms."
+  }
+  if ($null -eq $snapshot.world -or [int]$snapshot.world.loadedChunks -lt 1) {
+    throw 'Game scene became ready without a player-start terrain chunk.'
+  }
   $roofProbe = $snapshot.cutawayRoofOwnership
   if ($null -eq $roofProbe) { throw 'Cutaway-roof ownership probe did not produce a snapshot.' }
   if ($roofProbe.error) { throw "Cutaway-roof ownership probe failed: $($roofProbe.error)" }

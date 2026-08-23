@@ -22,6 +22,38 @@ function check(condition: boolean, message: string): void {
   if (!condition) failures.push(message);
 }
 
+/** Guard New Game against constructor work that scales as parking spaces × all lanes. */
+function validateLargeNetworkStartupBudget(): number {
+  const width = 18;
+  const height = 14;
+  const spacing = 384;
+  const gridNodes: RoadNode[] = [];
+  const idAt = (x: number, y: number): number => y * width + x;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const neighbours: number[] = [];
+      if (x > 0) neighbours.push(idAt(x - 1, y));
+      if (x + 1 < width) neighbours.push(idAt(x + 1, y));
+      if (y > 0) neighbours.push(idAt(x, y - 1));
+      if (y + 1 < height) neighbours.push(idAt(x, y + 1));
+      gridNodes.push({ id: idAt(x, y), x: x * spacing, y: y * spacing, neighbours });
+    }
+  }
+
+  const startedAt = performance.now();
+  const startupNetwork = new TrafficNetwork(gridNodes, []);
+  const elapsedMs = performance.now() - startedAt;
+
+  check(startupNetwork.laneCount > 1_000, 'startup fixture is too small');
+  check(startupNetwork.parkingSpaceCount > 500, 'startup fixture has too few parking bays');
+  check(
+    elapsedMs < 8_000,
+    `large traffic startup took ${elapsedMs.toFixed(1)} ms (maximum 8000 ms)`,
+  );
+  return elapsedMs;
+}
+
 const nodes: RoadNode[] = [
   { id: 0, x: 0, y: 0, neighbours: [1, 2, 3, 4] },
   { id: 1, x: 384, y: 0, neighbours: [0] },
@@ -34,7 +66,10 @@ const network = new TrafficNetwork(nodes, []);
 validateNetworkGeometry();
 validateRouting();
 validateReservations();
+validateReservationQueueFairness();
+validateApproachQueueSafety();
 validateInterchangePolicy();
+const largeNetworkStartupMs = validateLargeNetworkStartupBudget();
 const simulated = simulateTenMinutes();
 
 if (failures.length > 0) {
@@ -45,6 +80,7 @@ if (failures.length > 0) {
   console.log(`Traffic validation PASSED`);
   console.log(`  ${assertions} invariant checks`);
   console.log(`  ${network.roadCount} road segments, ${network.laneCount} directed splines`);
+  console.log(`  large-network startup ${largeNetworkStartupMs.toFixed(1)} ms`);
   console.log(`  ${simulated.toLocaleString()} agent-steps (10 simulated minutes)`);
   console.log(
     '  direction, lane containment, spawn alignment, conflicts, downstream clearance, blocking, and recovery checks passed',
@@ -101,6 +137,15 @@ function validateNetworkGeometry(): void {
   for (const space of network.parkingSpaces()) {
     const lane = network.lane(space.adjacentLaneId);
     check(lane?.kind === 'travel', `${space.id}: parking space lacks adjacent travel lane`);
+    check(
+      network.vehicleFootprintHasTravelClearance(
+        space.position,
+        space.heading,
+        space.width,
+        space.length,
+      ),
+      `${space.id}: parking space overlaps a directed traffic lane or connector`,
+    );
     check(
       isDrivable(space.position.x, space.position.y),
       `${space.id}: parking space is not on road shoulder`,
@@ -310,6 +355,76 @@ function validateReservations(): void {
   );
 }
 
+/**
+ * A scheduled bus must not lose a legal green phase forever merely because
+ * freshly-arriving taxis have one more base priority point. The controller
+ * may admit a taxi first, but an older bus must age into the next compatible
+ * reservation without bypassing signals, conflicts, or a blocked exit.
+ */
+function validateReservationQueueFairness(): void {
+  const junction = network.junction(0);
+  check(junction !== null, 'fairness fixture junction missing');
+  if (!junction) return;
+  const connectors = junction.connectorLaneIds
+    .map((id) => network.lane(id))
+    .filter((lane): lane is TrafficLane => lane !== null);
+  let pair: [TrafficLane, TrafficLane] | null = null;
+  for (const first of connectors) {
+    const second = connectors.find((candidate) => first.conflictLaneIds.includes(candidate.id));
+    if (second) {
+      pair = [first, second];
+      break;
+    }
+  }
+  check(pair !== null, 'fairness fixture needs conflicting connectors');
+  if (!pair) return;
+
+  const controller = new IntersectionReservationController(network);
+  const busId = 900;
+  let busGranted = false;
+  for (let now = 0; now <= 4_000; now += 100) {
+    controller.beginFrame(now);
+    controller.request(now, reservationRequest(busId, pair[0], true, 2));
+    const taxiId = 1_000 + now;
+    controller.request(now, reservationRequest(taxiId, pair[1], true, 3));
+    controller.resolve(now);
+    if (controller.hasReservation(busId)) {
+      busGranted = true;
+      break;
+    }
+    controller.releaseVehicle(taxiId);
+  }
+  check(
+    busGranted,
+    'a continuously queued bus must eventually receive a legal reservation ahead of fresh higher-priority taxis',
+  );
+}
+
+/** A trailing service vehicle must not reserve through a stopped lead car. */
+function validateApproachQueueSafety(): void {
+  const junction = network.junction(0);
+  check(junction !== null, 'approach-queue fixture junction missing');
+  if (!junction) return;
+  const connector = junction.connectorLaneIds
+    .map((id) => network.lane(id))
+    .find((lane): lane is TrafficLane => lane !== null) ?? null;
+  check(connector !== null, 'approach-queue fixture connector missing');
+  if (!connector) return;
+  const controller = new IntersectionReservationController(network);
+  controller.beginFrame(0);
+  controller.request(0, reservationRequest(1100, connector, true, 3, true));
+  controller.request(0, reservationRequest(1101, connector, true, 2, false));
+  controller.resolve(0);
+  check(
+    controller.hasReservation(1100) !== null,
+    'lead vehicle on a clear approach must receive its legal reservation',
+  );
+  check(
+    controller.hasReservation(1101) === null,
+    'trailing bus must not reserve a connector through the lead vehicle body',
+  );
+}
+
 function simulateTenMinutes(): number {
   const controller = new IntersectionReservationController(network);
   const travel = network.lanes().filter((lane) => lane.kind === 'travel');
@@ -384,6 +499,7 @@ function simulateTenMinutes(): number {
               priority: 2,
               emergency: false,
               recoveryAttempt: 0,
+              approachClear: true,
               downstreamClear,
             });
             if (!decision.granted)
@@ -464,7 +580,13 @@ function advanceAgent(
   }
 }
 
-function reservationRequest(vehicleId: number, connector: TrafficLane, downstreamClear: boolean) {
+function reservationRequest(
+  vehicleId: number,
+  connector: TrafficLane,
+  downstreamClear: boolean,
+  priority = 2,
+  approachClear = true,
+) {
   const incoming = network.lanes().find((lane) => lane.connectionIds.includes(connector.id));
   const outgoingId = connector.connectionIds[0];
   if (!incoming || !outgoingId || connector.intersectionId === null)
@@ -477,9 +599,10 @@ function reservationRequest(vehicleId: number, connector: TrafficLane, downstrea
     outgoingLaneId: outgoingId,
     distanceToStopLine: 40,
     arrivalAt: 0,
-    priority: 2,
+    priority,
     emergency: false,
     recoveryAttempt: 0,
+    approachClear,
     downstreamClear,
   };
 }

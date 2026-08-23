@@ -123,6 +123,16 @@ export class TrafficUpdateScheduler {
       }
     }
 
+    // The budget may defer a portion of the visible traffic set. Processing
+    // the insertion-order queue every frame makes the same tail vehicles miss
+    // every deadline under load, leaving their physical bodies frozen in front
+    // of live traffic. Oldest simulation first is bounded, deterministic, and
+    // lets every due driver eventually update without raising the frame budget.
+    this.orderByStaleness(this.nearQueue);
+    this.orderByStaleness(this.mediumQueue);
+    this.orderByStaleness(this.farQueue);
+    this.orderByStaleness(this.virtualQueue);
+
     const startedAt = performance.now();
     this.executeQueue(this.nearQueue, now, startedAt, execute);
     this.executeQueue(this.mediumQueue, now, startedAt, execute);
@@ -155,6 +165,15 @@ export class TrafficUpdateScheduler {
       stats.collisionMs += cost.collisionMs;
       stats.scheduledUpdates += 1;
     }
+  }
+
+  private orderByStaleness(queue: TrafficScheduleWork[]): void {
+    queue.sort((first, second) => {
+      const firstUpdatedAt = this.schedules.get(first.driver.id)?.lastUpdateAt ?? -Infinity;
+      const secondUpdatedAt = this.schedules.get(second.driver.id)?.lastUpdateAt ?? -Infinity;
+      if (firstUpdatedAt !== secondUpdatedAt) return firstUpdatedAt - secondUpdatedAt;
+      return first.driver.id - second.driver.id;
+    });
   }
 
   private scheduleFor(vehicleId: number, tier: TrafficSimulationTier, now: number): DriverSchedule {

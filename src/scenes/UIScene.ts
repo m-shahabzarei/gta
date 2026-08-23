@@ -71,7 +71,10 @@ export class UIScene extends Phaser.Scene {
       this.applyMobileLayout();
     }
     const playerController = ServiceLocator.tryResolve<PlayerController>(ServiceKeys.Player);
-    if (playerController?.player) this.hud.setVitals(playerController.player.vitals);
+    if (playerController?.player) {
+      this.hud.setVitals(playerController.player.vitals);
+      this.hud.setMoney(playerController.player.inventory.money);
+    }
 
     const world = ServiceLocator.tryResolve<WorldManager>(ServiceKeys.World);
     if (world && this.minimap) {

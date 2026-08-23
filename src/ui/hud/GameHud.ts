@@ -23,7 +23,7 @@ import { Label, ProgressBar } from '@/ui/components';
 import { WEAPONS } from '@/data';
 import type { PlayerVitalsSnapshot, WeaponDef } from '@/gameplay/types';
 import { TextureKeys } from '@/config/AssetKeys';
-import { COLORS, GAME_WIDTH, GAME_HEIGHT, WANTED } from '@/config/Constants';
+import { COLORS, GAME_WIDTH, GAME_HEIGHT, PLAYER, WANTED } from '@/config/Constants';
 import { DepthLayers } from '@/config/DepthLayers';
 import { EventKeys } from '@/config/EventKeys';
 import { eventBus } from '@/core/EventBus';
@@ -111,7 +111,7 @@ export class GameHud extends UIComponent {
     this.armorBar.setValue(0);
 
     // ── Money (under armor) ──────────────────────────────────────────────────
-    this.moneyLabel = new Label(scene, 16, 56, `$${DEFAULT_HUD_STATE.money}`, {
+    this.moneyLabel = new Label(scene, 16, 56, `$${PLAYER.START_MONEY}`, {
       color: cssColor(COLORS.MONEY),
       fontSize: '18px',
     });
@@ -256,6 +256,11 @@ export class GameHud extends UIComponent {
     this.armorBar.setValue(vitals.maxArmor > 0 ? vitals.armor / vitals.maxArmor : 0);
   }
 
+  /** Render the actual inventory wallet when the HUD is created after a save load. */
+  public setMoney(total: number): void {
+    this.moneyLabel.setText(`$${Math.max(0, Math.round(total))}`);
+  }
+
   /** Subscribe to every HUD-relevant event, retaining unsubscribe handles. */
   private registerEvents(): void {
     this.unsubscribes.push(
@@ -263,7 +268,7 @@ export class GameHud extends UIComponent {
         this.setVitals(p);
       }),
       eventBus.on(EventKeys.MoneyChanged, (p) => {
-        this.moneyLabel.setText(`$${Math.max(0, Math.round(p.total))}`);
+        this.setMoney(p.total);
       }),
       eventBus.on(EventKeys.WantedChanged, (p) => {
         this.wantedLevel = p.level;

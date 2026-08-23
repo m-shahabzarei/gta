@@ -237,6 +237,7 @@ export class Vehicle extends Entity implements IDamageable {
     if (tint !== undefined) sprite.setTint(tint);
     if (sprite.texture.has(FRAME_OK)) sprite.setFrame(FRAME_OK);
     sprite.data?.remove('parked');
+    sprite.data?.remove('parkingSpaceId');
     sprite.data?.remove('intercityService');
     sprite.data?.remove('stolenByPlayer');
     sprite.setData('playerDriven', false);

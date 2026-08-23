@@ -711,7 +711,8 @@ export interface BenchSite {
 /**
  * A curb-side transit stop generated from a legal directed traffic lane.
  * `x`/`y` remain the pedestrian platform position for existing world and
- * pedestrian APIs; the approach data pins buses to the shared traffic graph.
+ * pedestrian APIs. The remaining fields are a directed, lane-bound stop
+ * target; a bus must drive to `stopPosition`, never merely near the shelter.
  */
 export interface BusStopSite {
   /** Stable generated id used by routes, discovery and map markers. */
@@ -724,14 +725,26 @@ export interface BusStopSite {
   facing: number;
   /** Directed outer-lane id used by the traffic network. */
   laneId: string;
-  /** Exact legal bus/taxi stopping point on `laneId`. */
+  /** Directed road node from which the service vehicle approaches this curb. */
+  roadNodeId: number;
+  /** Directed road node to which the service vehicle resumes after this curb. */
+  resumeNodeId: number;
+  /** Exact legal bus stopping point sampled from `laneId`. */
+  stopPosition: Vector2;
+  /** Legal lane point before `stopPosition`, used to enter the approach state. */
   approachPosition: Vector2;
-  /** Arc distance along the directed lane to the stopping point. */
+  /** Legal lane point after `stopPosition`, documenting the resume direction. */
+  resumePosition: Vector2;
+  /** Unit forward direction of the directed lane at the stopping point. */
+  approachDirection: Vector2;
+  /** Arc distance along the directed lane to the exact stopping point. */
   laneDistance: number;
   /** Total directed lane length, retained for validation diagnostics. */
   laneLength: number;
   /** Directed-lane heading at the bus stopping point. */
   heading: number;
+  /** Route ids that resolve to this directional stop in the generated world. */
+  routeIds: string[];
   /** Bounded number of pedestrians able to wait at this platform. */
   capacity: number;
   /** Entity ids currently assigned to this stop's distinct waiting slots. */

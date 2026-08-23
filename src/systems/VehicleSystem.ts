@@ -35,6 +35,7 @@ const MAX_VEHICLE_REMOVALS_PER_FRAME = 6;
 const VEHICLE_POOL_LIMIT = 160;
 
 export type VehiclePoolClass = 'standard' | 'traffic';
+export type PersistentTransitServiceKind = 'bus' | 'taxi';
 
 export class VehicleSystem extends BaseSceneManager {
   /** Service-locator key for this system. */
@@ -64,6 +65,22 @@ export class VehicleSystem extends BaseSceneManager {
   /** Iterate live registry without allocating a snapshot. */
   public forEachVehicle(visitor: (vehicle: Vehicle) => void): void {
     for (const vehicle of this.registry) visitor(vehicle);
+  }
+
+  /**
+   * Keep a route-owned bus or taxi registered while it is outside the camera.
+   * Their traffic driver still uses distance-based simulation; this only keeps
+   * the entity scheduler's spatial record synchronized so a player can meet
+   * the actual vehicle instead of its obsolete off-screen pose.
+   */
+  public markPersistentTransitService(
+    vehicle: Vehicle,
+    serviceKind: PersistentTransitServiceKind,
+  ): void {
+    if (vehicle.isDestroyed || !vehicle.sprite.active) return;
+    vehicle.sprite.setData('persistentTransitService', true);
+    vehicle.sprite.setData('transitServiceKind', serviceKind);
+    this.resolveEntityManager()?.setAlwaysActive(vehicle, true);
   }
 
   /** Game-level initialisation; all state is scene-scoped, so this is a no-op. */
@@ -99,6 +116,12 @@ export class VehicleSystem extends BaseSceneManager {
 
     // Textures face up (toward -Y) at rotation 0, so add a quarter turn.
     vehicle.sprite.setRotation(heading + Math.PI / 2);
+    // New entities attach their movement component before this spawn method
+    // receives the lane/parking heading. Keeping the simulation heading in
+    // sync with the rendered pose is essential for parked-body clearance and
+    // traffic collision prediction; otherwise a correctly parked vehicle is
+    // treated as if its long axis were rotated ninety degrees into the lane.
+    vehicle.movement.reset(heading);
     vehicle.sprite.setData('poolClass', poolClass);
 
     this.vehicleGroup.add(vehicle.sprite);

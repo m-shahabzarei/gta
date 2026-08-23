@@ -173,6 +173,10 @@ const BENCH_STRIDE = 45;
 const MAX_BUS_STOPS = 90;
 /** A stop must leave this much lane distance free at either junction. */
 const BUS_STOP_JUNCTION_CLEARANCE = 80;
+/** A bus begins its visible, lane-aligned curb approach this far before the stop when space allows. */
+const BUS_STOP_APPROACH_DISTANCE = 128;
+/** A short legal segment after the curb documents the direction in which service resumes. */
+const BUS_STOP_RESUME_DISTANCE = 72;
 /** Keep shelters apart so platforms do not visually or physically overlap. */
 const BUS_STOP_SPACING = 176;
 /** Every stop exposes a small, bounded queue rather than a single NPC slot. */
@@ -383,7 +387,12 @@ interface RoadBuildResult {
 interface TransitStopCandidate {
   cityId: CityId;
   laneId: string;
+  roadNodeId: number;
+  resumeNodeId: number;
+  stopPosition: Vector2;
   approachPosition: Vector2;
+  resumePosition: Vector2;
+  approachDirection: Vector2;
   laneDistance: number;
   laneLength: number;
   heading: number;
@@ -584,7 +593,7 @@ class CityGenerator {
     const roadSpawns = this.sampleDrivable(roadNodes, roadEdges, tiles);
     const buildingEntrances = this.buildEntrancesFromPlan(tiles, this.plannedBuildings);
     const benches = this.sampleBenches(sidewalkSpawns);
-    const busStops = this.sampleBusStops(roadNodes, roadEdges, tiles, benches);
+    const busStops = this.sampleBusStops(cities, roadNodes, roadEdges, tiles, benches);
     const trafficLights = this.buildTrafficLights(roadNodes, cities);
     const intersections = this.buildIntersectionData(
       roadNodes,
@@ -4728,6 +4737,7 @@ class CityGenerator {
    * a real bus can enter, stop clear of both junctions, and continue on that lane.
    */
   private sampleBusStops(
+    cities: readonly WorldCity[],
     nodes: readonly RoadNode[],
     edges: readonly RoadEdge[],
     tiles: number[][],
@@ -4769,15 +4779,12 @@ class CityGenerator {
     const targetByCity: Record<CityId, number> = { tehran: 52, yazd: 16, gilan: 22 };
     for (const cityId of ['tehran', 'yazd', 'gilan'] as const) {
       const candidates = candidatesByCity[cityId];
-      candidates.sort((first, second) => {
-        const firstRank = this.transitStopRank(first.laneId);
-        const secondRank = this.transitStopRank(second.laneId);
-        return firstRank - secondRank || first.laneId.localeCompare(second.laneId);
-      });
+      const city = cities.find((candidate) => candidate.id === cityId) ?? null;
       const cityTarget = Math.min(targetByCity[cityId], MAX_BUS_STOPS - stops.length);
-      for (const candidate of candidates) {
-        if (stops.filter((stop) => stop.cityId === cityId).length >= cityTarget) break;
-        if (!this.busStopPlatformIsClear(candidate.platformPosition, stops, benches)) continue;
+      let cityCount = 0;
+      const select = (candidate: TransitStopCandidate): boolean => {
+        if (cityCount >= cityTarget) return false;
+        if (!this.busStopPlatformIsClear(candidate.platformPosition, stops, benches)) return false;
         const facing = Math.atan2(
           candidate.approachPosition.y - candidate.platformPosition.y,
           candidate.approachPosition.x - candidate.platformPosition.x,
@@ -4789,17 +4796,79 @@ class CityGenerator {
           y: candidate.platformPosition.y,
           facing,
           laneId: candidate.laneId,
+          roadNodeId: candidate.roadNodeId,
+          resumeNodeId: candidate.resumeNodeId,
+          stopPosition: candidate.stopPosition,
           approachPosition: candidate.approachPosition,
+          resumePosition: candidate.resumePosition,
+          approachDirection: candidate.approachDirection,
           laneDistance: candidate.laneDistance,
           laneLength: candidate.laneLength,
           heading: candidate.heading,
+          routeIds: [],
           capacity: BUS_STOP_WAITING_CAPACITY,
           waitingEntityIds: [],
           waitingPositions: candidate.waitingPositions,
         });
+        cityCount += 1;
+        return true;
+      };
+
+      // The city center is the player arrival/start district. Selecting legal
+      // curb candidates nearest this and the major city axes creates physical
+      // stops a player can encounter before the wider network is filled.
+      if (city) {
+        for (const hub of this.busStopHubTargets(city)) {
+          const nearest = candidates
+            .slice()
+            .sort(
+              (left, right) =>
+                Phaser.Math.Distance.Squared(
+                  left.platformPosition.x,
+                  left.platformPosition.y,
+                  hub.x,
+                  hub.y,
+                ) -
+                  Phaser.Math.Distance.Squared(
+                    right.platformPosition.x,
+                    right.platformPosition.y,
+                    hub.x,
+                    hub.y,
+                  ) ||
+                left.laneId.localeCompare(right.laneId),
+            );
+          for (const candidate of nearest) {
+            if (select(candidate)) break;
+          }
+        }
+      }
+      candidates.sort((first, second) => {
+        const firstRank = this.transitStopRank(first.laneId);
+        const secondRank = this.transitStopRank(second.laneId);
+        return firstRank - secondRank || first.laneId.localeCompare(second.laneId);
+      });
+      for (const candidate of candidates) {
+        if (cityCount >= cityTarget) break;
+        select(candidate);
       }
     }
     return stops;
+  }
+
+  /** Deterministic city-core and district targets used before random stop coverage. */
+  private busStopHubTargets(city: WorldCity): Vector2[] {
+    const xOffset = city.bounds.width * 0.24;
+    const yOffset = city.bounds.height * 0.24;
+    const targets: Vector2[] = [
+      { x: city.center.x, y: city.center.y },
+      { x: city.center.x - xOffset, y: city.center.y },
+      { x: city.center.x + xOffset, y: city.center.y },
+      { x: city.center.x, y: city.center.y - yOffset },
+      { x: city.center.x, y: city.center.y + yOffset },
+    ];
+    return city.id === 'tehran'
+      ? targets
+      : [targets[0] ?? city.center, targets[1] ?? city.center, targets[2] ?? city.center];
   }
 
   /** Create one legal outer-lane stopping point and its pedestrian platform. */
@@ -4827,11 +4896,24 @@ class CityGenerator {
       BUS_STOP_JUNCTION_CLEARANCE + 1,
       Math.min(laneLength - BUS_STOP_JUNCTION_CLEARANCE - 1, laneLength / 2),
     );
-    const approachPosition = {
-      x: from.x + ux * (48 + laneDistance) + rightX * laneOffset,
-      y: from.y + uy * (48 + laneDistance) + rightY * laneOffset,
-    };
-    const platformPosition = this.findBusStopPlatform(tiles, approachPosition, ux, uy);
+    const lanePoint = (distance: number): Vector2 => ({
+      x: from.x + ux * (48 + distance) + rightX * laneOffset,
+      y: from.y + uy * (48 + distance) + rightY * laneOffset,
+    });
+    const stopPosition = lanePoint(laneDistance);
+    const approachPosition = lanePoint(
+      Math.max(
+        BUS_STOP_JUNCTION_CLEARANCE + 1,
+        laneDistance - Math.min(BUS_STOP_APPROACH_DISTANCE, laneDistance - BUS_STOP_JUNCTION_CLEARANCE - 1),
+      ),
+    );
+    const resumePosition = lanePoint(
+      Math.min(
+        laneLength - BUS_STOP_JUNCTION_CLEARANCE - 1,
+        laneDistance + Math.min(BUS_STOP_RESUME_DISTANCE, laneLength - BUS_STOP_JUNCTION_CLEARANCE - laneDistance - 1),
+      ),
+    );
+    const platformPosition = this.findBusStopPlatform(tiles, stopPosition, ux, uy);
     if (!platformPosition || this.cityIdAtPoint(platformPosition.x, platformPosition.y) !== cityId) {
       return null;
     }
@@ -4841,7 +4923,12 @@ class CityGenerator {
     return {
       cityId,
       laneId: `lane:${from.id}>${to.id}:${outerLaneIndex}`,
+      roadNodeId: from.id,
+      resumeNodeId: to.id,
+      stopPosition,
       approachPosition,
+      resumePosition,
+      approachDirection: { x: ux, y: uy },
       laneDistance,
       laneLength,
       heading: Math.atan2(uy, ux),
@@ -6929,7 +7016,11 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
     this.lastChunkKey = '';
     const chunkX = Math.floor(map.playerStart.x / (CHUNK_TILES * TILE_SIZE));
     const chunkY = Math.floor(map.playerStart.y / (CHUNK_TILES * TILE_SIZE));
-    this.streamChunks(chunkX, chunkY, true);
+    // The player's ground must exist before PlayerController attaches, but
+    // constructing the complete 3x3 window here monopolises the first frame.
+    // Build the start chunk now and let the normal stream queue add its eight
+    // neighbours over subsequent frames.
+    this.streamChunks(chunkX, chunkY, `${chunkX},${chunkY}`);
     this.updateChunkVisibility(true);
     this.bus.emit(EventKeys.WorldReady);
   }
@@ -7493,54 +7584,88 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
   ): void {
     for (const stop of stops) {
       if (!this.pointInChunk(stop, tx0, ty0)) continue;
-      // One compact shelter object keeps the art stable under streamed chunk
-      // creation. Local coordinates let the shelter follow the curb direction.
+      // The generated platform is already validated against the sidewalk and
+      // traffic lane. This single streamed fixture keeps every physical cue in
+      // that legal footprint: road-facing curb bay, shelter, bench, route board
+      // and the blue bus sign are readable without any floating debug text.
       const fixture = scene.add.graphics();
       fixture.setPosition(stop.x, stop.y).setRotation(stop.heading);
       fixture.setDepth(DepthLayers.GroundDetail + 2);
+      fixture.setName(`bus-stop:${stop.id}`);
+      fixture.setData('transitFixture', 'bus-stop');
+      fixture.setData('busStopId', stop.id);
+      fixture.setData('cityId', stop.cityId);
+      fixture.setData('laneId', stop.laneId);
+      fixture.setData('approachPosition', { ...stop.approachPosition });
+      fixture.setData('waitingPositions', stop.waitingPositions.map((position) => ({ ...position })));
 
-      // Ground shadow and curb-side platform edge.
-      fixture.fillStyle(0x101720, 0.38);
-      fixture.fillRect(-15, 7, 31, 5);
-      fixture.fillStyle(0x5d6872, 0.85);
-      fixture.fillRect(-15, 5, 30, 2);
+      // Pavement shadow, road-side bus bay stripe and curb edge. Local +Y is
+      // the road side for the platform orientation produced by sampleBusStops.
+      fixture.fillStyle(0x111820, 0.38);
+      fixture.fillRoundedRect(-34, 11, 68, 15, 2);
+      fixture.fillStyle(0x4f6875, 0.98);
+      fixture.fillRect(-36, 22, 72, 3);
+      fixture.fillStyle(0x38bdf8, 0.92);
+      fixture.fillRect(-32, 20, 13, 2);
+      fixture.fillRect(-14, 20, 13, 2);
+      fixture.fillRect(4, 20, 13, 2);
+      fixture.fillRect(22, 20, 10, 2);
 
-      // Back panel, glass, roof and two supports form a readable pixel shelter
-      // at gameplay scale without depending on a placeholder rectangle sprite.
-      fixture.fillStyle(0x1c2f40, 1);
-      fixture.fillRect(-12, -8, 24, 14);
-      fixture.fillStyle(0x6ca7c7, 0.82);
-      fixture.fillRect(-10, -6, 20, 8);
-      fixture.fillStyle(0xc7d9e4, 0.34);
-      fixture.fillRect(-8, -5, 6, 2);
-      fixture.fillStyle(0x1b252b, 1);
-      fixture.fillRect(-14, -11, 29, 4);
+      // Full-size shelter: dark roof, glass windbreak, support posts and a
+      // warm bench. It deliberately remains behind the curb strip so buses
+      // stop beside it rather than through it.
+      fixture.fillStyle(0x101820, 0.32);
+      fixture.fillRect(-30, -18, 60, 25);
+      fixture.fillStyle(0x182733, 1);
+      fixture.fillRect(-30, -21, 60, 5);
       fixture.fillStyle(0x4a88b5, 1);
-      fixture.fillRect(-12, -10, 25, 1);
-      fixture.fillStyle(0x25313a, 1);
-      fixture.fillRect(-11, -7, 2, 17);
-      fixture.fillRect(9, -7, 2, 17);
-      fixture.fillStyle(0x7c542f, 1);
-      fixture.fillRect(-7, 3, 14, 2);
-      fixture.fillStyle(0x3b2516, 1);
-      fixture.fillRect(-6, 5, 2, 3);
-      fixture.fillRect(4, 5, 2, 3);
+      fixture.fillRect(-28, -20, 56, 1);
+      fixture.fillStyle(0x1b252b, 1);
+      fixture.fillRect(-27, -16, 54, 20);
+      fixture.fillStyle(0x5f9ec0, 0.78);
+      fixture.fillRect(-25, -14, 50, 15);
+      fixture.fillStyle(0xc7e8f4, 0.34);
+      fixture.fillRect(-22, -12, 18, 2);
+      fixture.fillRect(4, -12, 12, 2);
+      fixture.fillStyle(0x2a3841, 1);
+      fixture.fillRect(-26, -16, 3, 25);
+      fixture.fillRect(23, -16, 3, 25);
+      fixture.fillRect(-1, -15, 2, 17);
 
-      // Curb sign: blue board with a light bus glyph, visible even at a glance.
-      fixture.fillStyle(0x20282f, 1);
-      fixture.fillRect(-18, -5, 2, 18);
+      // Bench and waiting-area guide line on the pedestrian side.
+      fixture.fillStyle(0x6e4727, 1);
+      fixture.fillRect(-16, 2, 32, 4);
+      fixture.fillStyle(0x352014, 1);
+      fixture.fillRect(-13, 6, 3, 4);
+      fixture.fillRect(10, 6, 3, 4);
+      fixture.fillStyle(0xd8e6ef, 0.56);
+      fixture.fillRect(-19, 12, 38, 1);
+
+      // Route panel: a compact coloured timetable board attached to the glass.
+      fixture.fillStyle(0x15212b, 1);
+      fixture.fillRect(5, -10, 15, 8);
       fixture.fillStyle(0x38bdf8, 1);
-      fixture.fillRect(-21, -11, 8, 8);
+      fixture.fillRect(6, -9, 13, 2);
+      fixture.fillStyle(0xe6f6ff, 0.86);
+      fixture.fillRect(7, -5, 10, 1);
+      fixture.fillRect(7, -3, 7, 1);
+
+      // Curb-side pole and international-style blue bus sign. The white bus
+      // silhouette and wheel pixels remain distinguishable at native scale.
+      fixture.fillStyle(0x20282f, 1);
+      fixture.fillRect(-35, -13, 3, 37);
+      fixture.fillStyle(0x38bdf8, 1);
+      fixture.fillRect(-40, -22, 13, 13);
       fixture.lineStyle(1, 0xe6f6ff, 0.95);
-      fixture.strokeRect(-21, -11, 8, 8);
+      fixture.strokeRect(-40, -22, 13, 13);
       fixture.fillStyle(0xf6fbff, 1);
-      fixture.fillRect(-19.5, -9.5, 5, 3);
-      fixture.fillStyle(0x213545, 1);
-      fixture.fillRect(-18.5, -8.5, 1, 1);
-      fixture.fillRect(-16, -8.5, 1, 1);
+      fixture.fillRect(-37, -19, 7, 5);
+      fixture.fillStyle(0x223c4d, 1);
+      fixture.fillRect(-36, -18, 1, 2);
+      fixture.fillRect(-32, -18, 1, 2);
       fixture.fillStyle(0x101720, 1);
-      fixture.fillRect(-19, -6.5, 1, 1);
-      fixture.fillRect(-15.5, -6.5, 1, 1);
+      fixture.fillRect(-36, -13, 2, 2);
+      fixture.fillRect(-32, -13, 2, 2);
       out.push(fixture);
     }
   }
@@ -7612,7 +7737,7 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
   }
 
   /** Rebuild the active chunk set centred on the player's chunk. */
-  private streamChunks(pcx: number, pcy: number, immediate = false): void {
+  private streamChunks(pcx: number, pcy: number, initialChunkKey: string | null = null): void {
     const wanted = new Set<string>();
     for (let dy = -CHUNK_RADIUS; dy <= CHUNK_RADIUS; dy++) {
       for (let dx = -CHUNK_RADIUS; dx <= CHUNK_RADIUS; dx++) {
@@ -7654,7 +7779,11 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
       }
     }
 
-    // Spawn newly in-range chunks.
+    // Spawn newly in-range chunks. At scene entry exactly one start chunk is
+    // required for player spawning and collision setup. Keeping every other
+    // creation in the existing queue gives Phaser a render opportunity between
+    // the expensive architecture/tilemap builds.
+    let initialChunkBuilt = false;
     const newKeys = Array.from(wanted)
       .filter((key) => !this.chunks.has(key))
       .sort((first, second) => {
@@ -7668,19 +7797,21 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
     for (const key of newKeys) {
       if (!this.chunks.has(key)) {
         const detailed = this.isDetailedChunk(key, pcx, pcy);
-        operations.push({
-          run: () => {
-            if (!this.chunks.has(key)) this.chunks.set(key, this.buildChunk(key, detailed));
-          },
-        });
+        if (key === initialChunkKey) {
+          this.chunks.set(key, this.buildChunk(key, detailed));
+          initialChunkBuilt = true;
+        } else {
+          operations.push({
+            run: () => {
+              if (!this.chunks.has(key)) this.chunks.set(key, this.buildChunk(key, detailed));
+            },
+          });
+        }
       }
     }
     this.chunkQueue.length = 0;
     this.chunkQueue.push(...operations);
-    if (immediate) {
-      while (this.chunkQueue.length > 0) this.chunkQueue.shift()?.run();
-      if (operations.length > 0) this.finishChunkBatch();
-    }
+    if (initialChunkBuilt) this.finishChunkBatch();
   }
 
   private processChunkQueue(): void {

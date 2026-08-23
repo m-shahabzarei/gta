@@ -100,7 +100,8 @@ export const PLAYER = {
   RADIUS: 9,
   RESPAWN_INVULN_MS: 2200,
   INTERACT_RANGE: 44,
-  START_MONEY: 0,
+  /** Exact wallet balance owned by a newly constructed player inventory. */
+  START_MONEY: 700,
 } as const;
 
 /** Pedestrian tuning. */
@@ -222,4 +223,5 @@ export const CITY = {
 } as const;
 
 /** Whether verbose logging is enabled (driven by Vite's DEV flag). */
-export const IS_DEV = import.meta.env.DEV;
+/** Vite defines this in-game; the fallback keeps offline validation modules loadable in Node. */
+export const IS_DEV = import.meta.env?.DEV ?? false;

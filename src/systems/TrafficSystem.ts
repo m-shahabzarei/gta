@@ -24,6 +24,7 @@ import {
   type TemporaryTrafficObstacle,
   type TrafficDebugSnapshot,
   type TrafficLane,
+  type TrafficLaneStopTarget,
   type TrafficRuntimeStats,
   type TrafficSimulationDetail,
   type TrafficValidationReport,
@@ -111,6 +112,8 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
   private readonly lights: TrafficLightSprite[] = [];
   private readonly temporaryObstacles = new Map<string, TemporaryTrafficObstacle>();
   private readonly pendingDespawns = new Map<number, string>();
+  /** Persistent bus/taxi recovery requests consumed by TransportationSystem. */
+  private readonly pendingServiceRecoveries = new Map<number, string>();
   private readonly virtualTraffic = new Map<number, VirtualTrafficRecord>();
   private readonly virtualMaterializeQueue: VirtualTrafficRecord[] = [];
   private readonly perception = new TrafficPerceptionIndex();
@@ -243,6 +246,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     this.blockedDriverIds.clear();
     this.temporaryObstacles.clear();
     this.pendingDespawns.clear();
+    this.pendingServiceRecoveries.clear();
     this.virtualTraffic.clear();
     this.virtualMaterializeQueue.length = 0;
     this.perception.clear();
@@ -322,12 +326,56 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
   ): void {
     const driver = this.ensureDriver(vehicle, targetProvider, stopRange);
     if (!driver) return;
+    driver.configureLaneStopTarget(null);
     driver.configure(targetProvider, stopRange);
     driver.setStopped(stopped);
   }
 
+  /**
+   * Route a service to a named directed lane and exact curb arc. Unlike the
+   * generic target API, this never infers a goal lane from nearby coordinates.
+   */
+  public configureDriverAtLaneStop(
+    vehicle: Vehicle,
+    targetProvider: (() => Vector2 | null) | null,
+    target: TrafficLaneStopTarget,
+    stopRange: number,
+    stopped = false,
+    plannedLaneIds: readonly string[] | null = null,
+  ): boolean {
+    const driver = this.ensureDriver(vehicle, targetProvider, stopRange);
+    if (!driver) return false;
+    driver.configure(targetProvider, stopRange);
+    if (!driver.configureLaneStopTarget(target)) return false;
+    if (!driver.configurePlannedRoute(plannedLaneIds)) return false;
+    driver.setStopped(stopped);
+    return true;
+  }
+
   public setDriverStopped(vehicle: Vehicle, stopped: boolean): void {
     this.drivers.get(vehicle.id)?.setStopped(stopped);
+  }
+
+  /** Consume one generic-driver failure that must be handled by a service state machine. */
+  public consumeServiceRecovery(vehicleId: number): string | null {
+    const reason = this.pendingServiceRecoveries.get(vehicleId) ?? null;
+    if (reason !== null) this.pendingServiceRecoveries.delete(vehicleId);
+    return reason;
+  }
+
+  /** Release a held service driver so its owner can install a fresh lane target/path. */
+  public resumeServiceDriver(vehicle: Vehicle): void {
+    this.drivers.get(vehicle.id)?.resumeFromServiceRecovery();
+  }
+
+  /**
+   * A scheduled service may request a safe recovery lane change after a
+   * confirmed stationary vehicle blocks its current leg. The driver retains
+   * normal collision and lane-clearance validation; this only changes the
+   * existing recovery policy from "wait forever" to a legal alternate lane.
+   */
+  public requestServiceRecoveryLaneChange(vehicle: Vehicle): boolean {
+    return this.drivers.get(vehicle.id)?.requestServiceRecoveryLaneChange() ?? false;
   }
 
   public driverFor(vehicle: Vehicle): TrafficDriver | null {
@@ -339,6 +387,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     this.drivers.delete(vehicleId);
     this.blockedDriverIds.delete(vehicleId);
     this.pendingDespawns.delete(vehicleId);
+    this.pendingServiceRecoveries.delete(vehicleId);
     this.perception.remove(vehicleId);
     this.scheduler.remove(vehicleId);
   }
@@ -368,6 +417,24 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     const distance = clampSpawnDistance(nearest, projection.distance);
     const pose = sampleSpline(nearest.spline, distance);
     const spawn: SpawnPose = { lane: nearest, distance, point: pose.point, heading: pose.heading };
+    if (!this.isSpawnClear(spawn, null)) return null;
+    return this.spawnServiceVehicleAtPose(kind, spawn, targetProvider, stopRange);
+  }
+
+  /** Spawn a service vehicle directly on its validated directional curb lane. */
+  public spawnServiceVehicleAtLaneStop(
+    kind: VehicleKind,
+    target: TrafficLaneStopTarget,
+    targetProvider: (() => Vector2 | null) | null,
+    stopRange = 56,
+  ): Vehicle | null {
+    const network = this.network;
+    if (!network) return null;
+    const lane = network.lane(target.laneId);
+    if (!lane || lane.kind !== 'travel') return null;
+    const distance = clampSpawnDistance(lane, target.laneDistance);
+    const pose = sampleSpline(lane.spline, distance);
+    const spawn: SpawnPose = { lane, distance, point: pose.point, heading: pose.heading };
     if (!this.isSpawnClear(spawn, null)) return null;
     return this.spawnServiceVehicleAtPose(kind, spawn, targetProvider, stopRange);
   }
@@ -485,6 +552,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       this.world.map.highways.flatMap((highway) =>
         highway.serviceAreas.flatMap((area) => area.parkingSpaces),
       ),
+      this.world.map.busStops,
     );
     if (
       !this.network.positionsAreMutuallyReachable(this.world.map.cities.map((city) => city.center))
@@ -717,7 +785,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
 
   private processPendingDespawns(): void {
     let processed = 0;
-    for (const vehicleId of this.pendingDespawns.keys()) {
+    for (const [vehicleId, reason] of this.pendingDespawns) {
       if (processed >= ENGINE_LIMITS.MAX_TRAFFIC_DESPAWNS_PER_FRAME) {
         EngineDiagnostics.recordLimitExceeded(
           'MAX_TRAFFIC_DESPAWNS_PER_FRAME',
@@ -735,7 +803,12 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
         vehicle.sprite.getData('policeResponseActive') === true ||
         vehicle.sprite.getData('persistentTransitService') === true
       ) {
-        this.drivers.get(vehicleId)?.forceReplan();
+        if (vehicle.sprite.getData('persistentTransitService') === true) {
+          this.pendingServiceRecoveries.set(vehicleId, reason ?? 'generic traffic recovery requested despawn');
+          this.drivers.get(vehicleId)?.holdForServiceRecovery();
+        } else {
+          this.drivers.get(vehicleId)?.forceReplan();
+        }
         continue;
       }
       this.trafficCars.delete(vehicle);

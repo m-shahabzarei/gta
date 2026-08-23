@@ -19,6 +19,7 @@ import type {
   TrafficDriverState,
   TrafficIntention,
   TrafficLane,
+  TrafficLaneStopTarget,
   TrafficObstacleKind,
   TrafficPersonality,
 } from './TrafficTypes';
@@ -79,12 +80,21 @@ interface LaneChangeManeuver {
 
 interface PathSample {
   readonly point: Vector2;
+  readonly tangent: Vector2;
   readonly distance: number;
 }
 
 interface MutablePathSample {
   point: Vector2;
+  tangent: Vector2;
   distance: number;
+}
+
+/** An actual rectangular vehicle body, measured in world-space road coordinates. */
+interface VehicleFootprint {
+  readonly heading: number;
+  readonly width: number;
+  readonly length: number;
 }
 
 interface MutableTrafficAgentSnapshot {
@@ -118,6 +128,16 @@ const ROUTE_REPLAN_COOLDOWN_SECONDS = 1.2;
 const LANE_CHANGE_LENGTH = 105;
 const STRATEGIC_UPDATE_MS = 1000;
 const EXPLICIT_DESTINATION_UPDATE_MS = 250;
+/** Keep a visible physical gap without inflating a car's length into lateral radius. */
+const VEHICLE_SWEEP_CLEARANCE = 4;
+/**
+ * Distance-spline arc lengths are accumulated independently by route planning,
+ * braking, and the fixed-step integrator.  Treat their final sub-pixel rounding
+ * difference as zero so a service cannot settle a fraction of a pixel before
+ * its legal curb target forever.  This is deliberately far smaller than the
+ * caller's stop range; it is numerical precision, not a proximity trigger.
+ */
+const EXPLICIT_DESTINATION_DISTANCE_EPSILON = 0.75;
 
 /**
  * One autonomous driver's complete decision state. Its pose is constrained to
@@ -133,8 +153,12 @@ export class TrafficDriver {
   private route: TrafficLane[] = [];
   private routeIndex = 0;
   private routeRequiresContinuation = false;
+  /** A validated service segment supplied by route authoring; never rebuilt per frame. */
+  private plannedRouteActive = false;
   private laneDistance = 0;
   private destinationValue: TrafficDestination | null = null;
+  /** Optional exact curb target. Generic services continue to use nearest-lane destinations. */
+  private laneStopTarget: TrafficLaneStopTarget | null = null;
   private desiredSpeedValue = 0;
   private speedValue = 0;
   private accelerationValue = 0;
@@ -267,6 +291,8 @@ export class TrafficDriver {
       laneId: this.currentLane()?.id ?? null,
       targetLaneId: this.laneChange?.toLane.id ?? this.nextLane()?.id ?? null,
       destination: this.destinationValue,
+      laneDistance: this.laneDistance,
+      distanceToDestination: this.distanceToExplicitDestination(),
       currentSpeed: this.speedValue,
       desiredSpeed: this.desiredSpeedValue,
       steeringAngle: this.steeringAngleValue,
@@ -319,6 +345,160 @@ export class TrafficDriver {
     }
   }
 
+  /**
+   * Bind a service destination to an exact directed lane arc. This is used by
+   * curb services such as buses; it deliberately bypasses nearest-lane lookup
+   * so an opposite-direction lane cannot satisfy the target.
+   */
+  public configureLaneStopTarget(target: TrafficLaneStopTarget | null): boolean {
+    if (target === null) {
+      if (this.laneStopTarget !== null) {
+        this.laneStopTarget = null;
+        this.arrivedValue = false;
+        this.forceReplan();
+      }
+      return true;
+    }
+    const lane = this.context.network.lane(target.laneId);
+    if (!lane || lane.kind !== 'travel') return false;
+    const laneDistance = clamp(target.laneDistance, 0, lane.spline.length);
+    const pose = this.context.network.pointAt(lane, laneDistance);
+    const changed =
+      this.laneStopTarget?.laneId !== lane.id ||
+      Math.abs((this.laneStopTarget?.laneDistance ?? -1) - laneDistance) > 0.5;
+    this.laneStopTarget = {
+      laneId: lane.id,
+      laneDistance,
+      position: { x: pose.point.x, y: pose.point.y },
+      heading: pose.heading,
+    };
+    if (changed) {
+      this.lastExplicitTargetPosition = null;
+      this.lastExplicitTargetLaneId = null;
+      this.arrivedValue = false;
+      this.forceReplan();
+    }
+    return true;
+  }
+
+  /**
+   * Follow a prevalidated directed lane segment exactly. This is used by buses
+   * after route authoring has cached the ordered stop-to-stop path, avoiding
+   * partial live A* choices that can drift onto a valid but unrelated loop.
+   */
+  public configurePlannedRoute(laneIds: readonly string[] | null): boolean {
+    if (laneIds === null || laneIds.length === 0) {
+      this.plannedRouteActive = false;
+      return true;
+    }
+    const lanes: TrafficLane[] = [];
+    for (const laneId of laneIds) {
+      const lane = this.context.network.lane(laneId);
+      if (!lane) return false;
+      const previous = lanes[lanes.length - 1];
+      if (previous && !previous.connectionIds.includes(lane.id)) return false;
+      lanes.push(lane);
+    }
+    const current = this.currentLane();
+    const currentIndex = current ? lanes.findIndex((lane) => lane.id === current.id) : -1;
+    if (currentIndex < 0) return false;
+    this.route = lanes;
+    this.routeIndex = currentIndex;
+    this.routeRequiresContinuation = false;
+    this.plannedRouteActive = true;
+    this.strategicDirty = false;
+    this.nextStrategicUpdateAt = 0;
+    this.arrivedValue = false;
+    return true;
+  }
+
+  /**
+   * Hold a persistent service vehicle at its current legal lane after the
+   * generic traffic recovery system asks to despawn it. The service manager
+   * owns the next action (recalculate, alternate approach, then bounded skip)
+   * because deleting or blindly resetting a scheduled bus loses route state.
+   */
+  public holdForServiceRecovery(): void {
+    this.externallyStopped = true;
+    this.arrivedValue = false;
+    this.speedValue = 0;
+    this.desiredSpeedValue = 0;
+    this.accelerationValue = 0;
+    this.recoveryAttempt = 0;
+    this.recoveryPhase = 'none';
+    this.recoveryReason = null;
+    this.recoveryPhaseSeconds = 0;
+    this.recoveryTotalSeconds = 0;
+    this.blockedSeconds = 0;
+    this.stationarySeconds = 0;
+    this.context.intersections.releaseVehicle(this.vehicle.id);
+    this.reservationId = null;
+    this.stateValue = 'Stopping';
+    this.intentionValue = 'Stop';
+  }
+
+  /** Clear a held service recovery before transit assigns a fresh exact target. */
+  public resumeFromServiceRecovery(): void {
+    this.externallyStopped = false;
+    this.recoveryAttempt = 0;
+    this.recoveryPhase = 'none';
+    this.recoveryReason = null;
+    this.recoveryPhaseSeconds = 0;
+    this.recoveryTotalSeconds = 0;
+    this.blockedSeconds = 0;
+    this.stationarySeconds = 0;
+    this.forceReplan();
+  }
+
+  /** Try the normal validated adjacent-lane manoeuvre for a blocked scheduled service. */
+  public requestServiceRecoveryLaneChange(): boolean {
+    if (this.laneChange || this.externallyStopped) return false;
+    const lane = this.currentLane();
+    if (!lane || lane.kind !== 'travel') return false;
+    const clearPerception: TrafficPerceptionFrame = {
+      managedVehicleIds: new Set<number>([this.vehicle.id]),
+      temporaryObstacles: [],
+      forEachNearbyAgent: () => undefined,
+      forEachAgentOnLane: (laneId, visitor) => {
+        this.context.entities?.forEachNearby(
+          this.currentPose.x,
+          this.currentPose.y,
+          ROUTE_LOOK_AHEAD,
+          (entity) => {
+            const candidate = entity as unknown as Vehicle;
+            if (
+              !candidate.sprite?.active ||
+              candidate.id === this.vehicle.id ||
+              candidate.isDestroyed ||
+              !candidate.movement
+            ) {
+              return;
+            }
+            const projectedLane = this.context.network.nearestLane(
+              candidate.position,
+              candidate.movement.heading,
+              true,
+            );
+            if (!projectedLane || projectedLane.id !== laneId) return;
+            visitor({
+              vehicleId: candidate.id,
+              laneId: projectedLane.id,
+              laneDistance: this.context.network.projectPoint(candidate.position, projectedLane).distance,
+              speed: Math.max(0, candidate.movement.speed),
+              length: Math.max(candidate.def.width, candidate.def.height),
+              position: candidate.position,
+              heading: candidate.movement.heading,
+              state: 'Following Lane',
+              emergency: candidate.def.isEmergency,
+            });
+          },
+          EntityCategory.Vehicle,
+        );
+      },
+    };
+    return this.tryBeginLaneChange(clearPerception);
+  }
+
   public setStopped(stopped: boolean): void {
     this.externallyStopped = stopped;
     if (stopped) this.intentionValue = 'Stop';
@@ -335,6 +515,7 @@ export class TrafficDriver {
     this.route = current ? [current] : [];
     this.routeIndex = 0;
     this.routeRequiresContinuation = false;
+    this.plannedRouteActive = false;
     this.context.intersections.releaseVehicle(this.vehicle.id);
     this.reservationId = null;
     this.replanCooldownSeconds = ROUTE_REPLAN_COOLDOWN_SECONDS;
@@ -470,7 +651,12 @@ export class TrafficDriver {
   }
 
   public render(interpolation: number): void {
-    if (!this.vehicle.sprite.active || !this.vehicle.sprite.visible) return;
+    if (
+      !this.vehicle.sprite.active ||
+      (!this.vehicle.sprite.visible && this.vehicle.sprite.getData('persistentTransitService') !== true)
+    ) {
+      return;
+    }
     const amount = clamp(interpolation, 0, 1);
     const x = lerp(this.previousPose.x, this.currentPose.x, amount);
     const y = lerp(this.previousPose.y, this.currentPose.y, amount);
@@ -492,7 +678,8 @@ export class TrafficDriver {
   }
 
   private refreshDestination(): void {
-    const target = this.targetProvider?.() ?? null;
+    const laneStop = this.laneStopTarget;
+    const target = laneStop?.position ?? this.targetProvider?.() ?? null;
     if (!target) {
       if (!this.destinationValue || this.destinationValue.purpose !== 'ambient') {
         this.destinationValue = null;
@@ -507,16 +694,26 @@ export class TrafficDriver {
       this.destinationValue &&
       this.destinationValue.purpose !== 'ambient' &&
       Math.abs(previousTarget.x - target.x) <= 24 &&
-      Math.abs(previousTarget.y - target.y) <= 24
+      Math.abs(previousTarget.y - target.y) <= 24 &&
+      (!laneStop ||
+        (this.destinationValue.laneId === laneStop.laneId &&
+          Math.abs((this.destinationValue.laneDistance ?? -1) - laneStop.laneDistance) <= 0.5))
     ) {
       return;
     }
-    const goal = this.context.network.nearestLane(target, undefined, true);
-    if (!goal) return;
+    const goal = laneStop
+      ? this.context.network.lane(laneStop.laneId)
+      : this.context.network.nearestLane(target, undefined, true);
+    if (goal?.kind !== 'travel') return;
+    const position = laneStop
+      ? this.context.network.pointAt(goal, laneStop.laneDistance).point
+      : { x: target.x, y: target.y };
     this.destinationValue = {
       laneId: goal.id,
-      position: { ...target },
+      position,
       purpose: this.vehicle.def.isEmergency ? 'emergency' : 'service',
+      laneDistance: laneStop?.laneDistance,
+      heading: laneStop?.heading,
     };
     if (
       this.lastExplicitTargetLaneId !== null &&
@@ -569,12 +766,33 @@ export class TrafficDriver {
         purpose: 'ambient',
       };
     }
-    if (
-      this.route.length > 1 &&
-      (this.routeRequiresContinuation ||
-        this.route[this.route.length - 1]?.id === this.destinationValue.laneId)
-    ) {
-      return true;
+    if (this.plannedRouteActive) {
+      const finalLane = this.route[this.route.length - 1];
+      if (
+        this.route[this.routeIndex]?.id === current.id &&
+        finalLane?.id === this.destinationValue.laneId
+      ) {
+        return true;
+      }
+      // A recovery manoeuvre or external lane change moved the vehicle off its
+      // authored segment. Fall back to normal bounded replanning; the transit
+      // state machine will account for the recovery instead of pretending the
+      // bus is still on the cached path.
+      this.plannedRouteActive = false;
+    }
+    if (this.route.length > 1) {
+      const routeEndsAtDestination =
+        this.route[this.route.length - 1]?.id === this.destinationValue.laneId;
+      if (routeEndsAtDestination) return true;
+
+      // A bounded A* slice may end at a connector. That connector cannot be
+      // entered safely without its following travel lane: it has no outgoing
+      // lane for downstream-clearance/reservation validation. Continue the
+      // route while there is still a travel-plus-connector buffer instead of
+      // retaining the incomplete tail until the lead vehicle freezes at the
+      // stop line and blocks every vehicle behind it.
+      const remainingLanes = this.route.length - this.routeIndex - 1;
+      if (this.routeRequiresContinuation && remainingLanes > 2) return true;
     }
     const route = this.context.network.findRoute(current.id, this.destinationValue.laneId);
     if (!route || route.length === 0) return false;
@@ -601,7 +819,8 @@ export class TrafficDriver {
     const outgoing = this.route[this.routeIndex + 2];
     if (!outgoing) return 0;
     const existing = this.context.intersections.hasReservation(this.vehicle.id);
-    if (existing?.connectorLaneId === next.id) {
+    const approachClear = this.approachIsClear(lane, distanceToStopLine, perception);
+    if (existing?.connectorLaneId === next.id && approachClear) {
       this.reservationId = existing.id;
       return next.speedLimit;
     }
@@ -618,6 +837,7 @@ export class TrafficDriver {
       priority: this.personality.intersectionPriority + Math.min(4, this.recoveryAttempt),
       emergency: this.vehicle.def.isEmergency,
       recoveryAttempt: this.recoveryAttempt,
+      approachClear,
       downstreamClear,
     });
     if (decision.granted && decision.reservation) {
@@ -628,6 +848,29 @@ export class TrafficDriver {
     this.stateValue = decision.reason === 'exit-blocked' ? 'Waiting' : 'Yielding';
     this.intentionValue = decision.reason === 'signal' ? 'Stop' : 'Yield';
     return Math.sqrt(Math.max(0, 2 * this.personality.comfortableBraking * distanceToStopLine));
+  }
+
+  /**
+   * Never reserve an intersection through the physical body of a queued
+   * vehicle on this same approach. The reservation controller cannot infer
+   * this from connector conflicts alone because only the lead vehicle is at
+   * the stop line; permitting a follower would produce a real queue deadlock.
+   */
+  private approachIsClear(
+    lane: TrafficLane,
+    distanceToStopLine: number,
+    perception: TrafficPerceptionFrame,
+  ): boolean {
+    const frontDistance = this.laneDistance + distanceToStopLine;
+    const requiredGap = Math.max(this.vehicle.def.width, this.vehicle.def.height) * 0.5 + 8;
+    let clear = true;
+    perception.forEachAgentOnLane(lane.id, (agent) => {
+      if (agent.vehicleId === this.vehicle.id || agent.laneId !== lane.id) return;
+      if (agent.laneDistance > this.laneDistance + 1 && agent.laneDistance < frontDistance + requiredGap) {
+        clear = false;
+      }
+    });
+    return clear;
   }
 
   private downstreamIsClear(outgoing: TrafficLane, perception: TrafficPerceptionFrame): boolean {
@@ -747,6 +990,7 @@ export class TrafficDriver {
       : Math.min(
           this.vehicle.movement.effectiveMaxSpeed * 0.72,
           lane.speedLimit * this.personality.preferredSpeedFactor * this.speedPreference * 0.76,
+          this.destinationSpeedLimit(lane),
         );
     this.desiredSpeedValue = targetSpeed;
     this.integrateSpeed(targetSpeed, deltaSeconds);
@@ -801,6 +1045,7 @@ export class TrafficDriver {
       }
       const lane = this.currentLane();
       if (!lane) return;
+      if (this.stopAtExplicitDestinationIfCrossed(lane, remaining)) return;
       const available = lane.spline.length - this.laneDistance;
       if (!Number.isFinite(available) || !Number.isFinite(lane.spline.length)) {
         this.abortRouteAdvance(`invalid virtual lane ${lane.id}`);
@@ -813,12 +1058,7 @@ export class TrafficDriver {
       const next = this.nextLane();
       if (!next) {
         this.laneDistance = lane.spline.length;
-        this.destinationValue = null;
-        this.route = [lane];
-        this.routeIndex = 0;
-        this.routeRequiresContinuation = false;
-        this.strategicDirty = true;
-        this.nextStrategicUpdateAt = 0;
+        this.handleDestinationReached();
         return;
       }
       remaining -= Math.max(0, available);
@@ -844,6 +1084,7 @@ export class TrafficDriver {
       }
       const lane = this.currentLane();
       if (!lane) return;
+      if (this.stopAtExplicitDestinationIfCrossed(lane, remaining)) return;
       const available = lane.spline.length - this.laneDistance;
       if (!Number.isFinite(available) || !Number.isFinite(lane.spline.length)) {
         this.abortRouteAdvance(`invalid lane ${lane.id}`);
@@ -915,14 +1156,15 @@ export class TrafficDriver {
       this.nextStrategicUpdateAt = 0;
       return;
     }
+    if (destination.laneDistance !== undefined) {
+      if (this.reachedExplicitDestination()) this.markExplicitDestinationArrived();
+      else this.forceReplan();
+      return;
+    }
     const dx = this.currentPose.x - destination.position.x;
     const dy = this.currentPose.y - destination.position.y;
     if (Math.hypot(dx, dy) <= this.stopRange + 80) {
-      this.arrivedValue = true;
-      this.stateValue = destination.purpose === 'parking' ? 'Parking' : 'Stopping';
-      this.intentionValue = destination.purpose === 'parking' ? 'Park' : 'Stop';
-      this.desiredSpeedValue = 0;
-      this.speedValue = 0;
+      this.markExplicitDestinationArrived();
     } else {
       this.forceReplan();
     }
@@ -948,10 +1190,13 @@ export class TrafficDriver {
           result[count] ??
           (result[count] = {
             point: { x: pose.point.x, y: pose.point.y },
+            tangent: { x: pose.tangent.x, y: pose.tangent.y },
             distance: relative,
           });
         sample.point.x = pose.point.x;
         sample.point.y = pose.point.y;
+        sample.tangent.x = pose.tangent.x;
+        sample.tangent.y = pose.tangent.y;
         sample.distance = relative;
         count += 1;
       }
@@ -1045,6 +1290,35 @@ export class TrafficDriver {
       if (!closest || obstacle.distance < closest.distance) closest = obstacle;
     };
 
+    const inspectVehicleFootprint = (
+      candidate: Vehicle,
+      kind: TrafficObstacleKind,
+      otherSpeed: number,
+    ): void => {
+      const contactDistance = this.projectFootprintOntoPredictedPath(
+        candidate.position,
+        {
+          heading: candidate.movement.heading,
+          width: candidate.def.width,
+          length: candidate.def.height,
+        },
+        path,
+      );
+      // A parked vehicle must remain an obstacle when it genuinely occupies
+      // the lane, but its full length must not be treated as a circular lateral
+      // radius while it is correctly parked beside that lane.
+      if (contactDistance === null) return;
+      const obstacle = this.makeObstacle(
+        kind,
+        candidate.id,
+        candidate.position,
+        contactDistance,
+        this.speedValue - otherSpeed,
+        otherSpeed,
+      );
+      if (!closest || obstacle.distance < closest.distance) closest = obstacle;
+    };
+
     this.context.entities?.forEachNearby(
       this.currentPose.x,
       this.currentPose.y,
@@ -1065,13 +1339,7 @@ export class TrafficDriver {
             : candidate.movement?.speed < 2
               ? 'stopped-traffic'
               : 'traffic';
-        inspectWorldObject(
-          candidate.id,
-          candidate.position,
-          Math.max(candidate.def?.width ?? 14, candidate.def?.height ?? 28) * 0.55,
-          kind,
-          Math.max(0, candidate.movement?.speed ?? 0),
-        );
+        inspectVehicleFootprint(candidate, kind, Math.max(0, candidate.movement?.speed ?? 0));
       },
       EntityCategory.Vehicle,
     );
@@ -1148,6 +1416,52 @@ export class TrafficDriver {
       if (!closest || lateral < closest.lateral) closest = { distance: sample.distance, lateral };
     }
     return closest;
+  }
+
+  /**
+   * Find the first contact between a rectangular vehicle body and this
+   * driver's swept lane corridor. Unlike the old circular approximation, a
+   * long parked sedan clears the bus if its actual width stays outside the
+   * corridor; a diagonally parked or lane-blocking sedan still produces a
+   * finite stopping gap.
+   */
+  private projectFootprintOntoPredictedPath(
+    position: Vector2,
+    footprint: VehicleFootprint,
+    path: readonly PathSample[],
+  ): number | null {
+    const vehicleHalfWidth = this.vehicle.def.width * 0.5;
+    const vehicleHalfLength = this.vehicle.def.height * 0.5;
+    let closestContact = Infinity;
+    for (const sample of path) {
+      const tangent = sample.tangent;
+      const normal = { x: -tangent.y, y: tangent.x };
+      const dx = position.x - sample.point.x;
+      const dy = position.y - sample.point.y;
+      const longitudinal = dx * tangent.x + dy * tangent.y;
+      const lateral = Math.abs(dx * normal.x + dy * normal.y);
+      const footprintHalfWidth = this.footprintHalfExtent(footprint, normal);
+      if (lateral > vehicleHalfWidth + footprintHalfWidth + VEHICLE_SWEEP_CLEARANCE) {
+        continue;
+      }
+      const footprintHalfLength = this.footprintHalfExtent(footprint, tangent);
+      const nearestContact =
+        sample.distance + longitudinal - footprintHalfLength - vehicleHalfLength;
+      const furthestContact =
+        sample.distance + longitudinal + footprintHalfLength + vehicleHalfLength;
+      if (furthestContact < 0) continue;
+      closestContact = Math.min(closestContact, Math.max(0.5, nearestContact));
+    }
+    return Number.isFinite(closestContact) ? closestContact : null;
+  }
+
+  private footprintHalfExtent(footprint: VehicleFootprint, axis: Vector2): number {
+    const forward = { x: Math.cos(footprint.heading), y: Math.sin(footprint.heading) };
+    const right = { x: -forward.y, y: forward.x };
+    return (
+      Math.abs(forward.x * axis.x + forward.y * axis.y) * footprint.length * 0.5 +
+      Math.abs(right.x * axis.x + right.y * axis.y) * footprint.width * 0.5
+    );
   }
 
   private curvatureSpeedLimit(lane: TrafficLane): number {
@@ -1331,6 +1645,7 @@ export class TrafficDriver {
     perception: TrafficPerceptionFrame,
   ): void {
     if (
+      this.plannedRouteActive ||
       !this.isMainHighwayLane(lane) ||
       lane.kind !== 'travel' ||
       this.laneChange ||
@@ -1404,6 +1719,7 @@ export class TrafficDriver {
     this.route = [maneuver.toLane];
     this.routeIndex = 0;
     this.routeRequiresContinuation = false;
+    this.plannedRouteActive = false;
     this.laneDistance = clamp(
       maneuver.startDistance + maneuver.travelled,
       0,
@@ -1486,12 +1802,76 @@ export class TrafficDriver {
 
   private destinationSpeedLimit(lane: TrafficLane): number {
     const destination = this.destinationValue;
-    if (!destination || destination.purpose === 'ambient' || destination.laneId !== lane.id) {
-      return Infinity;
-    }
-    const targetDistance = this.context.network.projectPoint(destination.position, lane).distance;
-    const remaining = targetDistance - this.laneDistance - this.stopRange * 0.35;
+    if (!destination || destination.purpose === 'ambient') return Infinity;
+    const distance = this.distanceToExplicitDestination(lane);
+    if (distance === null) return Infinity;
+    const remaining = distance - this.destinationArrivalWindow();
     return Math.sqrt(Math.max(0, 2 * this.personality.comfortableBraking * remaining));
+  }
+
+  /** Remaining legal route distance to the exact service target, or null if it is not on this route. */
+  private distanceToExplicitDestination(startLane: TrafficLane | null = this.currentLane()): number | null {
+    const destination = this.destinationValue;
+    const current = startLane;
+    if (!destination || destination.purpose === 'ambient' || !current) return null;
+    const targetDistance = this.destinationLaneDistance(destination, current);
+    if (destination.laneId === current.id) return targetDistance - this.laneDistance;
+
+    let distance = Math.max(0, current.spline.length - this.laneDistance);
+    for (let index = this.routeIndex + 1; index < this.route.length; index += 1) {
+      const lane = this.route[index];
+      if (!lane) continue;
+      if (lane.id === destination.laneId) {
+        return distance + this.destinationLaneDistance(destination, lane);
+      }
+      distance += lane.spline.length;
+    }
+    return null;
+  }
+
+  private destinationLaneDistance(destination: TrafficDestination, lane: TrafficLane): number {
+    return clamp(
+      destination.laneDistance ?? this.context.network.projectPoint(destination.position, lane).distance,
+      0,
+      lane.spline.length,
+    );
+  }
+
+  private destinationArrivalWindow(): number {
+    return Math.max(1, this.stopRange * 0.35) + EXPLICIT_DESTINATION_DISTANCE_EPSILON;
+  }
+
+  /** Clamp a coarse or virtual update at a valid curb target instead of allowing it to pass the stop. */
+  private stopAtExplicitDestinationIfCrossed(lane: TrafficLane, requestedDistance: number): boolean {
+    const destination = this.destinationValue;
+    if (!destination || destination.purpose === 'ambient' || destination.laneId !== lane.id) {
+      return false;
+    }
+    const targetDistance = this.destinationLaneDistance(destination, lane);
+    const stoppingDistance = clamp(
+      targetDistance - this.destinationArrivalWindow(),
+      0,
+      lane.spline.length,
+    );
+    const remaining = stoppingDistance - this.laneDistance;
+    // If a malformed/old route has already travelled beyond the curb, let the
+    // normal recovery path replan instead of falsely declaring an arrival.
+    if (remaining < -this.destinationArrivalWindow()) return false;
+    if (remaining > requestedDistance) return false;
+    this.laneDistance = stoppingDistance;
+    this.markExplicitDestinationArrived();
+    return true;
+  }
+
+  private markExplicitDestinationArrived(): void {
+    const destination = this.destinationValue;
+    if (!destination) return;
+    this.arrivedValue = true;
+    this.stateValue = destination.purpose === 'parking' ? 'Parking' : 'Stopping';
+    this.intentionValue = destination.purpose === 'parking' ? 'Park' : 'Stop';
+    this.desiredSpeedValue = 0;
+    this.speedValue = 0;
+    this.accelerationValue = 0;
   }
 
   private routeTransitionSpeedLimit(lane: TrafficLane): number {
@@ -1524,8 +1904,17 @@ export class TrafficDriver {
     ) {
       return false;
     }
-    const targetDistance = this.context.network.projectPoint(destination.position, lane).distance;
-    return targetDistance - this.laneDistance <= this.stopRange * 0.35 && this.speedValue < 3;
+    const remaining = this.destinationLaneDistance(destination, lane) - this.laneDistance;
+    // Braking uses a small arc-length buffer so the body settles before the
+    // exact curb point. Arrival, however, is the configured service stopping
+    // radius: a low-speed vehicle on the named directional lane has reached
+    // its legal stop even when fixed-step braking leaves a few pixels before
+    // the ideal arc. TransportationSystem performs the final route, lane,
+    // heading, and curb-radius validation before it opens boarding.
+    const tolerance = Math.max(this.stopRange, this.destinationArrivalWindow());
+    const headingAligned =
+      destination.heading === undefined || Math.abs(wrapAngle(this.currentPose.heading - destination.heading)) <= 0.35;
+    return remaining <= tolerance && remaining >= -tolerance * 0.5 && this.speedValue < 3 && headingAligned;
   }
 
   private intentionForTurn(turn: TrafficLane['turn']): TrafficIntention {

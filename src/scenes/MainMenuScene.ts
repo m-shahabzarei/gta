@@ -44,6 +44,8 @@ export class MainMenuScene extends Phaser.Scene {
 
   /** Currently displayed transient status label, if any. */
   private transient: Label | null = null;
+  /** Prevent a second input event from starting the gameplay scene again mid-transition. */
+  private isStartingGame = false;
   private viewportWidth = GAME_WIDTH;
   private viewportHeight = GAME_HEIGHT;
   private mobile = false;
@@ -58,6 +60,7 @@ export class MainMenuScene extends Phaser.Scene {
    * the scene becomes active.
    */
   public create(): void {
+    this.isStartingGame = false;
     const platform = ServiceLocator.tryResolve<MobilePlatform>(ServiceKeys.Platform);
     this.mobile = platform?.isMobile ?? false;
     if (platform?.isMobile) {
@@ -142,6 +145,8 @@ export class MainMenuScene extends Phaser.Scene {
 
   /** Start a brand-new game and enter the world scene. */
   private onNewGame(): void {
+    if (this.isStartingGame) return;
+    this.isStartingGame = true;
     this.playConfirm();
     const game = ServiceLocator.resolve<GameManager>(ServiceKeys.Game);
     game.startNewGame();

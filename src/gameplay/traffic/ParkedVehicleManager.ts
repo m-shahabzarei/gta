@@ -12,16 +12,20 @@ const STREAM_INTERVAL_MS = 520;
 const MIN_PLAYER_DISTANCE = 380;
 const MAX_PLAYER_DISTANCE = 1080;
 const DESPAWN_DISTANCE = 1480;
+/** Any displacement beyond sub-pixel physics rounding invalidates a static bay. */
+const MAX_PARKED_POSITION_DRIFT = 1;
 
 interface ParkedRecord {
   readonly vehicle: Vehicle;
   readonly space: ParkingSpace;
 }
 
-/** Owns curb spaces and all ambient parked-vehicle lifecycle decisions. */
+/** Owns legal parking bays and all ambient parked-vehicle lifecycle decisions. */
 export class ParkedVehicleManager {
   private readonly records = new Map<number, ParkedRecord>();
   private readonly occupiedSpaceIds = new Set<string>();
+  /** Static bay geometry is cached so streaming never rescans lane geometry every frame. */
+  private readonly eligibleKindsBySpaceId = new Map<string, readonly VehicleKind[]>();
   private elapsedMs = 0;
 
   constructor(
@@ -36,15 +40,20 @@ export class ParkedVehicleManager {
   }
 
   public update(player: Vector2 | null, deltaMs: number): void {
-    this.prune(player);
     this.elapsedMs += deltaMs;
-    if (!player || this.elapsedMs < STREAM_INTERVAL_MS || this.records.size >= TARGET_PARKED) {
-      return;
-    }
+    if (this.elapsedMs < STREAM_INTERVAL_MS) return;
     this.elapsedMs = 0;
+    // There are at most eighteen parked props. Auditing only at the existing
+    // streaming cadence keeps this exact directed-lane geometry check out of
+    // the per-frame traffic hot path.
+    this.prune(player);
+    if (!player || this.records.size >= TARGET_PARKED) return;
     const choices = this.network
       .parkingSpacesNear(player, MIN_PLAYER_DISTANCE, MAX_PLAYER_DISTANCE)
-      .filter((space) => !this.occupiedSpaceIds.has(space.id));
+      .filter(
+        (space) =>
+          !this.occupiedSpaceIds.has(space.id) && this.eligibleKindsForSpace(space).length > 0,
+      );
     for (let attempt = 0; attempt < Math.min(16, choices.length); attempt++) {
       const space = choices[Math.floor(this.random.next() * choices.length)];
       if (!space || !this.isLegalAndClear(space)) continue;
@@ -56,11 +65,12 @@ export class ParkedVehicleManager {
   public destroy(): void {
     this.records.clear();
     this.occupiedSpaceIds.clear();
+    this.eligibleKindsBySpaceId.clear();
     this.elapsedMs = 0;
   }
 
   private spawn(space: ParkingSpace): void {
-    const kind = this.random.pick(CIVILIAN_VEHICLE_KINDS) as VehicleKind | undefined;
+    const kind = this.random.pick(this.eligibleKindsForSpace(space));
     if (!kind) return;
     const definition = VEHICLES[kind];
     const tint = this.random.pick(definition.tints);
@@ -80,6 +90,22 @@ export class ParkedVehicleManager {
     this.occupiedSpaceIds.add(space.id);
   }
 
+  /** A bay may never receive a vehicle wider/longer than its real footprint. */
+  private eligibleKindsForSpace(space: ParkingSpace): readonly VehicleKind[] {
+    const cached = this.eligibleKindsBySpaceId.get(space.id);
+    if (cached) return cached;
+    const eligible = CIVILIAN_VEHICLE_KINDS.filter((kind) => {
+      const definition = VEHICLES[kind];
+      return (
+        definition.width <= space.width &&
+        definition.height <= space.length &&
+        this.network.parkingSpaceHasTravelClearance(space, definition.width, definition.height)
+      );
+    });
+    this.eligibleKindsBySpaceId.set(space.id, eligible);
+    return eligible;
+  }
+
   private prune(player: Vector2 | null): void {
     const maxSq = DESPAWN_DISTANCE * DESPAWN_DISTANCE;
     for (const [vehicleId, record] of this.records) {
@@ -92,10 +118,31 @@ export class ParkedVehicleManager {
       }
       const dx = player ? vehicle.sprite.x - player.x : 0;
       const dy = player ? vehicle.sprite.y - player.y : 0;
-      if (!vehicle.sprite.active || vehicle.isDestroyed || (player && dx * dx + dy * dy > maxSq)) {
+      if (
+        !vehicle.sprite.active ||
+        vehicle.isDestroyed ||
+        !this.isAtLegalParkingPose(record) ||
+        (player && dx * dx + dy * dy > maxSq)
+      ) {
         this.release(vehicleId, vehicle.sprite.active && !vehicle.isDestroyed);
       }
     }
+  }
+
+  /** A parked vehicle is a static curb prop, never a movable traffic obstacle. */
+  private isAtLegalParkingPose(record: ParkedRecord): boolean {
+    const { vehicle, space } = record;
+    const dx = vehicle.sprite.x - space.position.x;
+    const dy = vehicle.sprite.y - space.position.y;
+    if (dx * dx + dy * dy > MAX_PARKED_POSITION_DRIFT * MAX_PARKED_POSITION_DRIFT) {
+      return false;
+    }
+    return this.network.vehicleFootprintHasTravelClearance(
+      vehicle.position,
+      vehicle.movement.heading,
+      vehicle.def.width,
+      vehicle.def.height,
+    );
   }
 
   private release(vehicleId: number, removeVehicle: boolean): void {
@@ -103,6 +150,8 @@ export class ParkedVehicleManager {
     if (!record) return;
     this.records.delete(vehicleId);
     this.occupiedSpaceIds.delete(record.space.id);
+    record.vehicle.sprite.data?.remove('parked');
+    record.vehicle.sprite.data?.remove('parkingSpaceId');
     if (removeVehicle) this.vehicles.removeVehicle(record.vehicle);
   }
 

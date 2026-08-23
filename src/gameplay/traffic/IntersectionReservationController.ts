@@ -20,6 +20,8 @@ export interface ReservationRequest {
   readonly priority: number;
   readonly emergency: boolean;
   readonly recoveryAttempt: number;
+  /** A vehicle already queued ahead on this physical approach blocks admission. */
+  readonly approachClear: boolean;
   readonly downstreamClear: boolean;
 }
 
@@ -44,7 +46,13 @@ export interface ReservationDecision {
   readonly granted: boolean;
   readonly reservation: IntersectionReservation | null;
   readonly queuePosition: number;
-  readonly reason: 'signal' | 'conflict' | 'exit-blocked' | 'queue' | 'granted';
+  readonly reason:
+    | 'signal'
+    | 'conflict'
+    | 'approach-blocked'
+    | 'exit-blocked'
+    | 'queue'
+    | 'granted';
 }
 
 export interface IntersectionStats {
@@ -61,6 +69,14 @@ const ALL_RED_MS = 650;
 const CYCLE_MS = NORTH_SOUTH_GREEN_MS + EAST_WEST_GREEN_MS + YELLOW_MS * 2 + ALL_RED_MS * 2;
 const QUEUE_STALE_MS = 700;
 const RESERVATION_TIMEOUT_MS = 4200;
+/**
+ * Static priority expresses how quickly a vehicle should normally move, but
+ * cannot be allowed to create an endless stream that starves an already
+ * waiting compatible movement. One priority tier is earned per interval and
+ * is capped so emergency and recovery policies keep their intended bounds.
+ */
+const QUEUE_PRIORITY_AGE_INTERVAL_MS = 900;
+const MAX_QUEUE_PRIORITY_AGE_BONUS = 4;
 
 /**
  * Centralized, spatial intersection controller. Drivers queue before the stop
@@ -112,7 +128,7 @@ export class IntersectionReservationController {
 
   public request(now: number, request: ReservationRequest): ReservationDecision {
     const existing = this.reservationByVehicle.get(request.vehicleId);
-    if (existing?.connectorLaneId === request.connectorLaneId) {
+    if (existing?.connectorLaneId === request.connectorLaneId && request.approachClear) {
       return { granted: true, reservation: existing, queuePosition: 0, reason: 'granted' };
     }
     if (existing) this.releaseVehicle(request.vehicleId);
@@ -130,6 +146,8 @@ export class IntersectionReservationController {
       ordered.findIndex((candidate) => candidate.vehicleId === request.vehicleId) + 1;
     const reason = !request.downstreamClear
       ? 'exit-blocked'
+      : !request.approachClear
+        ? 'approach-blocked'
       : !this.signalAllows(request.intersectionId, request.incomingLaneId, now)
         ? 'signal'
         : 'queue';
@@ -143,6 +161,7 @@ export class IntersectionReservationController {
       const active = this.reservationsByIntersection.get(intersectionId) ?? [];
       for (const request of this.orderedQueue(queue)) {
         if (
+          !request.approachClear ||
           !request.downstreamClear ||
           !this.signalAllows(intersectionId, request.incomingLaneId, now)
         ) {
@@ -228,11 +247,22 @@ export class IntersectionReservationController {
       if (first.recoveryAttempt !== second.recoveryAttempt) {
         return second.recoveryAttempt - first.recoveryAttempt;
       }
-      if (first.priority !== second.priority) return second.priority - first.priority;
+      const firstPriority = this.effectivePriority(first);
+      const secondPriority = this.effectivePriority(second);
+      if (firstPriority !== secondPriority) return secondPriority - firstPriority;
       if (first.queuedAt !== second.queuedAt) return first.queuedAt - second.queuedAt;
       if (first.arrivalAt !== second.arrivalAt) return first.arrivalAt - second.arrivalAt;
       return first.distanceToStopLine - second.distanceToStopLine;
     });
+  }
+
+  private effectivePriority(request: QueuedRequest): number {
+    const waitedMs = Math.max(0, this.nowValue - request.queuedAt);
+    const ageBonus = Math.min(
+      MAX_QUEUE_PRIORITY_AGE_BONUS,
+      Math.floor(waitedMs / QUEUE_PRIORITY_AGE_INTERVAL_MS),
+    );
+    return request.priority + ageBonus;
   }
 
   private conflicts(candidateId: string, activeId: string): boolean {

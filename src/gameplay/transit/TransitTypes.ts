@@ -23,6 +23,12 @@ export interface BusRouteConfig {
 /** City-specific taxi supply, fare terms, and roaming route targets. */
 export interface TaxiConfig {
   population: number;
+  /** Radius in which an exploring player should be able to encounter an available taxi. */
+  encounterRadius: number;
+  /** Minimum number of ready taxis maintained around the active city's player. */
+  guaranteedNearby: number;
+  /** How long a newly materialized city-hub taxi waits before joining normal traffic. */
+  standDurationMs: number;
   baseFare: number;
   perKilometerFare: number;
   trafficFareFactor: number;
@@ -40,11 +46,47 @@ export interface CityTransitConfig {
 export interface ResolvedBusRoute {
   config: BusRouteConfig;
   stops: readonly BusStopSite[];
+  segments: readonly BusRouteSegment[];
+  validation: BusRouteValidation;
   valid: boolean;
   issue?: string;
 }
 
-export type BusServiceState = 'approaching' | 'dwelling' | 'recovering' | 'unavailable';
+/** Cached legal lane path between two ordered stops on an active bus line. */
+export interface BusRouteSegment {
+  fromStopId: string;
+  toStopId: string;
+  laneIds: readonly string[];
+  valid: boolean;
+  issue?: string;
+}
+
+/** Per-stop route-authoring result exposed to development tools and smoke tests. */
+export interface BusRouteStopValidation {
+  index: number;
+  stopId: string;
+  status: 'OK' | 'ERROR';
+  issue?: string;
+}
+
+/** Route-level validation report, including every physical stop and lane segment. */
+export interface BusRouteValidation {
+  cityId: CityId;
+  routeId: string;
+  routeName: string;
+  stops: readonly BusRouteStopValidation[];
+  connectivity: 'VALID' | 'INVALID';
+}
+
+export type BusServiceState =
+  | 'FOLLOWING_ROUTE'
+  | 'APPROACHING_STOP'
+  | 'ALIGNING_WITH_STOP'
+  | 'STOPPED_AT_STOP'
+  | 'BOARDING'
+  | 'DEPARTING_STOP'
+  | 'RECOVERING'
+  | 'UNAVAILABLE';
 
 export interface BusServiceSnapshot {
   vehicleId: number;
@@ -56,20 +98,40 @@ export interface BusServiceSnapshot {
   currentStopId: string;
   nextStopId: string;
   dwellRemainingMs: number;
+  boardingActive: boolean;
+  position: Vector2;
+  targetStopPosition: Vector2 | null;
+  targetLaneId: string | null;
+  targetLaneDistance: number | null;
+  currentLaneId: string | null;
+  currentLaneDistance: number | null;
+  distanceToStop: number | null;
+  headingErrorRadians: number | null;
+  driverState: string | null;
   passengerCount: number;
   passengerCapacity: number;
   validLaneRoute: boolean;
 }
 
-export type TaxiState =
-  | 'AVAILABLE'
-  | 'APPROACHING_PLAYER'
-  | 'WAITING_FOR_PLAYER'
-  | 'PASSENGER_BOARDING'
-  | 'IN_SERVICE'
-  | 'ARRIVING'
-  | 'COMPLETED'
-  | 'UNAVAILABLE';
+/**
+ * Taxi service phases are deliberately more specific than traffic-driver
+ * states. The driver owns steering; transit owns the customer contract.
+ */
+export const TAXI_SERVICE_STATES = [
+  'AVAILABLE',
+  'APPROACHING_PICKUP',
+  'WAITING_FOR_PASSENGER',
+  'PASSENGER_BOARDING',
+  'DESTINATION_SELECTION',
+  'FARE_CONFIRMATION',
+  'IN_SERVICE',
+  'ARRIVING',
+  'PASSENGER_EXITING',
+  'RETURNING_TO_SERVICE',
+  'UNAVAILABLE',
+] as const;
+
+export type TaxiState = (typeof TAXI_SERVICE_STATES)[number];
 
 export interface TaxiDestination {
   id: string;
@@ -100,7 +162,12 @@ export interface TaxiServiceSnapshot {
   vehicleId: number;
   cityId: CityId;
   state: TaxiState;
+  /** Runtime-only diagnostics; never rendered directly to the player HUD. */
+  position: Vector2;
   hasDriver: boolean;
+  hasPassenger: boolean;
+  driverState: string | null;
+  distanceToPlayer: number | null;
   destination: TaxiDestination | null;
   fare: TaxiFareQuote | null;
   validLaneRoute: boolean;
@@ -120,7 +187,10 @@ export interface TransitRideSnapshot {
 }
 
 export interface TransportationDebugSnapshot {
-  cityConfigs: Record<CityId, { routes: number; taxis: number }>;
+  cityConfigs: Record<
+    CityId,
+    { routes: number; taxis: number; taxiEncounterRadius: number; guaranteedNearbyTaxis: number }
+  >;
   busRoutes: Record<CityId, readonly ResolvedBusRoute[]>;
   buses: readonly BusServiceSnapshot[];
   taxis: readonly TaxiServiceSnapshot[];

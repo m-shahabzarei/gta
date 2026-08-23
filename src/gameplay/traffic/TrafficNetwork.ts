@@ -1,5 +1,12 @@
 import type { Vector2 } from '@/core/types';
-import type { RoadEdge, RoadNode, TrafficLightInfo, VehicleKind } from '@/gameplay/types';
+import { VEHICLES } from '@/data';
+import type {
+  BusStopSite,
+  RoadEdge,
+  RoadNode,
+  TrafficLightInfo,
+  VehicleKind,
+} from '@/gameplay/types';
 import { findPath, type IPathGraph } from '@/utils/AStar';
 import { LruCache } from '@/utils/LruCache';
 import {
@@ -24,15 +31,21 @@ const LANE_WIDTH = 18;
 const INNER_LANE_OFFSET = 11.5;
 const OUTER_LANE_OFFSET = 29.5;
 const PARKING_OFFSET = 39;
+/** Physical gap between a moving lane edge and a parked-vehicle footprint. */
+const PARKING_LANE_CLEARANCE = 4;
+/** A curb is reserved for the actual bus body plus the nearest parked-car body. */
+const BUS_STOP_PARKING_HALF_LENGTH = VEHICLES.bus.height * 0.5;
 const JUNCTION_CLEARANCE = 48;
 const LANE_INDEX_CELL = 320;
 const ROUTE_CACHE_SIZE = 4096;
 /** One-off transit/map searches may be complete, but are still explicitly bounded and cached. */
 const COMPLETE_ROUTE_CACHE_SIZE = 1024;
 const ROUTE_SEARCH_EXPANSION_BUDGET = 24;
-/** A complete player-facing route is assembled from bounded native A* slices. */
-const COMPLETE_ROUTE_SLICE_EXPANSIONS = 128;
-const COMPLETE_ROUTE_MAX_SLICES = 256;
+/**
+ * Authoring/map routes are exact and cached. This budget is deliberately not
+ * used by live drivers, whose incremental routing remains bounded elsewhere.
+ */
+const COMPLETE_ROUTE_MAX_EXPANSIONS = 64_000;
 const CONNECTOR_HANDLE_MIN = 12;
 const CONNECTOR_HANDLE_MAX = 35;
 
@@ -125,6 +138,7 @@ export class TrafficNetwork {
     lights: readonly TrafficLightInfo[],
     roadEdges: readonly RoadEdge[] = [],
     authoredParkingSites: readonly Vector2[] = [],
+    reservedBusStops: readonly BusStopSite[] = [],
   ) {
     const nodesById = new Map(nodes.map((node) => [node.id, node]));
     const roadEdgesByPair = new Map(
@@ -134,9 +148,17 @@ export class TrafficNetwork {
     this.buildRoadSegments(nodes, nodesById, roadEdgesByPair);
     this.buildJunctions(nodes, nodesById, signalNodes);
     this.buildConflictSets();
+    // Parking clearance queries must never fall back to scanning every lane in
+    // the country. The lane index is immutable once junction construction is
+    // complete, so publish it before validating any generated parking bays.
+    this.buildLaneSpatialIndex();
+    this.removeParkingThatConflictsWithTrafficLanes();
     this.addAuthoredParkingSpaces(authoredParkingSites);
+    this.reserveParkingAtBusStops(reservedBusStops);
     this.graph = new LaneGraph(this.lanesById);
-    this.buildSpatialIndexes();
+    // Parking is filtered and bus-stop reservations are applied above. Index
+    // only the final list so runtime queries never retain rejected bays.
+    this.buildParkingSpatialIndex();
   }
 
   public get roadCount(): number {
@@ -173,6 +195,64 @@ export class TrafficNetwork {
 
   public parkingSpaces(): readonly ParkingSpace[] {
     return this.parkingList;
+  }
+
+  /**
+   * True only when the parked vehicle's oriented footprint remains outside all
+   * nearby travel-lane envelopes. This is deliberately geometric rather than
+   * a sprite-radius heuristic: a parked vehicle beside a bus lane is harmless,
+   * but one that crosses the lane must never be spawned.
+   */
+  public parkingSpaceHasTravelClearance(
+    space: ParkingSpace,
+    vehicleWidth = space.width,
+    vehicleLength = space.length,
+  ): boolean {
+    return this.vehicleFootprintHasTravelClearance(
+      space.position,
+      space.heading,
+      vehicleWidth,
+      vehicleLength,
+    );
+  }
+
+  /**
+   * Validate a live parked body against every nearby directed road-graph lane,
+   * including intersection connectors. Parking bays are authored before
+   * junction splines are built, so straight-lane-only validation can otherwise
+   * place a static prop inside a valid turning path.
+   */
+  public vehicleFootprintHasTravelClearance(
+    position: Vector2,
+    heading: number,
+    vehicleWidth: number,
+    vehicleLength: number,
+  ): boolean {
+    if (vehicleWidth <= 0 || vehicleLength <= 0) return false;
+    const searchRadius =
+      Math.hypot(vehicleWidth, vehicleLength) * 0.5 + LANE_WIDTH + PARKING_LANE_CLEARANCE;
+    let clear = true;
+    const inspect = (lane: TrafficLane): void => {
+      if (!clear) return;
+      const projection = projectOnSpline(position, lane.spline);
+      if (projection.distanceSq > searchRadius * searchRadius) return;
+      if (!this.vehicleFootprintClearsTravelLane(
+        position,
+        heading,
+        vehicleWidth,
+        vehicleLength,
+        lane,
+        projection,
+      )) {
+        clear = false;
+      }
+    };
+    if (this.laneIndex.size === 0) {
+      for (const lane of this.laneList) inspect(lane);
+    } else {
+      this.forEachIndexedLane(position, searchRadius, inspect);
+    }
+    return clear;
   }
 
   public lane(id: string | null | undefined): TrafficLane | null {
@@ -241,6 +321,32 @@ export class TrafficNetwork {
     return best;
   }
 
+  /**
+   * Return a small, distance-sorted set of lane-backed curb candidates.
+   * Service requests call this on demand; it uses the lane spatial index rather
+   * than scanning the city-wide road graph every interaction frame.
+   */
+  public nearbyTravelLanes(
+    position: Vector2,
+    maximumDistance = LANE_INDEX_CELL,
+    limit = 8,
+  ): readonly TrafficLane[] {
+    const maximumSq = maximumDistance * maximumDistance;
+    const candidates: Array<{ lane: TrafficLane; distanceSq: number }> = [];
+    this.forEachIndexedLane(position, maximumDistance, (lane) => {
+      if (lane.kind !== 'travel') return;
+      const projection = projectOnSpline(position, lane.spline);
+      if (projection.distanceSq <= maximumSq) {
+        candidates.push({ lane, distanceSq: projection.distanceSq });
+      }
+    });
+    candidates.sort((first, second) => first.distanceSq - second.distanceSq || first.lane.id.localeCompare(second.lane.id));
+    const selected = candidates.slice(0, Math.max(1, limit)).map((candidate) => candidate.lane);
+    if (selected.length > 0) return selected;
+    const nearest = this.nearestLane(position, undefined, true);
+    return nearest ? [nearest] : [];
+  }
+
   public randomTravelLaneNear(
     position: Vector2,
     minimumDistance: number,
@@ -291,8 +397,13 @@ export class TrafficNetwork {
       allowPartial: true,
     });
     const route = result?.path ?? [];
-    this.routeCache.set(key, route);
-    return route.length > 0 ? route : null;
+    // A partial A* result is allowed for ambient traffic, but it must end on
+    // a travel lane. Leaving a connector at the route tail creates a vehicle
+    // with no legal outgoing lane for intersection reservation/downstream
+    // validation, so it freezes at the stop line and blocks the approach.
+    const partial = result?.complete === false ? trimPartialRouteToTravelLane(route) : route;
+    this.routeCache.set(key, partial);
+    return partial.length > 0 ? partial : null;
   }
 
   /**
@@ -309,29 +420,17 @@ export class TrafficNetwork {
     const cached = this.completeRouteCache.get(key);
     if (cached !== undefined) return cached.length > 0 ? cached : null;
 
-    // This API is event-driven (route authoring, fare selection, map open),
-    // never called from the traffic update loop. Reuse the driver's bounded A*
-    // policy in forward slices instead of one world-wide search, which avoids
-    // freezing the game while still rejecting an incomplete destination route.
-    const route: TrafficLane[] = [start];
-    const reached = new Set<string>([start.id]);
-    let current = start;
-    for (let slice = 0; slice < COMPLETE_ROUTE_MAX_SLICES && current.id !== goal.id; slice += 1) {
-      const result = findPath(this.graph, current, goal, {
-        maxExpansions: COMPLETE_ROUTE_SLICE_EXPANSIONS,
-        allowPartial: true,
-      });
-      const segment = result?.path ?? [];
-      if (segment.length < 2) break;
-      for (const lane of segment.slice(1)) route.push(lane);
-      const next = segment[segment.length - 1];
-      if (!next || reached.has(next.id)) break;
-      reached.add(next.id);
-      current = next;
-    }
-    if (current.id !== goal.id) route.length = 0;
-    this.completeRouteCache.set(key, route);
-    return route.length > 0 ? route : null;
+    // This API is reserved for route authoring, map/fare previews, and other
+    // event-driven callers. It must produce a complete weighted road path;
+    // the old partial-A* + breadth-first fallback could validate a huge,
+    // arbitrary detour that a bus then took for several minutes.
+    const result = findPath(this.graph, start, goal, {
+      maxExpansions: COMPLETE_ROUTE_MAX_EXPANSIONS,
+      allowPartial: false,
+    });
+    const route = result?.complete ? result.path : null;
+    this.completeRouteCache.set(key, route ?? []);
+    return route;
   }
 
   /** Return the directed strongly-connected component for a lane, if it exists. */
@@ -931,7 +1030,7 @@ export class TrafficNetwork {
         }
       }
       if (!bestLane || !bestProjection || bestProjection.distanceSq > 420 * 420) continue;
-      this.parkingList.push({
+      const space: ParkingSpace = {
         id: `parking:rest-area:${index}`,
         roadSegmentId: bestLane.roadSegmentId ?? '',
         adjacentLaneId: bestLane.id,
@@ -943,7 +1042,12 @@ export class TrafficNetwork {
           bestProjection.distance,
           bestLane.spline.length - bestProjection.distance,
         ),
-      });
+      };
+      // Rest-area sites are explicitly authored, but still must have enough
+      // real clearance for their advertised bay. This prevents a malformed
+      // rest-area coordinate from recreating the old curb-lane overlap.
+      if (!this.parkingSpaceHasTravelClearance(space)) continue;
+      this.parkingList.push(space);
     }
   }
 
@@ -959,7 +1063,7 @@ export class TrafficNetwork {
     index: number,
   ): void {
     const heading = sampleSpline(lane.spline, lane.spline.length * 0.5).heading;
-    this.parkingList.push({
+    const space: ParkingSpace = {
       id: `parking:${roadId}:${offset > 0 ? 'a' : 'b'}:${index}`,
       roadSegmentId: roadId,
       adjacentLaneId: lane.id,
@@ -971,7 +1075,113 @@ export class TrafficNetwork {
       width: 17,
       length: 42,
       distanceFromIntersection: JUNCTION_CLEARANCE + 42,
+    };
+    // The current three-tile street has no dedicated curb-bay width. Its old
+    // 39px offset put a 17px parked footprint directly over the outer lane;
+    // reject that invalid authored geometry instead of spawning a fake
+    // obstruction that service vehicles cannot legally pass.
+    // Parking can be outside its named inner lane yet still overlap a second
+    // outer lane on the same physical road. Check every directed travel lane
+    // on this segment; intersection lanes are protected by the junction margin.
+    const segmentLanes = (this.roadsById.get(roadId)?.laneIds ?? [])
+      .map((laneId) => this.lanesById.get(laneId))
+      .filter((candidate): candidate is TrafficLane => candidate?.kind === 'travel');
+    if (
+      segmentLanes.some(
+        (candidate) =>
+          !this.parkingSpaceClearsTravelLane(space, space.width, space.length, candidate),
+      )
+    ) {
+      return;
+    }
+    this.parkingList.push(space);
+  }
+
+  /** Remove a legal parking bay when it overlaps the body span of a directed bus stop. */
+  private reserveParkingAtBusStops(stops: readonly BusStopSite[]): void {
+    if (stops.length === 0 || this.parkingList.length === 0) return;
+    const retained = this.parkingList.filter((space) => {
+      return !stops.some((stop) => this.parkingSpaceReservedForStop(space, stop));
     });
+    this.parkingList.length = 0;
+    this.parkingList.push(...retained);
+  }
+
+  /** Recheck pre-junction curb bays after connector splines have been generated. */
+  private removeParkingThatConflictsWithTrafficLanes(): void {
+    if (this.parkingList.length === 0) return;
+    const retained = this.parkingList.filter((space) =>
+      this.vehicleFootprintHasTravelClearance(
+        space.position,
+        space.heading,
+        space.width,
+        space.length,
+      ),
+    );
+    this.parkingList.length = 0;
+    this.parkingList.push(...retained);
+  }
+
+  private parkingSpaceReservedForStop(space: ParkingSpace, stop: BusStopSite): boolean {
+    if (space.adjacentLaneId !== stop.laneId) return false;
+    const lane = this.lanesById.get(stop.laneId);
+    if (!lane) return false;
+    const parkingDistance = projectOnSpline(space.position, lane.spline).distance;
+    const physicalReservation =
+      BUS_STOP_PARKING_HALF_LENGTH + space.length * 0.5 + PARKING_LANE_CLEARANCE;
+    return Math.abs(parkingDistance - stop.laneDistance) <= physicalReservation;
+  }
+
+  private parkingSpaceClearsTravelLane(
+    space: ParkingSpace,
+    vehicleWidth: number,
+    vehicleLength: number,
+    lane: TrafficLane,
+    projection = projectOnSpline(space.position, lane.spline),
+  ): boolean {
+    return this.vehicleFootprintClearsTravelLane(
+      space.position,
+      space.heading,
+      vehicleWidth,
+      vehicleLength,
+      lane,
+      projection,
+    );
+  }
+
+  private vehicleFootprintClearsTravelLane(
+    position: Vector2,
+    heading: number,
+    vehicleWidth: number,
+    vehicleLength: number,
+    lane: TrafficLane,
+    projection = projectOnSpline(position, lane.spline),
+  ): boolean {
+    const normal = { x: -projection.tangent.y, y: projection.tangent.x };
+    const dx = position.x - projection.point.x;
+    const dy = position.y - projection.point.y;
+    const lateralDistance = Math.abs(dx * normal.x + dy * normal.y);
+    const footprintHalfWidth = this.footprintHalfExtent(
+      heading,
+      vehicleWidth,
+      vehicleLength,
+      normal,
+    );
+    return lateralDistance >= lane.width * 0.5 + footprintHalfWidth + PARKING_LANE_CLEARANCE;
+  }
+
+  private footprintHalfExtent(
+    heading: number,
+    width: number,
+    length: number,
+    axis: Vector2,
+  ): number {
+    const forward = { x: Math.cos(heading), y: Math.sin(heading) };
+    const right = { x: -forward.y, y: forward.x };
+    return (
+      Math.abs(forward.x * axis.x + forward.y * axis.y) * length * 0.5 +
+      Math.abs(right.x * axis.x + right.y * axis.y) * width * 0.5
+    );
   }
 
   private targetLaneForTurn(
@@ -1047,7 +1257,8 @@ export class TrafficNetwork {
     return farthest && farthest.id !== start.id ? farthest : null;
   }
 
-  private buildSpatialIndexes(): void {
+  /** Build the immutable lane lookup before any geometric parking validation. */
+  private buildLaneSpatialIndex(): void {
     for (const lane of this.laneList) {
       const steps = Math.max(1, Math.ceil(lane.spline.length / 110));
       const seen = new Set<string>();
@@ -1061,6 +1272,10 @@ export class TrafficNetwork {
         else this.laneIndex.set(key, [lane]);
       }
     }
+  }
+
+  /** Index only parking bays that survived clearance and transit reservations. */
+  private buildParkingSpatialIndex(): void {
     for (const space of this.parkingList) {
       const key = this.cellKey(space.position.x, space.position.y);
       const bucket = this.parkingIndex.get(key);
@@ -1127,4 +1342,16 @@ export class TrafficNetwork {
   private cellKeyFromCell(x: number, y: number): string {
     return `${x},${y}`;
   }
+}
+
+/** Keep a bounded ambient A* slice at a legal road-driving boundary. */
+function trimPartialRouteToTravelLane(route: readonly TrafficLane[]): TrafficLane[] {
+  let lastTravel = -1;
+  for (let index = route.length - 1; index >= 0; index--) {
+    if (route[index]?.kind === 'travel') {
+      lastTravel = index;
+      break;
+    }
+  }
+  return lastTravel >= 0 ? route.slice(0, lastTravel + 1) : [];
 }

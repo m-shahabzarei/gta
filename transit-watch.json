@@ -1,0 +1,2002 @@
+﻿{
+    "route":  "T1",
+    "stops":  [
+                  "bus-stop:tehran:633\u003e632:0",
+                  "bus-stop:tehran:618\u003e617:0",
+                  "bus-stop:tehran:724\u003e774:0",
+                  "bus-stop:tehran:961\u003e911:1"
+              ],
+    "records":  [
+                    {
+                        "t":  0,
+                        "busState":  "BOARDING",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  0,
+                        "arrived":  true,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Stopping",
+                        "intention":  "Stop",
+                        "laneId":  "lane:633\u003e632:0",
+                        "targetLaneId":  null,
+                        "laneDistance":  144,
+                        "distanceToDestination":  0,
+                        "routeLength":  1,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  null,
+                        "blocker":  null,
+                        "targetDistance":  0,
+                        "position":  {
+                                         "x":  27504,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  102,
+                        "busState":  "STOPPED_AT_STOP",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  0,
+                        "arrived":  true,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Stopping",
+                        "intention":  "Stop",
+                        "laneId":  "lane:633\u003e632:0",
+                        "targetLaneId":  null,
+                        "laneDistance":  144,
+                        "distanceToDestination":  0,
+                        "routeLength":  1,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  null,
+                        "blocker":  null,
+                        "targetDistance":  0,
+                        "position":  {
+                                         "x":  27504,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  5104,
+                        "busState":  "STOPPED_AT_STOP",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  0,
+                        "arrived":  true,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Stopping",
+                        "intention":  "Stop",
+                        "laneId":  "lane:633\u003e632:0",
+                        "targetLaneId":  null,
+                        "laneDistance":  144,
+                        "distanceToDestination":  0,
+                        "routeLength":  1,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  null,
+                        "blocker":  null,
+                        "targetDistance":  0,
+                        "position":  {
+                                         "x":  27504,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  5549,
+                        "busState":  "DEPARTING_STOP",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Finding Lane",
+                        "intention":  "Recalculate Route",
+                        "laneId":  "lane:633\u003e632:0",
+                        "targetLaneId":  "connector:632:lane:633\u003e632:0:lane:632\u003e631:0",
+                        "laneDistance":  144,
+                        "distanceToDestination":  0,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  null,
+                        "blocker":  null,
+                        "targetDistance":  7680,
+                        "position":  {
+                                         "x":  27504,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  5665,
+                        "busState":  "DEPARTING_STOP",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  109.1,
+                        "driverState":  "Preparing Turn",
+                        "intention":  "Stop",
+                        "laneId":  "lane:633\u003e632:0",
+                        "targetLaneId":  "connector:632:lane:633\u003e632:0:lane:632\u003e631:0",
+                        "laneDistance":  144,
+                        "distanceToDestination":  7680,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0.15000000000000002,
+                                         "reason":  null
+                                     },
+                        "collision":  null,
+                        "blocker":  null,
+                        "targetDistance":  7680,
+                        "position":  {
+                                         "x":  27504,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  5813,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  109.1,
+                        "driverState":  "Preparing Turn",
+                        "intention":  "Stop",
+                        "laneId":  "lane:633\u003e632:0",
+                        "targetLaneId":  "connector:632:lane:633\u003e632:0:lane:632\u003e631:0",
+                        "laneDistance":  144,
+                        "distanceToDestination":  7680,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0.25,
+                                         "reason":  null
+                                     },
+                        "collision":  null,
+                        "blocker":  null,
+                        "targetDistance":  7680,
+                        "position":  {
+                                         "x":  27504,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  8517,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  97.8,
+                        "desiredSpeed":  79,
+                        "driverState":  "Turning",
+                        "intention":  "Go Straight",
+                        "laneId":  "connector:632:lane:633\u003e632:0:lane:632\u003e631:0",
+                        "targetLaneId":  "lane:632\u003e631:0",
+                        "laneDistance":  10,
+                        "distanceToDestination":  7526,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  null,
+                        "blocker":  null,
+                        "targetDistance":  7529,
+                        "position":  {
+                                         "x":  27353,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  9580,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  79.8,
+                        "desiredSpeed":  79,
+                        "driverState":  "Turning",
+                        "intention":  "Go Straight",
+                        "laneId":  "lane:632\u003e631:0",
+                        "targetLaneId":  "connector:631:lane:632\u003e631:0:lane:631\u003e630:0",
+                        "laneDistance":  3,
+                        "distanceToDestination":  7437,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  null,
+                        "blocker":  null,
+                        "targetDistance":  7438,
+                        "position":  {
+                                         "x":  27262,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  9723,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  85,
+                        "desiredSpeed":  109.1,
+                        "driverState":  "Following Lane",
+                        "intention":  "Reach Destination",
+                        "laneId":  "lane:632\u003e631:0",
+                        "targetLaneId":  "connector:631:lane:632\u003e631:0:lane:631\u003e630:0",
+                        "laneDistance":  19,
+                        "distanceToDestination":  7421,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  null,
+                        "blocker":  null,
+                        "targetDistance":  7422,
+                        "position":  {
+                                         "x":  27246,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  10883,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  102.7,
+                        "desiredSpeed":  105,
+                        "driverState":  "Preparing Turn",
+                        "intention":  "Reach Destination",
+                        "laneId":  "lane:632\u003e631:0",
+                        "targetLaneId":  "connector:631:lane:632\u003e631:0:lane:631\u003e630:0",
+                        "laneDistance":  132,
+                        "distanceToDestination":  7308,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "traffic",
+                                          "entityId":  130,
+                                          "position":  {
+                                                           "x":  26763.28916839795,
+                                                           "y":  32315.500000000007
+                                                       },
+                                          "distance":  316.6505237431245,
+                                          "timeToCollision":  3.1890646246315653,
+                                          "desiredSpeed":  155.57018939610663
+                                      },
+                        "blocker":  {
+                                        "id":  130,
+                                        "kind":  "sedan",
+                                        "destroyed":  false,
+                                        "speed":  10.610950155289496,
+                                        "position":  {
+                                                         "x":  26764,
+                                                         "y":  32316
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  {
+                                                              "state":  "Avoiding Obstacle",
+                                                              "intention":  "Yield",
+                                                              "laneId":  "lane:631\u003e630:0",
+                                                              "laneDistance":  117,
+                                                              "speed":  4.2030124552153705,
+                                                              "desiredSpeed":  5.499999999999992,
+                                                              "recovery":  {
+                                                                               "attempt":  0,
+                                                                               "phase":  "none",
+                                                                               "blockedSeconds":  0,
+                                                                               "reason":  null
+                                                                           }
+                                                          }
+                                    },
+                        "targetDistance":  7313,
+                        "position":  {
+                                         "x":  27137,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  12980,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  55.8,
+                        "desiredSpeed":  72.2,
+                        "driverState":  "Turning",
+                        "intention":  "Go Straight",
+                        "laneId":  "connector:631:lane:632\u003e631:0:lane:631\u003e630:0",
+                        "targetLaneId":  "lane:631\u003e630:0",
+                        "laneDistance":  6,
+                        "distanceToDestination":  7146,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "traffic",
+                                          "entityId":  130,
+                                          "position":  {
+                                                           "x":  26755.485981784543,
+                                                           "y":  32315.499999999993
+                                                       },
+                                          "distance":  160.35425788879735,
+                                          "timeToCollision":  3.0098734391521043,
+                                          "desiredSpeed":  72.23402699856491
+                                      },
+                        "blocker":  {
+                                        "id":  130,
+                                        "kind":  "sedan",
+                                        "destroyed":  false,
+                                        "speed":  3.6265228465663046,
+                                        "position":  {
+                                                         "x":  26755,
+                                                         "y":  32315
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  {
+                                                              "state":  "Avoiding Obstacle",
+                                                              "intention":  "Yield",
+                                                              "laneId":  "lane:631\u003e630:0",
+                                                              "laneDistance":  125,
+                                                              "speed":  3.6265228465663046,
+                                                              "desiredSpeed":  5.499999999999992,
+                                                              "recovery":  {
+                                                                               "attempt":  0,
+                                                                               "phase":  "none",
+                                                                               "blockedSeconds":  0,
+                                                                               "reason":  null
+                                                                           }
+                                                          }
+                                    },
+                        "targetDistance":  7148,
+                        "position":  {
+                                         "x":  26972,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  13298,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  49.6,
+                        "desiredSpeed":  64.4,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "connector:631:lane:632\u003e631:0:lane:631\u003e630:0",
+                        "targetLaneId":  "lane:631\u003e630:0",
+                        "laneDistance":  22,
+                        "distanceToDestination":  7130,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "traffic",
+                                          "entityId":  130,
+                                          "position":  {
+                                                           "x":  26754.398024930575,
+                                                           "y":  32315.500000000004
+                                                       },
+                                          "distance":  145.48570070560442,
+                                          "timeToCollision":  3.096640484962855,
+                                          "desiredSpeed":  64.4084705863581
+                                      },
+                        "blocker":  {
+                                        "id":  130,
+                                        "kind":  "sedan",
+                                        "destroyed":  false,
+                                        "speed":  3.6265228465663046,
+                                        "position":  {
+                                                         "x":  26754,
+                                                         "y":  32316
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  {
+                                                              "state":  "Avoiding Obstacle",
+                                                              "intention":  "Yield",
+                                                              "laneId":  "lane:631\u003e630:0",
+                                                              "laneDistance":  126,
+                                                              "speed":  3.6265228465663046,
+                                                              "desiredSpeed":  5.499999999999992,
+                                                              "recovery":  {
+                                                                               "attempt":  0,
+                                                                               "phase":  "none",
+                                                                               "blockedSeconds":  0,
+                                                                               "reason":  null
+                                                                           }
+                                                          }
+                                    },
+                        "targetDistance":  7132,
+                        "position":  {
+                                         "x":  26956,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  15643,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  18.2,
+                        "desiredSpeed":  24.2,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  0,
+                        "distanceToDestination":  7056,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  130,
+                                          "position":  {
+                                                           "x":  26747.637631522102,
+                                                           "y":  32315.5
+                                                       },
+                                          "distance":  75.96239531665316,
+                                          "timeToCollision":  4.073868425904659,
+                                          "desiredSpeed":  24.190734377185873
+                                      },
+                        "blocker":  {
+                                        "id":  130,
+                                        "kind":  "sedan",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26748,
+                                                         "y":  32316
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  {
+                                                              "state":  "Avoiding Obstacle",
+                                                              "intention":  "Yield",
+                                                              "laneId":  "lane:631\u003e630:0",
+                                                              "laneDistance":  132,
+                                                              "speed":  0,
+                                                              "desiredSpeed":  0,
+                                                              "recovery":  {
+                                                                               "attempt":  0,
+                                                                               "phase":  "none",
+                                                                               "blockedSeconds":  0,
+                                                                               "reason":  null
+                                                                           }
+                                                          }
+                                    },
+                        "targetDistance":  7056,
+                        "position":  {
+                                         "x":  26880,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  20769,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  2.3,
+                        "desiredSpeed":  3.7,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  38,
+                        "distanceToDestination":  7018,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  130,
+                                          "position":  {
+                                                           "x":  26747.637631522102,
+                                                           "y":  32315.5
+                                                       },
+                                          "distance":  37.034790998956126,
+                                          "timeToCollision":  16.022074421720813,
+                                          "desiredSpeed":  3.702521578397961
+                                      },
+                        "blocker":  {
+                                        "id":  130,
+                                        "kind":  "sedan",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26748,
+                                                         "y":  32316
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  {
+                                                              "state":  "Avoiding Obstacle",
+                                                              "intention":  "Yield",
+                                                              "laneId":  "lane:631\u003e630:0",
+                                                              "laneDistance":  132,
+                                                              "speed":  0,
+                                                              "desiredSpeed":  0,
+                                                              "recovery":  {
+                                                                               "attempt":  0,
+                                                                               "phase":  "none",
+                                                                               "blockedSeconds":  0.6,
+                                                                               "reason":  null
+                                                                           }
+                                                          }
+                                    },
+                        "targetDistance":  7018,
+                        "position":  {
+                                         "x":  26842,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  25892,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0.5,
+                        "desiredSpeed":  0.9,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  44,
+                        "distanceToDestination":  7012,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  130,
+                                          "position":  {
+                                                           "x":  26747.637631522102,
+                                                           "y":  32315.5
+                                                       },
+                                          "distance":  31.62954835708362,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0.8576570300440112
+                                      },
+                        "blocker":  {
+                                        "id":  130,
+                                        "kind":  "sedan",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26748,
+                                                         "y":  32316
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  {
+                                                              "state":  "Recovering",
+                                                              "intention":  "Yield",
+                                                              "laneId":  "lane:631\u003e630:0",
+                                                              "laneDistance":  132,
+                                                              "speed":  0,
+                                                              "desiredSpeed":  0,
+                                                              "recovery":  {
+                                                                               "attempt":  1,
+                                                                               "phase":  "wait",
+                                                                               "blockedSeconds":  5.04999999999999,
+                                                                               "reason":  "stopped-traffic"
+                                                                           }
+                                                          }
+                                    },
+                        "targetDistance":  7012,
+                        "position":  {
+                                         "x":  26836,
+                                         "y":  32316
+                                     }
+                    },
+                    {
+                        "t":  30961,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0.1,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  45,
+                        "distanceToDestination":  7011,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  3.999999999999994,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  130,
+                                          "position":  {
+                                                           "x":  26747.637631522102,
+                                                           "y":  32315.5
+                                                       },
+                                          "distance":  30.186804646238087,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0.0983182348621513
+                                      },
+                        "blocker":  {
+                                        "id":  130,
+                                        "kind":  "sedan",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26748,
+                                                         "y":  32316
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  {
+                                                              "state":  "Recovering",
+                                                              "intention":  "Recalculate Route",
+                                                              "laneId":  "lane:631\u003e630:0",
+                                                              "laneDistance":  132,
+                                                              "speed":  0,
+                                                              "desiredSpeed":  0,
+                                                              "recovery":  {
+                                                                               "attempt":  3,
+                                                                               "phase":  "replan",
+                                                                               "blockedSeconds":  5.049999999999994,
+                                                                               "reason":  "stopped-traffic"
+                                                                           }
+                                                          }
+                                    },
+                        "targetDistance":  7011,
+                        "position":  {
+                                         "x":  26835,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  34014,
+                        "busState":  "RECOVERING",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0.1,
+                        "driverState":  "Finding Lane",
+                        "intention":  "Recalculate Route",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  null,
+                        "laneDistance":  45,
+                        "distanceToDestination":  null,
+                        "routeLength":  1,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  130,
+                                          "position":  {
+                                                           "x":  26747.637631522102,
+                                                           "y":  32315.5
+                                                       },
+                                          "distance":  30.186804646238087,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0.0983182348621513
+                                      },
+                        "blocker":  {
+                                        "id":  130,
+                                        "kind":  "sedan",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26748,
+                                                         "y":  32316
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  {
+                                                              "state":  "Avoiding Obstacle",
+                                                              "intention":  "Yield",
+                                                              "laneId":  "lane:631\u003e630:0",
+                                                              "laneDistance":  132,
+                                                              "speed":  0,
+                                                              "desiredSpeed":  0,
+                                                              "recovery":  {
+                                                                               "attempt":  4,
+                                                                               "phase":  "none",
+                                                                               "blockedSeconds":  3.5999999999999988,
+                                                                               "reason":  "stopped-traffic"
+                                                                           }
+                                                          }
+                                    },
+                        "targetDistance":  7011,
+                        "position":  {
+                                         "x":  26835,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  34212,
+                        "busState":  "RECOVERING",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0.1,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  45,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  130,
+                                          "position":  {
+                                                           "x":  26747.637631522102,
+                                                           "y":  32315.5
+                                                       },
+                                          "distance":  30.186804646238087,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0.0983182348621513
+                                      },
+                        "blocker":  {
+                                        "id":  130,
+                                        "kind":  "sedan",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26748,
+                                                         "y":  32316
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  {
+                                                              "state":  "Avoiding Obstacle",
+                                                              "intention":  "Yield",
+                                                              "laneId":  "lane:631\u003e630:0",
+                                                              "laneDistance":  132,
+                                                              "speed":  0,
+                                                              "desiredSpeed":  0,
+                                                              "recovery":  {
+                                                                               "attempt":  4,
+                                                                               "phase":  "none",
+                                                                               "blockedSeconds":  3.6999999999999984,
+                                                                               "reason":  "stopped-traffic"
+                                                                           }
+                                                          }
+                                    },
+                        "targetDistance":  7011,
+                        "position":  {
+                                         "x":  26835,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  34319,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0.1,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  45,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  130,
+                                          "position":  {
+                                                           "x":  26747.637631522102,
+                                                           "y":  32315.5
+                                                       },
+                                          "distance":  30.186804646238087,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0.0983182348621513
+                                      },
+                        "blocker":  {
+                                        "id":  130,
+                                        "kind":  "sedan",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26748,
+                                                         "y":  32316
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  {
+                                                              "state":  "Avoiding Obstacle",
+                                                              "intention":  "Yield",
+                                                              "laneId":  "lane:631\u003e630:0",
+                                                              "laneDistance":  132,
+                                                              "speed":  0,
+                                                              "desiredSpeed":  0,
+                                                              "recovery":  {
+                                                                               "attempt":  4,
+                                                                               "phase":  "none",
+                                                                               "blockedSeconds":  3.799999999999998,
+                                                                               "reason":  "stopped-traffic"
+                                                                           }
+                                                          }
+                                    },
+                        "targetDistance":  7011,
+                        "position":  {
+                                         "x":  26835,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  39485,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  15.8,
+                        "desiredSpeed":  27.7,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  50,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  82.7,
+                                          "timeToCollision":  5.6206432055980216,
+                                          "desiredSpeed":  27.73684210526316
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  7006,
+                        "position":  {
+                                         "x":  26830,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  44591,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  2,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.69999999999999,
+                                          "timeToCollision":  7.202340514174001,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  49736,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0.1,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  54765,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  6959,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  1,
+                                         "phase":  "wait",
+                                         "blockedSeconds":  5.1999999999999895,
+                                         "reason":  "stopped-traffic"
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  56660,
+                        "busState":  "RECOVERING",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  56777,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  61819,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0.2,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  66746,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Finding Lane",
+                        "intention":  "Recalculate Route",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  6959,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  1,
+                                         "phase":  "wait",
+                                         "blockedSeconds":  5.04999999999999,
+                                         "reason":  "stopped-traffic"
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  66881,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  6959,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  1,
+                                         "phase":  "wait",
+                                         "blockedSeconds":  5.1999999999999895,
+                                         "reason":  "stopped-traffic"
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  68873,
+                        "busState":  "RECOVERING",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  69103,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  74201,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0.3,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  78968,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Finding Lane",
+                        "intention":  "Recalculate Route",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  6959,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  1,
+                                         "phase":  "wait",
+                                         "blockedSeconds":  5.04999999999999,
+                                         "reason":  "stopped-traffic"
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  79129,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  6959,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  1,
+                                         "phase":  "wait",
+                                         "blockedSeconds":  5.1999999999999895,
+                                         "reason":  "stopped-traffic"
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  81049,
+                        "busState":  "RECOVERING",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  81212,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  86323,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0.3,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  91107,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Recovering",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  1,
+                                         "phase":  "wait",
+                                         "blockedSeconds":  5.04999999999999,
+                                         "reason":  "stopped-traffic"
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  91258,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  6959,
+                        "routeLength":  31,
+                        "recovery":  {
+                                         "attempt":  1,
+                                         "phase":  "wait",
+                                         "blockedSeconds":  5.09999999999999,
+                                         "reason":  "stopped-traffic"
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  93228,
+                        "busState":  "RECOVERING",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  93337,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    },
+                    {
+                        "t":  98466,
+                        "busState":  "FOLLOWING_ROUTE",
+                        "currentStopIndex":  0,
+                        "targetStopIndex":  1,
+                        "arrived":  false,
+                        "speed":  0,
+                        "desiredSpeed":  0,
+                        "driverState":  "Avoiding Obstacle",
+                        "intention":  "Yield",
+                        "laneId":  "lane:631\u003e630:0",
+                        "targetLaneId":  "connector:630:lane:631\u003e630:0:lane:630\u003e629:0",
+                        "laneDistance":  97,
+                        "distanceToDestination":  null,
+                        "routeLength":  24,
+                        "recovery":  {
+                                         "attempt":  0,
+                                         "phase":  "none",
+                                         "blockedSeconds":  0.25,
+                                         "reason":  null
+                                     },
+                        "collision":  {
+                                          "kind":  "stopped-traffic",
+                                          "entityId":  66,
+                                          "position":  {
+                                                           "x":  26685,
+                                                           "y":  32343
+                                                       },
+                                          "distance":  28.700000000000003,
+                                          "timeToCollision":  null,
+                                          "desiredSpeed":  0
+                                      },
+                        "blocker":  {
+                                        "id":  66,
+                                        "kind":  "luxury",
+                                        "destroyed":  false,
+                                        "speed":  0,
+                                        "position":  {
+                                                         "x":  26685,
+                                                         "y":  32343
+                                                     },
+                                        "persistentTransitService":  false,
+                                        "trafficDriver":  null
+                                    },
+                        "targetDistance":  6959,
+                        "position":  {
+                                         "x":  26783,
+                                         "y":  32315
+                                     }
+                    }
+                ]
+}
