@@ -48,6 +48,7 @@ export class Button extends UIComponent {
 
   private hovered = false;
   private selected = false;
+  private pressed = false;
   private onClick?: () => void;
 
   /**
@@ -84,7 +85,9 @@ export class Button extends UIComponent {
 
     this.on('pointerover', this.handlePointerOver, this);
     this.on('pointerout', this.handlePointerOut, this);
+    this.on('pointerdown', this.handlePointerDown, this);
     this.on('pointerup', this.handlePointerUp, this);
+    this.on('pointerupoutside', this.handlePointerOut, this);
   }
 
   /**
@@ -124,25 +127,47 @@ export class Button extends UIComponent {
   /** Pointer left the button — restore and redraw. */
   private handlePointerOut(): void {
     this.hovered = false;
+    this.pressed = false;
+    this.redraw();
+  }
+
+  /** Pointer pressed — keep the visual feedback inside the hit target. */
+  private handlePointerDown(
+    _pointer: Phaser.Input.Pointer,
+    _localX: number,
+    _localY: number,
+    event: Phaser.Types.Input.EventData,
+  ): void {
+    event.stopPropagation();
+    this.pressed = true;
     this.redraw();
   }
 
   /** Pointer released over the button — fire the click callback if present. */
-  private handlePointerUp(): void {
-    if (this.onClick !== undefined) {
+  private handlePointerUp(
+    _pointer: Phaser.Input.Pointer,
+    _localX: number,
+    _localY: number,
+    event: Phaser.Types.Input.EventData,
+  ): void {
+    event.stopPropagation();
+    const wasPressed = this.pressed;
+    this.pressed = false;
+    this.redraw();
+    if (wasPressed && this.onClick !== undefined) {
       this.onClick();
     }
   }
 
   /** Redraw the background using the current hover/selected state. */
   private redraw(): void {
-    const highlighted = this.hovered || this.selected;
+    const highlighted = this.hovered || this.selected || this.pressed;
     const borderColor = highlighted ? COLORS.ACCENT : COLORS.UI_BORDER;
     const halfW = this.btnWidth / 2;
     const halfH = this.btnHeight / 2;
 
     this.bg.clear();
-    this.bg.fillStyle(COLORS.UI_PANEL, 1);
+    this.bg.fillStyle(this.pressed ? COLORS.UI_BORDER : COLORS.UI_PANEL, 1);
     this.bg.fillRoundedRect(-halfW, -halfH, this.btnWidth, this.btnHeight, CORNER_RADIUS);
     this.bg.lineStyle(BORDER_WIDTH, borderColor, 1);
     this.bg.strokeRoundedRect(-halfW, -halfH, this.btnWidth, this.btnHeight, CORNER_RADIUS);

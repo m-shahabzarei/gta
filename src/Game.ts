@@ -24,6 +24,7 @@ import {
   MapScene,
   SettingsScene,
   InventoryScene,
+  PhoneScene,
   InteriorScene,
 } from '@/scenes';
 import { Logger } from '@/utils/Logger';
@@ -39,6 +40,7 @@ const SCENE_TABLE: ReadonlyArray<readonly [SceneKeys, new () => Phaser.Scene]> =
   [SceneKeys.Map, MapScene],
   [SceneKeys.Settings, SettingsScene],
   [SceneKeys.Inventory, InventoryScene],
+  [SceneKeys.Phone, PhoneScene],
   [SceneKeys.Interior, InteriorScene],
 ];
 

@@ -32,6 +32,7 @@ import { LightingSystem } from '@/systems/LightingSystem';
 import { DayNightSystem } from '@/systems/DayNightSystem';
 import { UIManager } from '@/managers/UIManager';
 import { GameManager } from '@/managers/GameManager';
+import { PhoneManager } from '@/managers/PhoneManager';
 // Phase 2 gameplay systems.
 import { GameAudioSystem } from '@/systems/GameAudioSystem';
 import { WorldManager } from '@/systems/WorldManager';
@@ -123,6 +124,7 @@ export class ManagerRegistry {
       new EntityManager(this.game),
       new ProfilerSystem(this.game),
       new UIManager(this.game),
+      new PhoneManager(this.game),
       new GameManager(this.game),
     ];
 
@@ -159,6 +161,9 @@ export class ManagerRegistry {
       const dt = delta > 100 ? 100 : delta;
       EngineDiagnostics.beginFrame(time, dt);
       for (const manager of this.updatables) {
+        // An input edge can pause the game in the middle of this frame. Stop
+        // immediately so no simulation manager advances after the modal opens.
+        if (this.gameManager?.state === GameState.Paused) break;
         const startedAt = performance.now();
         EngineDiagnostics.beginSystem(manager.key);
         try {

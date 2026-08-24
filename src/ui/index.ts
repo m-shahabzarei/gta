@@ -4,3 +4,4 @@
 export * from './UIComponent';
 export * from './components';
 export * from './hud';
+export * from './phone';

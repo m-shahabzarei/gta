@@ -50,6 +50,7 @@ export interface EventPayloadMap {
   [EventKeys.GameResumed]: void;
   [EventKeys.GameMapRequested]: void;
   [EventKeys.GameInventoryRequested]: void;
+  [EventKeys.GamePhoneRequested]: void;
   [EventKeys.GameInteriorRequested]: { kind: InteriorKind };
   [EventKeys.GameNew]: void;
   [EventKeys.GameQuitToMenu]: void;

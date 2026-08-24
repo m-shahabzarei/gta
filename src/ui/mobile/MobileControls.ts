@@ -28,6 +28,7 @@ type ButtonName =
   | 'handbrake'
   | 'horn'
   | 'map'
+  | 'phone'
   | 'pause';
 
 interface ButtonSpec {
@@ -97,6 +98,7 @@ export class MobileControls extends UIComponent {
       { name: 'handbrake', icon: 'handbrake', label: 'Handbrake', press: () => this.pressAction(InputAction.Handbrake, 8), release: () => this.inputManager.setTouchAction(InputAction.Handbrake, false) },
       { name: 'horn', icon: 'horn', label: 'Horn', press: () => this.pressAction(InputAction.Horn, 8), release: () => this.deferActionRelease(InputAction.Horn) },
       { name: 'map', icon: 'map', label: 'Map', press: () => this.pressAction(InputAction.ToggleMap, 8), release: () => this.deferActionRelease(InputAction.ToggleMap) },
+      { name: 'phone', icon: 'phone', label: 'Phone', press: () => this.pressAction(InputAction.OpenPhone, 8), release: () => this.deferActionRelease(InputAction.OpenPhone) },
       { name: 'pause', icon: 'pause', label: 'Pause', press: () => this.pressAction(InputAction.Pause, 8), release: () => this.deferActionRelease(InputAction.Pause) },
     ];
     for (const spec of specs) {
@@ -209,6 +211,7 @@ export class MobileControls extends UIComponent {
     const bottom = height - safe.bottom - 28;
     this.place('pause', right - smallSize * 0.5, safe.top + 28 + smallSize * 0.5, smallSize);
     this.place('map', right - smallSize * 1.65, safe.top + 28 + smallSize * 0.5, smallSize);
+    this.place('phone', right - smallSize * 2.8, safe.top + 28 + smallSize * 0.5, smallSize);
 
     if (this.inVehicle) {
       this.place('accelerate', right - buttonSize * 0.55, bottom - buttonSize * 0.72, buttonSize * 1.08);
@@ -235,6 +238,7 @@ export class MobileControls extends UIComponent {
     const desired = new Set<ButtonName>();
     if (active) {
       desired.add('map');
+      desired.add('phone');
       desired.add('pause');
       if (this.inVehicle) {
         desired.add('accelerate');

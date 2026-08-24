@@ -24,6 +24,8 @@ export enum SceneKeys {
   Settings = 'SettingsScene',
   /** Modal inventory (weapons / money) overlay. */
   Inventory = 'InventoryScene',
+  /** Modal in-game smartphone overlay. */
+  Phone = 'PhoneScene',
   /** Enterable building interior scene. */
   Interior = 'InteriorScene',
 }

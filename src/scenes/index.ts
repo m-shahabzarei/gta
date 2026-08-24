@@ -10,6 +10,7 @@ import { PauseScene } from './PauseScene';
 import { MapScene } from './MapScene';
 import { SettingsScene } from './SettingsScene';
 import { InventoryScene } from './InventoryScene';
+import { PhoneScene } from './PhoneScene';
 import { InteriorScene } from './InteriorScene';
 
 export {
@@ -22,6 +23,7 @@ export {
   MapScene,
   SettingsScene,
   InventoryScene,
+  PhoneScene,
   InteriorScene,
 };
 
@@ -39,5 +41,6 @@ export const SCENE_CLASSES = [
   MapScene,
   SettingsScene,
   InventoryScene,
+  PhoneScene,
   InteriorScene,
 ] as const;

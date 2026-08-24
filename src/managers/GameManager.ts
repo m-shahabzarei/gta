@@ -122,6 +122,13 @@ export class GameManager extends BaseManager implements ISerializable {
     }
   }
 
+  /** Freeze gameplay and request the in-game phone overlay. */
+  public openPhone(): void {
+    if (this.stateValue !== GameState.Playing) return;
+    this.setState(GameState.Paused);
+    this.bus.emit(EventKeys.GamePhoneRequested);
+  }
+
   /** Request the nearest in-world enterable building without pausing gameplay. */
   public openInterior(kind: InteriorKind): void {
     if (this.stateValue === GameState.Playing) {

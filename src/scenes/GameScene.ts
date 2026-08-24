@@ -32,6 +32,7 @@ import type { WantedSystem } from '@/systems/WantedSystem';
 import type { CityLifeSystem } from '@/systems/CityLifeSystem';
 import type { PlayerController } from '@/systems/PlayerController';
 import type { BaseSceneManager } from '@/core/BaseSceneManager';
+import type { InputManager } from '@/managers/InputManager';
 
 /** Phaser's Arcade collide/overlap callback signature. */
 type Pair = Phaser.Types.Physics.Arcade.ArcadePhysicsCallback;
@@ -248,10 +249,26 @@ export class GameScene extends Phaser.Scene {
         this.scene.launch(SceneKeys.Pause);
         this.scene.pause();
       }),
+      eventBus.on(EventKeys.GamePhoneRequested, () => {
+        // Phone is only requested from Playing, but stop any stale modal before
+        // bringing the single phone overlay to the top.
+        this.scene.stop(SceneKeys.Pause);
+        this.scene.stop(SceneKeys.Map);
+        this.scene.stop(SceneKeys.Inventory);
+        this.scene.stop(SceneKeys.Settings);
+        this.scene.stop(SceneKeys.Interior);
+        ServiceLocator.tryResolve<InputManager>(ServiceKeys.Input)?.resetGameplayInput();
+        if (!this.scene.isActive(SceneKeys.Phone)) {
+          this.scene.launch(SceneKeys.Phone);
+        }
+        this.scene.bringToTop(SceneKeys.Phone);
+        this.scene.pause();
+      }),
       eventBus.on(EventKeys.GameMapRequested, () => {
         this.scene.stop(SceneKeys.Pause);
         this.scene.stop(SceneKeys.Inventory);
         this.scene.stop(SceneKeys.Interior);
+        this.scene.stop(SceneKeys.Phone);
         this.scene.launch(SceneKeys.Map);
         this.scene.bringToTop(SceneKeys.Map);
         this.scene.pause();
@@ -260,6 +277,7 @@ export class GameScene extends Phaser.Scene {
         this.scene.stop(SceneKeys.Pause);
         this.scene.stop(SceneKeys.Map);
         this.scene.stop(SceneKeys.Interior);
+        this.scene.stop(SceneKeys.Phone);
         this.scene.launch(SceneKeys.Inventory, { resumeOnClose: true });
         this.scene.bringToTop(SceneKeys.Inventory);
         this.scene.pause();
@@ -268,6 +286,7 @@ export class GameScene extends Phaser.Scene {
         this.scene.stop(SceneKeys.Pause);
         this.scene.stop(SceneKeys.Map);
         this.scene.stop(SceneKeys.Inventory);
+        this.scene.stop(SceneKeys.Phone);
         this.scene.stop(SceneKeys.Interior);
       }),
       eventBus.on(EventKeys.GameResumed, () => {
@@ -275,6 +294,7 @@ export class GameScene extends Phaser.Scene {
         this.scene.stop(SceneKeys.Map);
         this.scene.stop(SceneKeys.Inventory);
         this.scene.stop(SceneKeys.Interior);
+        this.scene.stop(SceneKeys.Phone);
         this.scene.resume();
       }),
       eventBus.on(EventKeys.GameQuitToMenu, () => {
@@ -284,6 +304,7 @@ export class GameScene extends Phaser.Scene {
         this.scene.stop(SceneKeys.Inventory);
         this.scene.stop(SceneKeys.Interior);
         this.scene.stop(SceneKeys.Settings);
+        this.scene.stop(SceneKeys.Phone);
         this.scene.start(SceneKeys.MainMenu);
       }),
       eventBus.on(EventKeys.TimeChanged, (payload) => {

@@ -14,7 +14,8 @@ export type MobileButtonIcon =
   | 'handbrake'
   | 'horn'
   | 'pause'
-  | 'map';
+  | 'map'
+  | 'phone';
 
 export interface MobileActionButtonConfig {
   icon: MobileButtonIcon;
@@ -225,6 +226,11 @@ export class MobileActionButton extends UIComponent {
         g.lineBetween(s * 0.9, s * 0.5, s * 0.9, -s * 0.86);
         g.lineBetween(-s * 0.3, -s * 0.88, -s * 0.3, s * 0.48);
         g.lineBetween(s * 0.32, -s * 0.62, s * 0.32, s * 0.74);
+        break;
+      case 'phone':
+        g.strokeRoundedRect(-s * 0.48, -s * 0.82, s * 0.96, s * 1.64, s * 0.14);
+        g.lineBetween(-s * 0.16, -s * 0.58, s * 0.16, -s * 0.58);
+        g.fillCircle(0, s * 0.58, s * 0.08);
         break;
     }
   }

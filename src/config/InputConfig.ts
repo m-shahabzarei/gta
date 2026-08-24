@@ -28,6 +28,8 @@ export enum InputAction {
   PrevWeapon = 'prev-weapon',
   /** Open/close the inventory overlay. */
   Inventory = 'inventory',
+  /** Open the in-game phone overlay. */
+  OpenPhone = 'open-phone',
   /** Reload the current weapon's magazine. */
   Reload = 'reload',
   /** Sound the horn while driving. */
@@ -56,6 +58,7 @@ export const DEFAULT_KEY_BINDINGS: Readonly<Record<InputAction, readonly string[
   [InputAction.NextWeapon]: ['X'],
   [InputAction.PrevWeapon]: ['Z', 'Q'],
   [InputAction.Inventory]: ['I'],
+  [InputAction.OpenPhone]: ['N'],
   [InputAction.Reload]: ['R'],
   [InputAction.Horn]: ['H'],
   [InputAction.Handbrake]: ['SPACE'],

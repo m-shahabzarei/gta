@@ -15,6 +15,7 @@ export enum EventKeys {
   GameResumed = 'game:resumed',
   GameMapRequested = 'game:map-requested',
   GameInventoryRequested = 'game:inventory-requested',
+  GamePhoneRequested = 'game:phone-requested',
   GameInteriorRequested = 'game:interior-requested',
   GameNew = 'game:new',
   GameQuitToMenu = 'game:quit-to-menu',

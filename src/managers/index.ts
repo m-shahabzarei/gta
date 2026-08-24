@@ -12,3 +12,4 @@ export * from './CameraManager';
 export * from './ParticleManager';
 export * from './SaveManager';
 export * from './UIManager';
+export * from './PhoneManager';

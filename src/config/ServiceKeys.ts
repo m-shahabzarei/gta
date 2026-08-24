@@ -58,6 +58,8 @@ export enum ServiceKeys {
   GameAudio = 'GameAudioSystem',
   /** Persistent user settings (graphics/audio/controls/language/display). */
   Settings = 'SettingsManager',
+  /** Owns in-game phone lifecycle and future app registration. */
+  Phone = 'PhoneManager',
   /** Dynamic weather: rain, fog and wind particle effects. */
   Weather = 'WeatherSystem',
   /** Ambient city life: animals, random events, patrols, crowd flavour. */

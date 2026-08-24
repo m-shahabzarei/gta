@@ -17,6 +17,7 @@ import { COLORS } from '@/config/Constants';
 import { TextureKeys } from '@/config/AssetKeys';
 import { DepthLayers } from '@/config/DepthLayers';
 import { EventKeys } from '@/config/EventKeys';
+import { InputAction } from '@/config/InputConfig';
 import { eventBus } from '@/core/EventBus';
 import { GameState } from '@/core/types';
 import type { Unsubscribe, Vector2 } from '@/core/types';
@@ -30,9 +31,11 @@ import type { PlayerController } from '@/systems/PlayerController';
 import type { WantedSystem } from '@/systems/WantedSystem';
 import type { VehicleSystem } from '@/systems/VehicleSystem';
 import type { GameManager } from '@/managers/GameManager';
+import type { InputManager } from '@/managers/InputManager';
 import type { MobilePlatform } from '@/platform';
 import type { TransportationSystem } from '@/systems/TransportationSystem';
 import { MobileControls } from '@/ui/mobile';
+import { Button } from '@/ui/components';
 import { getObjectiveTarget, getWaypoint, setObjectiveTarget } from '@/gameplay/WorldMapState';
 
 export class UIScene extends Phaser.Scene {
@@ -44,6 +47,7 @@ export class UIScene extends Phaser.Scene {
   private mobileControls: MobileControls | null = null;
   private mobilePlatform: MobilePlatform | null = null;
   private mobileLayoutUnsub: (() => void) | null = null;
+  private phoneButton: Button | null = null;
 
   /** The active mission/gig target in world space, or null. */
   private objectiveTarget: Vector2 | null = getObjectiveTarget();
@@ -69,6 +73,15 @@ export class UIScene extends Phaser.Scene {
       this.mobileControls = new MobileControls(this, this.mobilePlatform);
       this.mobileLayoutUnsub = this.mobilePlatform.onLayoutChanged(() => this.applyMobileLayout());
       this.applyMobileLayout();
+    } else {
+      this.phoneButton = new Button(this, this.scale.width - 86, 92, {
+        text: 'PHONE [N]',
+        width: 148,
+        height: 48,
+        onClick: () => {
+          ServiceLocator.tryResolve<InputManager>(ServiceKeys.Input)?.triggerAction(InputAction.OpenPhone);
+        },
+      }).setDepth(DepthLayers.UI);
     }
     const playerController = ServiceLocator.tryResolve<PlayerController>(ServiceKeys.Player);
     if (playerController?.player) {
@@ -93,11 +106,14 @@ export class UIScene extends Phaser.Scene {
       }),
       eventBus.on(EventKeys.GameStateChanged, (p) => {
         this.applyCursorState(p.current === GameState.Playing);
+        this.applyPhoneButtonState(p.current === GameState.Playing);
       }),
       eventBus.on(EventKeys.HitConfirmed, (p) => this.flashHitMarker(p)),
       eventBus.on(EventKeys.PlayerDied, () => this.showDeathFade()),
       eventBus.on(EventKeys.PlayerRespawned, () => this.hideDeathFade()),
     );
+
+    this.applyPhoneButtonState(this.currentState() === GameState.Playing);
 
     this.scene.bringToTop();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.onShutdown, this);
@@ -180,6 +196,11 @@ export class UIScene extends Phaser.Scene {
     );
     this.transitHud?.setMobileLayout(layout.width, layout.height, layout.safe);
     this.mobileControls?.layoutControls();
+  }
+
+  /** Keep the desktop phone affordance available only during active play. */
+  private applyPhoneButtonState(playing: boolean): void {
+    this.phoneButton?.setEnabled(playing);
   }
 
   /** The screen-space angle from the player to the objective, or null. */
@@ -311,6 +332,7 @@ export class UIScene extends Phaser.Scene {
     this.deathFade?.destroy();
     this.gameplayDebug?.destroy();
     this.mobileControls?.destroy();
+    this.phoneButton?.destroy();
     this.mobileLayoutUnsub?.();
     this.hud = null;
     this.minimap = null;
@@ -318,6 +340,7 @@ export class UIScene extends Phaser.Scene {
     this.deathFade = null;
     this.gameplayDebug = null;
     this.mobileControls = null;
+    this.phoneButton = null;
     this.mobilePlatform = null;
     this.mobileLayoutUnsub = null;
   }

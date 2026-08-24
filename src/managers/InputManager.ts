@@ -41,6 +41,9 @@ export class InputManager extends BaseSceneManager {
   /** Actions pressed on the current frame. */
   private readonly justDown = new Set<InputAction>();
 
+  /** Actions held across a modal boundary; they must be released before firing again. */
+  private readonly suppressedUntilUp = new Set<InputAction>();
+
   /** Last-emitted movement axis, used to suppress duplicate axis events. */
   private prevAxis = { x: 0, y: 0 };
 
@@ -88,6 +91,7 @@ export class InputManager extends BaseSceneManager {
       this.downState.set(action, false);
     }
     this.justDown.clear();
+    this.suppressedUntilUp.clear();
     this.prevAxis = { x: 0, y: 0 };
     this.resetTouchInput();
   }
@@ -112,14 +116,22 @@ export class InputManager extends BaseSceneManager {
       (this.keyboardDown(InputAction.MoveDown) ? 1 : 0) -
       (this.keyboardDown(InputAction.MoveUp) ? 1 : 0);
     const padAxis = this.gamepadAxis(pad);
-    return this.clampAxis({
+    const axis = {
       x: keyboardX + padAxis.x + this.touchMoveAxis.x,
       y: keyboardY + padAxis.y + this.touchMoveAxis.y,
-    });
+    };
+    if (this.suppressedUntilUp.has(InputAction.MoveLeft) || this.suppressedUntilUp.has(InputAction.MoveRight)) {
+      axis.x = 0;
+    }
+    if (this.suppressedUntilUp.has(InputAction.MoveUp) || this.suppressedUntilUp.has(InputAction.MoveDown)) {
+      axis.y = 0;
+    }
+    return this.clampAxis(axis);
   }
 
   /** Right-stick aim vector, or null when no controller aim is active. */
   public getAimVector(): { x: number; y: number } | null {
+    if (this.suppressedUntilUp.has(InputAction.Attack)) return null;
     if (this.touchAimActive) {
       return this.clampAxis(this.touchAimAxis);
     }
@@ -160,6 +172,11 @@ export class InputManager extends BaseSceneManager {
     else this.touchActions.delete(action);
   }
 
+  /** Emit a one-shot semantic action from a UI control without creating held state. */
+  public triggerAction(action: InputAction): void {
+    this.bus.emit(EventKeys.InputActionDown, { action });
+  }
+
   /** Return every touch axis/action to neutral after cancellation or rotation. */
   public resetTouchInput(): void {
     this.touchActions.clear();
@@ -168,6 +185,31 @@ export class InputManager extends BaseSceneManager {
     this.touchAimAxis.x = 0;
     this.touchAimAxis.y = 0;
     this.touchAimActive = false;
+  }
+
+  /**
+   * Clear every gameplay input source before a modal overlay takes ownership.
+   * Phaser also resets scene keys when the gameplay scene pauses; doing it here
+   * makes the transition deterministic even when the request came from touch
+   * or a desktop UI button during the current frame.
+   */
+  public resetGameplayInput(): void {
+    const pad = this.activePad();
+    const held = new Set<InputAction>();
+    for (const action of ALL_INPUT_ACTIONS) {
+      if (this.readActionDown(action, pad)) held.add(action);
+    }
+    this.resetTouchInput();
+    this.scene?.input.keyboard?.resetKeys();
+    for (const keyList of this.keys.values()) {
+      for (const key of keyList) key.reset();
+    }
+    for (const action of ALL_INPUT_ACTIONS) {
+      this.downState.set(action, false);
+    }
+    this.justDown.clear();
+    for (const action of held) this.suppressedUntilUp.add(action);
+    this.prevAxis = { x: 0, y: 0 };
   }
 
   /** Rebind `action` to `keys`; rebuilds live keys if a scene is attached. */
@@ -194,6 +236,14 @@ export class InputManager extends BaseSceneManager {
     for (const action of ALL_INPUT_ACTIONS) {
       const current = this.readActionDown(action, pad);
       const previous = this.downState.get(action) ?? false;
+      if (this.suppressedUntilUp.has(action)) {
+        if (!current) {
+          this.suppressedUntilUp.delete(action);
+        } else {
+          this.downState.set(action, true);
+          continue;
+        }
+      }
       if (current === previous) continue;
 
       this.downState.set(action, current);
@@ -293,6 +343,9 @@ export class InputManager extends BaseSceneManager {
       case InputAction.Cancel:
       case InputAction.Inventory:
         return pad.B || this.gamepadButtonDown(pad, 1);
+      case InputAction.OpenPhone:
+        // Right-stick press is deliberately unused by the gameplay actions.
+        return this.gamepadButtonDown(pad, 11);
       case InputAction.Attack:
         return pad.R2 > 0.25 || this.gamepadButtonDown(pad, 7);
       case InputAction.Pause:
