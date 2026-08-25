@@ -7,6 +7,7 @@ import { t } from '@/config/Strings';
 import { ServiceLocator } from '@/core/ServiceLocator';
 import type { MobilePlatform } from '@/platform';
 import type { PhoneAppDefinition } from '@/phone/PhoneTypes';
+import type { PhonePresentationMode } from '@/phone/PhoneTypes';
 import type { PhoneManager } from '@/managers/PhoneManager';
 import type { SettingsManager } from '@/managers/SettingsManager';
 import { PhoneShell } from '@/ui/phone';
@@ -27,6 +28,8 @@ export class PhoneScene extends Phaser.Scene {
   private navigatingHome = false;
   private closing = false;
   private reducedMotion = false;
+  /** Presentation belongs to the overlay scene, while apps only request it. */
+  private presentationMode: PhonePresentationMode = 'portrait';
 
   constructor() {
     super({ key: SceneKeys.Phone });
@@ -35,6 +38,7 @@ export class PhoneScene extends Phaser.Scene {
   /** Build one shell instance and claim every pointer in the overlay scene. */
   public create(): void {
     this.closing = false;
+    this.presentationMode = 'portrait';
     this.phoneManager = ServiceLocator.tryResolve<PhoneManager>(ServiceKeys.Phone);
     this.platform = ServiceLocator.tryResolve<MobilePlatform>(ServiceKeys.Platform);
     this.reducedMotion = this.prefersReducedMotion();
@@ -90,7 +94,32 @@ export class PhoneScene extends Phaser.Scene {
           safe: { top: 0, right: 0, bottom: 0, left: 0 },
         };
     this.scrim?.setSize(layout.width, layout.height);
-    this.shell?.layout(layout.width, layout.height, layout.safe);
+    this.shell?.layout(layout.width, layout.height, layout.safe, this.presentationMode);
+  }
+
+  /** Reflow the mounted Phone in-game; this never invokes browser fullscreen. */
+  public setPresentationMode(mode: PhonePresentationMode): void {
+    if (this.presentationMode === mode) return;
+    this.presentationMode = mode;
+    this.applyLayout();
+    const shell = this.shell;
+    if (!shell || this.reducedMotion) return;
+    this.tweens.killTweensOf(shell);
+    shell.setScale(0.985);
+    this.tweens.add({
+      targets: shell,
+      scale: 1,
+      duration: 180,
+      ease: 'Cubic.Out',
+    });
+  }
+
+  public getPresentationMode(): PhonePresentationMode {
+    return this.presentationMode;
+  }
+
+  public exitExpandedMode(): void {
+    this.setPresentationMode('portrait');
   }
 
   private startOpenTransition(): void {
@@ -183,7 +212,13 @@ export class PhoneScene extends Phaser.Scene {
     if (!view) return;
     this.add.existing(view);
     this.activeAppView = view;
-    this.shell?.mountAppView(view, app.titleKey ? t(app.titleKey) : app.title, () => this.navigateHome());
+    this.shell?.mountAppView(view, app.titleKey ? t(app.titleKey) : app.title, () => {
+      if (this.presentationMode !== 'portrait') {
+        this.exitExpandedMode();
+        return;
+      }
+      this.navigateHome();
+    });
     this.transitioningView = view;
     const animatedView = view as Phaser.GameObjects.GameObject & {
       setAlpha?: (alpha: number) => Phaser.GameObjects.GameObject;
@@ -257,10 +292,17 @@ export class PhoneScene extends Phaser.Scene {
       listCatalogApps: (): PhoneAppDefinition[] =>
         this.phoneManager?.registry.listCatalogApps({ scene: this }) ?? [],
       installApp: (appId: string): boolean => this.phoneManager?.installApp(appId) ?? false,
+      setPresentationMode: (mode: PhonePresentationMode): void => this.setPresentationMode(mode),
+      getPresentationMode: (): PhonePresentationMode => this.presentationMode,
+      exitExpandedMode: (): void => this.exitExpandedMode(),
     };
   }
 
   private onEscape(): void {
+    if (this.presentationMode !== 'portrait') {
+      this.exitExpandedMode();
+      return;
+    }
     if (this.activeApp) {
       this.navigateHome();
       return;

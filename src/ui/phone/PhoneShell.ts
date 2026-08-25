@@ -4,7 +4,7 @@ import { DepthLayers } from '@/config/DepthLayers';
 import { t } from '@/config/Strings';
 import { UIComponent } from '@/ui/UIComponent';
 import { Button, Label } from '@/ui/components';
-import type { PhoneAppDefinition } from '@/phone/PhoneTypes';
+import type { PhoneAppDefinition, PhonePresentationMode } from '@/phone/PhoneTypes';
 
 /** Safe-area values in the scene's logical coordinate space. */
 export interface PhoneShellSafeArea {
@@ -36,6 +36,9 @@ export class PhoneShell extends UIComponent {
   private readonly details = this.uiScene.add.graphics();
   private readonly appGrid = this.uiScene.add.container();
   private readonly appViewContainer = this.uiScene.add.container();
+  /** Hidden stencil geometry matching the physical screen opening. */
+  private screenMaskShape: Phaser.GameObjects.Graphics | null = null;
+  private screenMask: Phaser.Display.Masks.GeometryMask | null = null;
   private readonly title = new Label(this.uiScene, 0, 0, 'PIXEL CITY', {
     fontSize: '12px',
     fontStyle: 'bold',
@@ -66,6 +69,8 @@ export class PhoneShell extends UIComponent {
   private screenHeight = 0;
   private screenOriginX = 0;
   private screenOriginY = 0;
+  /** Last presentation requested by PhoneScene; preserves mode across shell relayouts. */
+  private presentationMode: PhonePresentationMode = 'portrait';
   private lastLayout = {
     width: 1280,
     height: 720,
@@ -110,22 +115,36 @@ export class PhoneShell extends UIComponent {
     this.layout(1280, 720, { top: 0, right: 0, bottom: 0, left: 0 });
   }
 
-  /** Refit the portrait body and all child controls inside safe insets. */
-  public layout(width: number, height: number, safe: PhoneShellSafeArea): this {
+  /** Refit the body and all child controls inside safe insets. */
+  public layout(
+    width: number,
+    height: number,
+    safe: PhoneShellSafeArea,
+    presentationMode: PhonePresentationMode = 'portrait',
+  ): this {
+    this.presentationMode = presentationMode;
     this.lastLayout = { width, height, safe: { ...safe } };
     const availableWidth = Math.max(120, width - safe.left - safe.right - OUTER_GUTTER * 2);
     const availableHeight = Math.max(180, height - safe.top - safe.bottom - OUTER_GUTTER * 2);
-    let bodyHeight = Math.min(MAX_BODY_HEIGHT, availableHeight);
-    let bodyWidth = bodyHeight * BODY_RATIO;
-    if (bodyWidth > availableWidth) {
-      bodyWidth = availableWidth;
-      bodyHeight = bodyWidth / BODY_RATIO;
+    let bodyHeight: number;
+    let bodyWidth: number;
+    if (presentationMode === 'landscape-fullscreen') {
+      // This is an in-game wide presentation, not browser fullscreen. The
+      // shell stays upright and reflows its content into the usable viewport.
+      bodyWidth = Math.max(104, Math.min(availableWidth, Math.floor(availableWidth / 8) * 8));
+      bodyHeight = Math.max(160, Math.min(availableHeight, Math.floor(availableHeight / 8) * 8));
+    } else {
+      bodyHeight = Math.min(MAX_BODY_HEIGHT, availableHeight);
+      bodyWidth = bodyHeight * BODY_RATIO;
+      if (bodyWidth > availableWidth) {
+        bodyWidth = availableWidth;
+        bodyHeight = bodyWidth / BODY_RATIO;
+      }
+      // Keep the procedural art aligned to the project's pixel grid where the
+      // available viewport allows it, while never overflowing a small screen.
+      bodyWidth = Math.max(104, Math.min(availableWidth, Math.round(bodyWidth / 8) * 8));
+      bodyHeight = Math.max(160, Math.min(availableHeight, Math.round(bodyHeight / 8) * 8));
     }
-
-    // Keep the procedural art aligned to the project's pixel grid where the
-    // available viewport allows it, while never overflowing a small screen.
-    bodyWidth = Math.max(104, Math.round(bodyWidth / 8) * 8);
-    bodyHeight = Math.max(184, Math.round(bodyHeight / 8) * 8);
     const centerX = (safe.left + width - safe.right) / 2;
     const centerY = (safe.top + height - safe.bottom) / 2;
     this.setPosition(Math.round(centerX), Math.round(centerY));
@@ -155,6 +174,7 @@ export class PhoneShell extends UIComponent {
     this.screen.fillRoundedRect(screenX, screenY, this.screenWidth, this.screenHeight, SCREEN_RADIUS);
     this.screen.lineStyle(2, COLORS.UI_BORDER, 1);
     this.screen.strokeRoundedRect(screenX, screenY, this.screenWidth, this.screenHeight, SCREEN_RADIUS);
+    this.rebuildScreenMask(screenX, screenY);
 
     this.details.clear();
     this.details.fillStyle(COLORS.UI_BORDER, 1);
@@ -192,6 +212,28 @@ export class PhoneShell extends UIComponent {
     return this;
   }
 
+  /** Recreate the screen stencil so relayout cannot retain stale geometry. */
+  private rebuildScreenMask(screenX: number, screenY: number): void {
+    this.appViewContainer.clearMask(false);
+    this.appGrid.clearMask(false);
+    this.screenMask?.destroy();
+    this.screenMask = null;
+    if (this.screenMaskShape) {
+      this.remove(this.screenMaskShape, false);
+      this.screenMaskShape.destroy();
+      this.screenMaskShape = null;
+    }
+    const shape = this.uiScene.make.graphics({ x: 0, y: 0 }, false);
+    shape.setVisible(false);
+    shape.fillStyle(0xffffff, 1);
+    shape.fillRoundedRect(screenX, screenY, this.screenWidth, this.screenHeight, SCREEN_RADIUS);
+    this.add(shape);
+    this.screenMaskShape = shape;
+    this.screenMask = shape.createGeometryMask();
+    this.appViewContainer.setMask(this.screenMask);
+    this.appGrid.setMask(this.screenMask);
+  }
+
   /** Render installed apps generically; the built-in Store is the first entry. */
   public setApps(apps: readonly PhoneAppDefinition[], onOpen: (app: PhoneAppDefinition) => void): this {
     this.apps = apps;
@@ -214,7 +256,7 @@ export class PhoneShell extends UIComponent {
     this.homeVisible = false;
     this.title.setText(title);
     this.backButton.setOnClick(onBack);
-    this.layout(this.lastLayout.width, this.lastLayout.height, this.lastLayout.safe);
+    this.layout(this.lastLayout.width, this.lastLayout.height, this.lastLayout.safe, this.presentationMode);
     return this;
   }
 
@@ -228,7 +270,7 @@ export class PhoneShell extends UIComponent {
     this.emptyState.setVisible(this.apps.length === 0);
     this.emptyHint.setVisible(this.apps.length === 0);
     this.layoutMountedView();
-    this.layout(this.lastLayout.width, this.lastLayout.height, this.lastLayout.safe);
+    this.layout(this.lastLayout.width, this.lastLayout.height, this.lastLayout.safe, this.presentationMode);
     return this;
   }
 
@@ -243,6 +285,19 @@ export class PhoneShell extends UIComponent {
       layout?: (width: number, height: number) => void;
     };
     candidate.layout?.(this.screenWidth, this.screenHeight);
+  }
+
+  public override destroy(fromScene?: boolean): void {
+    this.appViewContainer.clearMask(false);
+    this.appGrid.clearMask(false);
+    this.screenMask?.destroy();
+    this.screenMask = null;
+    if (this.screenMaskShape) {
+      this.remove(this.screenMaskShape, false);
+      this.screenMaskShape.destroy();
+      this.screenMaskShape = null;
+    }
+    super.destroy(fromScene);
   }
 
   private redrawAppGrid(screenX: number, screenY: number): void {

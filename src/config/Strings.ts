@@ -86,6 +86,11 @@ export type StringKey =
   | 'phoneSnappLegendDriver'
   | 'phoneSnappLegendPickup'
   | 'phoneSnappLegendDestination'
+  | 'phoneSnappPickupWait'
+  | 'phoneSnappNoShow'
+  | 'phoneSnappEnterSnapp'
+  | 'phoneSnappExpandMap'
+  | 'phoneSnappPortraitMap'
   | 'phoneNoApps'
   | 'phoneNoAppsCompact'
   | 'phoneRegistryReady'
@@ -174,6 +179,11 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappLegendDriver: 'DRIVER',
     phoneSnappLegendPickup: 'PICKUP',
     phoneSnappLegendDestination: 'DESTINATION',
+    phoneSnappPickupWait: 'Driver waiting',
+    phoneSnappNoShow: 'Your driver left because the 2-minute pickup window expired.',
+    phoneSnappEnterSnapp: 'ENTER SNAPP  E',
+    phoneSnappExpandMap: 'Open landscape map',
+    phoneSnappPortraitMap: 'Return to portrait Phone',
     phoneNoApps: 'NO APPS AVAILABLE',
     phoneNoAppsCompact: 'NO APPS',
     phoneRegistryReady: 'APP REGISTRY READY',
@@ -258,6 +268,11 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappLegendDriver: 'CONDUCTOR',
     phoneSnappLegendPickup: 'RECOGIDA',
     phoneSnappLegendDestination: 'DESTINO',
+    phoneSnappPickupWait: 'Conductor esperando',
+    phoneSnappNoShow: 'Tu conductor se fue porque venció la ventana de recogida de 2 minutos.',
+    phoneSnappEnterSnapp: 'SUBIR A SNAPP  E',
+    phoneSnappExpandMap: 'Abrir mapa apaisado',
+    phoneSnappPortraitMap: 'Volver al teléfono vertical',
     phoneNoApps: 'NO HAY APPS DISPONIBLES',
     phoneNoAppsCompact: 'SIN APPS',
     phoneRegistryReady: 'REGISTRO DE APPS LISTO',
@@ -342,6 +357,11 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappLegendDriver: 'CONDUCTEUR',
     phoneSnappLegendPickup: 'PRISE EN CHARGE',
     phoneSnappLegendDestination: 'DESTINATION',
+    phoneSnappPickupWait: 'Conducteur en attente',
+    phoneSnappNoShow: 'Votre conducteur est parti après la fenêtre de prise en charge de 2 minutes.',
+    phoneSnappEnterSnapp: 'MONTER DANS SNAPP  E',
+    phoneSnappExpandMap: 'Ouvrir la carte paysage',
+    phoneSnappPortraitMap: 'Revenir au téléphone portrait',
     phoneNoApps: 'AUCUNE APP DISPONIBLE',
     phoneNoAppsCompact: 'AUCUNE APP',
     phoneRegistryReady: 'REGISTRE DES APPS PRÊT',

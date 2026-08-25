@@ -12,6 +12,7 @@ import { ServiceLocator } from '@/core/ServiceLocator';
 import { ServiceKeys } from '@/config/ServiceKeys';
 import { EventKeys } from '@/config/EventKeys';
 import { PLAYER, VEHICLE } from '@/config/Constants';
+import { t } from '@/config/Strings';
 import type { ISerializable } from '@/core/interfaces';
 import type { Json, Vector2 } from '@/core/types';
 import {
@@ -185,6 +186,13 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   /** Route authoring can require exact graph searches, so it is scheduled one line per frame. */
   private readonly routeInitializationQueue: RouteInitializationTask[] = [];
   private runtimeReady = false;
+  /**
+   * Monotonic transport clock; never sourced from a paused Scene clock.
+   * The old path wrote stateSince from scene.time.now but compared it with
+   * ManagerRegistry STEP time, so resuming after Phone pause could expire
+   * APPROACHING_PICKUP/WAITING_FOR_PASSENGER immediately.
+   */
+  private serviceClockMs = 0;
   private serviceAccumulatorMs = 0;
   private passengerPlanAccumulatorMs = 0;
   private nextSpawnAttemptAt = 0;
@@ -241,7 +249,8 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     this.player = null;
   }
 
-  public update(time: number, delta: number): void {
+  public update(_time: number, delta: number): void {
+    this.advanceServiceClock(delta);
     this.resolveServices();
     this.initializeRuntime();
     this.processRouteInitialization();
@@ -252,13 +261,13 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     this.passengerPlanAccumulatorMs += Math.min(delta, PASSENGER_PLAN_TICK_MS * 2);
     while (this.serviceAccumulatorMs >= SERVICE_TICK_MS) {
       this.serviceAccumulatorMs -= SERVICE_TICK_MS;
-      this.updateServices(time, SERVICE_TICK_MS);
+      this.updateServices(this.serviceClockMs, SERVICE_TICK_MS);
     }
     if (this.passengerPlanAccumulatorMs >= PASSENGER_PLAN_TICK_MS) {
       this.passengerPlanAccumulatorMs = 0;
       this.refreshPassengerPlans();
     }
-    this.refreshSnappTracking(time);
+    this.refreshSnappTracking(this.serviceClockMs);
   }
 
   /**
@@ -267,7 +276,8 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
    * is open. No player, pedestrian, mission, economy, or ambient traffic loop
    * is ticked by this path.
    */
-  public updateWhilePhoneOpen(time: number, delta: number): void {
+  public updateWhilePhoneOpen(_time: number, delta: number): void {
+    this.advanceServiceClock(delta);
     this.resolveServices();
     this.initializeRuntime();
     this.processRouteInitialization();
@@ -278,14 +288,15 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       : this.taxis.get(booking.assignedVehicleId) ?? null;
     if (!booking || !taxi || this.isSnappTerminal(booking.state)) return;
     this.snappTrackingAccumulatorMs += Math.max(0, Math.min(1000, delta));
-    this.updateTaxi(taxi, time);
-    this.refreshSnappTracking(time);
+    this.updateTaxi(taxi, this.serviceClockMs);
+    this.refreshSnappTracking(this.serviceClockMs);
   }
 
   /** Durable transit discovery only; vehicle/AI state is intentionally regenerated. */
   public serialize(): Json {
     return {
       version: 2,
+      serviceClockMs: this.serviceClockMs,
       discoveredStopIds: Array.from(this.discoveredStopIds).sort(),
       snapp: this.snappBookingValue as unknown as Json,
     };
@@ -293,6 +304,10 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
 
   public deserialize(data: Json): void {
     if (typeof data !== 'object' || data === null || Array.isArray(data)) return;
+    const savedClock = data['serviceClockMs'];
+    if (typeof savedClock === 'number' && Number.isFinite(savedClock) && savedClock >= 0) {
+      this.serviceClockMs = savedClock;
+    }
     const ids = data.discoveredStopIds;
     if (Array.isArray(ids)) {
       this.discoveredStopIds.clear();
@@ -451,6 +466,8 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       quote: null,
       payment: 'unpaid',
       assignedVehicleId: null,
+      driverArrivedAtServiceMs: null,
+      pickupDeadlineServiceMs: null,
       createdAt: Date.now(),
       error: null,
     };
@@ -662,15 +679,19 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   }
 
   /** Cancel before boarding and refund exactly once; riding cancellation is not offered in the MVP. */
-  public cancelSnappBooking(): boolean {
+  public cancelSnappBooking(reason = 'Ride cancelled'): boolean {
     const booking = this.snappBookingValue;
     if (!booking || !['DRIVER_EN_ROUTE', 'DRIVER_ARRIVED'].includes(booking.state)) return false;
     const taxi = booking.assignedVehicleId === null ? null : this.taxis.get(booking.assignedVehicleId) ?? null;
     if (taxi && taxi.state !== 'APPROACHING_PICKUP' && taxi.state !== 'WAITING_FOR_PASSENGER') return false;
     if (taxi) this.returnTaxiToService(taxi);
+    this.log.info(`Snapp ${booking.id} cancelled: ${reason}`);
     booking.state = 'CANCELLED';
-    const refunded = this.refundSnappBooking('Ride cancelled');
+    const refunded = this.refundSnappBooking(reason);
     this.bus.emit(EventKeys.SnappBookingCancelled, { bookingId: booking.id, refunded });
+    if (reason === t('phoneSnappNoShow')) {
+      this.bus.emit(EventKeys.UIToast, { message: reason, durationMs: 4200 });
+    }
     return true;
   }
 
@@ -680,7 +701,12 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     if (!booking || booking.assignedVehicleId !== vehicleId || booking.state !== 'DRIVER_ARRIVED') return false;
     const playerPosition = this.player?.playerPosition;
     const taxi = this.taxis.get(vehicleId);
-    if (!playerPosition || !taxi || this.distanceSq(playerPosition, taxi.vehicle.sprite) > TAXI_INTERACTION_RANGE * TAXI_INTERACTION_RANGE) {
+    if (
+      !playerPosition ||
+      !taxi ||
+      taxi.snappBookingId !== booking.id ||
+      this.distanceSq(playerPosition, taxi.vehicle.sprite) > TAXI_INTERACTION_RANGE * TAXI_INTERACTION_RANGE
+    ) {
       return false;
     }
     return this.requestTaxiBoarding(vehicleId);
@@ -788,11 +814,27 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       // A passenger cannot hail, enter, or hijack another service vehicle.
       return null;
     }
+    const snappBooking = this.snappBookingValue;
+    if (snappBooking?.state === 'DRIVER_ARRIVED' && snappBooking.assignedVehicleId !== null) {
+      const snappTaxi = this.taxis.get(snappBooking.assignedVehicleId) ?? null;
+      if (
+        snappTaxi &&
+        snappTaxi.snappBookingId === snappBooking.id &&
+        this.distanceSq(position, snappTaxi.vehicle.sprite) <= TAXI_INTERACTION_RANGE * TAXI_INTERACTION_RANGE &&
+        this.taxiCanBoard(snappTaxi)
+      ) {
+        return {
+          prompt: t('phoneSnappEnterSnapp'),
+          kind: 'enter-taxi',
+          distanceSq: this.distanceSq(position, snappTaxi.vehicle.sprite),
+        };
+      }
+    }
     const pickupTaxi = this.nearestTaxi(
       position,
       TAXI_INTERACTION_RANGE,
       ['WAITING_FOR_PASSENGER'],
-      (candidate) => this.taxiCanBoard(candidate),
+      (candidate) => candidate.snappBookingId === null && this.taxiCanBoard(candidate),
     );
     if (pickupTaxi) {
       return {
@@ -1679,6 +1721,8 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         const booking = this.snappBookingValue;
         if (taxi.snappBookingId && booking?.id === taxi.snappBookingId) {
           booking.state = 'DRIVER_ARRIVED';
+          booking.driverArrivedAtServiceMs = this.serviceClockMs;
+          booking.pickupDeadlineServiceMs = this.serviceClockMs + SNAPP_CONFIG.passengerPickupWaitMs;
           this.bus.emit(EventKeys.SnappDriverArrived, {
             bookingId: booking.id,
             vehicleId: taxi.vehicle.id,
@@ -1690,9 +1734,14 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         }
       }
     } else if (taxi.state === 'WAITING_FOR_PASSENGER') {
-      if (time - taxi.stateSince > TAXI_WAITING_FOR_PASSENGER_TIMEOUT_MS) {
-        if (taxi.snappBookingId) this.failSnappBooking('Pickup window expired');
-        else this.returnTaxiToService(taxi);
+      const booking = this.snappBookingValue;
+      if (taxi.snappBookingId && booking?.id === taxi.snappBookingId) {
+        const deadline = booking.pickupDeadlineServiceMs;
+        if (deadline !== null && this.serviceClockMs >= deadline) {
+          this.cancelSnappBooking(t('phoneSnappNoShow'));
+        }
+      } else if (time - taxi.stateSince >= TAXI_WAITING_FOR_PASSENGER_TIMEOUT_MS) {
+        this.returnTaxiToService(taxi);
       }
     } else if (taxi.state === 'PASSENGER_BOARDING') {
       if (this.player?.playerIsTransitPassenger && this.player.currentVehicle?.id === taxi.vehicle.id) {
@@ -1925,6 +1974,14 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       return;
     }
     if (interaction.kind === 'enter-taxi') {
+      const booking = this.snappBookingValue;
+      if (booking?.state === 'DRIVER_ARRIVED' && booking.assignedVehicleId !== null) {
+        const assigned = this.taxis.get(booking.assignedVehicleId) ?? null;
+        if (assigned && this.taxiCanBoard(assigned)) {
+          this.requestSnappBoarding(assigned.vehicle.id);
+        }
+        return;
+      }
       const taxi = this.nearestTaxi(
         position,
         TAXI_INTERACTION_RANGE,
@@ -1987,18 +2044,27 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       this.bus.emit(EventKeys.UIToast, { message: 'Taxi is occupied' });
       return false;
     }
+    const isSnapp = taxi.snappBookingId !== null;
     traffic.setDriverStopped(taxi.vehicle, true);
     this.setTaxiState(taxi, 'PASSENGER_BOARDING');
+    if (!player.beginPassengerBoarding(taxi.vehicle, seat)) {
+      occupants.releasePlayerPassengerSeat(taxi.vehicle);
+      if (isSnapp) {
+        // The authoritative booking remains waiting; Phone teardown or a
+        // transient occupant rejection must never cancel a paid ride.
+        this.setTaxiState(taxi, 'WAITING_FOR_PASSENGER');
+        traffic.setDriverStopped(taxi.vehicle, true);
+      } else {
+        this.returnTaxiToService(taxi);
+      }
+      return false;
+    }
     if (taxi.snappBookingId) {
       const booking = this.snappBookingValue;
       if (booking?.id === taxi.snappBookingId) {
+        booking.state = 'PASSENGER_BOARDING';
         this.bus.emit(EventKeys.SnappBoardingStarted, { bookingId: booking.id, vehicleId: taxi.vehicle.id });
       }
-    }
-    if (!player.beginPassengerBoarding(taxi.vehicle, seat)) {
-      occupants.releasePlayerPassengerSeat(taxi.vehicle);
-      this.returnTaxiToService(taxi);
-      return false;
     }
     return true;
   }
@@ -2081,8 +2147,11 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   }
 
   private setTaxiState(taxi: TaxiRuntime, state: TaxiState): void {
+    if (taxi.state !== state && taxi.snappBookingId) {
+      this.log.debug(`Snapp ${taxi.snappBookingId}: ${taxi.state} -> ${state} at ${this.serviceClockMs}ms`);
+    }
     taxi.state = state;
-    taxi.stateSince = this.now();
+    taxi.stateSince = this.serviceClockMs;
   }
 
   private isTaxiDestinationSelectionState(state: TaxiState): boolean {
@@ -2591,7 +2660,7 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     const driverRoute = isDriverPhase
       ? this.traffic?.routePreview(driverPosition, booking.pickupAnchor) ?? null
       : null;
-    const passengerRoute = booking.state === 'RIDING' || booking.state === 'ARRIVED'
+    const passengerRoute = booking.state === 'PASSENGER_BOARDING' || booking.state === 'RIDING' || booking.state === 'ARRIVED'
       ? this.traffic?.routePreview(driverPosition, destinationPosition) ?? booking.quote?.route ?? null
       : booking.quote?.route ?? null;
     const routeDistance = isDriverPhase
@@ -2600,6 +2669,10 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     const initialDistance = booking.quote?.route.distancePx ?? Math.max(1, routeDistance);
     const remainingDistancePx = Math.max(0, routeDistance);
     const progressRatio = Phaser.Math.Clamp(1 - remainingDistancePx / Math.max(1, initialDistance), 0, 1);
+    const waitingForPassenger = booking.state === 'DRIVER_ARRIVED';
+    const pickupWaitRemainingMs = waitingForPassenger && booking.pickupDeadlineServiceMs !== null
+      ? Math.max(0, booking.pickupDeadlineServiceMs - this.serviceClockMs)
+      : 0;
     const snapshot: SnappTrackingSnapshot = {
       bookingId: booking.id,
       vehicleId: taxi.vehicle.id,
@@ -2614,6 +2687,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       remainingDistancePx,
       estimatedTimeOfArrivalMs: Math.round((remainingDistancePx / SNAPP_CONFIG.averageSpeedPxPerSecond) * 1000),
       progressRatio,
+      driverArrivedAtServiceMs: booking.driverArrivedAtServiceMs,
+      pickupDeadlineServiceMs: booking.pickupDeadlineServiceMs,
+      pickupWaitRemainingMs,
       vehicleHeading: taxi.vehicle.movement.heading,
       timestamp: time,
       updateSequence: this.snappTrackingSequence + 1,
@@ -2703,6 +2779,7 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   private failSnappBooking(reason: string): void {
     const booking = this.snappBookingValue;
     if (!booking || this.isSnappTerminal(booking.state) || booking.state === 'QUOTE_READY' || booking.state === 'SELECTING_DESTINATION') return;
+    this.log.warn(`Snapp ${booking.id} failed from ${booking.state}: ${reason}`);
     const taxi = booking.assignedVehicleId === null ? null : this.taxis.get(booking.assignedVehicleId) ?? null;
     if (taxi) {
       if (taxi.state === 'PASSENGER_BOARDING') this.occupants?.releasePlayerPassengerSeat(taxi.vehicle);
@@ -2772,13 +2849,29 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     taxi.vehicle.sprite.setData('snappBookingId', booking.id);
     taxi.vehicle.sprite.setData('serviceLivery', 'snapp');
     taxi.vehicle.sprite.setTint(SNAPP_CONFIG.turquoise);
-    if (taxi.pickupLaneStop) {
+    if (booking.state === 'DRIVER_ARRIVED') {
+      booking.driverArrivedAtServiceMs ??= this.serviceClockMs;
+      booking.pickupDeadlineServiceMs ??= this.serviceClockMs + SNAPP_CONFIG.passengerPickupWaitMs;
+      this.setTaxiState(taxi, 'WAITING_FOR_PASSENGER');
+      this.traffic?.setDriverStopped(taxi.vehicle, true);
+    } else if (booking.state === 'PASSENGER_BOARDING') {
+      this.setTaxiState(taxi, 'PASSENGER_BOARDING');
+      this.traffic?.setDriverStopped(taxi.vehicle, true);
+    } else if (booking.state === 'RIDING' || booking.state === 'ARRIVED') {
+      this.setTaxiState(taxi, booking.state === 'ARRIVED' ? 'ARRIVING' : 'IN_SERVICE');
+    } else {
+      this.setTaxiState(taxi, 'APPROACHING_PICKUP');
+    }
+    const pickupPhase = booking.state === 'DRIVER_EN_ROUTE' || booking.state === 'DRIVER_ARRIVED' || booking.state === 'PASSENGER_BOARDING';
+    const restoredTarget = pickupPhase ? taxi.pickupLaneStop : taxi.dropoffLaneStop;
+    const restoredStopped = booking.state === 'DRIVER_ARRIVED' || booking.state === 'PASSENGER_BOARDING' || booking.state === 'ARRIVED';
+    if (restoredTarget) {
       this.traffic?.configureDriverAtLaneStop(
         taxi.vehicle,
         () => this.taxiTarget(taxi.vehicle.id),
-        taxi.pickupLaneStop,
+        restoredTarget,
         TAXI_STOP_RANGE,
-        false,
+        restoredStopped,
       );
     } else {
       this.traffic?.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
@@ -2799,6 +2892,8 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         ? { ...booking.destination, position: { ...booking.destination.position } }
         : null,
       dropoffPosition: booking.dropoffPosition ? { ...booking.dropoffPosition } : null,
+      driverArrivedAtServiceMs: booking.driverArrivedAtServiceMs ?? null,
+      pickupDeadlineServiceMs: booking.pickupDeadlineServiceMs ?? null,
       quote: booking.quote
         ? {
             ...booking.quote,
@@ -2829,6 +2924,8 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       pickupAnchor,
       pickupWalkingDistancePx: booking.pickupWalkingDistancePx ?? Math.hypot(pickupAnchor.x - booking.pickup.x, pickupAnchor.y - booking.pickup.y),
       pickupAnchorLabel: booking.pickupAnchorLabel ?? 'Nearest legal curb',
+      driverArrivedAtServiceMs: booking.driverArrivedAtServiceMs ?? null,
+      pickupDeadlineServiceMs: booking.pickupDeadlineServiceMs ?? null,
       dropoffPosition,
       quote: quote
         ? {
@@ -3037,6 +3134,12 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   }
 
   private now(): number {
-    return this.scene?.time.now ?? 0;
+    return this.serviceClockMs;
+  }
+
+  /** Advance exactly once from the bounded ManagerRegistry delta. */
+  private advanceServiceClock(delta: number): void {
+    const boundedDelta = Math.max(0, Math.min(100, Number.isFinite(delta) ? delta : 0));
+    this.serviceClockMs += boundedDelta;
   }
 }

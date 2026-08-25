@@ -13,7 +13,9 @@ export const SNAPP_CONFIG = {
   averageSpeedPxPerSecond: 190,
   driverSearchTimeoutMs: 90000,
   pickupTimeoutMs: 90000,
-  waitingForPassengerTimeoutMs: 60000,
+  /** Time the driver waits after reaching the exact operational pickup curb. */
+  passengerPickupWaitMs: 120_000,
+  waitingForPassengerTimeoutMs: 120_000,
   turquoise: 0x13c8bc,
   marker: 0x13c8bc,
   /** Maximum walking distance from the request pose to a legal pickup curb. */

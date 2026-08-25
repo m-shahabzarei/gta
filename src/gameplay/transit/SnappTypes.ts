@@ -10,6 +10,7 @@ export const SNAPP_BOOKING_STATES = [
   'PAYMENT_PENDING',
   'DRIVER_EN_ROUTE',
   'DRIVER_ARRIVED',
+  'PASSENGER_BOARDING',
   'RIDING',
   'ARRIVED',
   'COMPLETED',
@@ -52,6 +53,10 @@ export interface SnappBookingSnapshot {
   quote: SnappQuote | null;
   payment: SnappPaymentState;
   assignedVehicleId: number | null;
+  /** Monotonic transportation-service time at the exact pickup arrival. */
+  driverArrivedAtServiceMs: number | null;
+  /** Monotonic deadline for the player's two-minute boarding window. */
+  pickupDeadlineServiceMs: number | null;
   createdAt: number;
   error: string | null;
 }
@@ -71,6 +76,10 @@ export interface SnappTrackingSnapshot {
   remainingDistancePx: number;
   estimatedTimeOfArrivalMs: number;
   progressRatio: number;
+  /** Service-clock arrival/deadline values copied from the authoritative booking. */
+  driverArrivedAtServiceMs: number | null;
+  pickupDeadlineServiceMs: number | null;
+  pickupWaitRemainingMs: number;
   vehicleHeading: number;
   timestamp: number;
   updateSequence: number;
@@ -189,6 +198,8 @@ export function isSnappBookingSnapshot(value: Json): boolean {
     isQuote() &&
     (payment === 'unpaid' || payment === 'paid' || payment === 'refunded') &&
     (assignedVehicleId === null || (typeof assignedVehicleId === 'number' && Number.isInteger(assignedVehicleId))) &&
+    (record['driverArrivedAtServiceMs'] === undefined || record['driverArrivedAtServiceMs'] === null || (typeof record['driverArrivedAtServiceMs'] === 'number' && Number.isFinite(record['driverArrivedAtServiceMs']))) &&
+    (record['pickupDeadlineServiceMs'] === undefined || record['pickupDeadlineServiceMs'] === null || (typeof record['pickupDeadlineServiceMs'] === 'number' && Number.isFinite(record['pickupDeadlineServiceMs']))) &&
     typeof record['createdAt'] === 'number' &&
     Number.isFinite(record['createdAt']) &&
     (record['error'] === null || typeof record['error'] === 'string')

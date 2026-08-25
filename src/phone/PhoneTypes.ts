@@ -3,6 +3,9 @@ import type Phaser from 'phaser';
 import type { StringKey } from '@/config/Strings';
 import type { Json } from '@/core/types';
 
+/** In-game presentation modes owned by PhoneScene (never browser fullscreen). */
+export type PhonePresentationMode = 'portrait' | 'landscape-fullscreen';
+
 /** Context available while an app decides whether it should be shown. */
 export interface PhoneAppAvailabilityContext {
   /** The current phone scene, when the registry is queried by the shell. */
@@ -21,6 +24,12 @@ export interface PhoneAppContext extends PhoneAppAvailabilityContext {
   listCatalogApps: () => PhoneAppDefinition[];
   /** Install one catalog app; returns false for unknown/already-installed ids. */
   installApp: (appId: string) => boolean;
+  /** Reflow the existing Phone presentation without recreating the app view. */
+  setPresentationMode: (mode: PhonePresentationMode) => void;
+  /** Read the current in-game Phone presentation mode. */
+  getPresentationMode: () => PhonePresentationMode;
+  /** Return to the portrait Phone presentation. */
+  exitExpandedMode: () => void;
 }
 
 /** Lifecycle context with the app definition that is being opened/closed. */

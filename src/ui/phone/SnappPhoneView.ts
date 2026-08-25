@@ -24,6 +24,7 @@ const TEXT = `#${COLORS.TEXT.toString(16).padStart(6, '0')}`;
 
 /** Focused Snapp MVP UI; all gameplay mutations go through TransportationSystem. */
 export class SnappPhoneView extends UIComponent {
+  private readonly context: PhoneAppContext;
   private readonly transportation: TransportationSystem | null;
   private readonly player: PlayerController | null;
   private readonly world: WorldManager | null;
@@ -39,6 +40,13 @@ export class SnappPhoneView extends UIComponent {
   private trackingSnapshot: SnappTrackingSnapshot | null = null;
   private mapGraphics: Phaser.GameObjects.Graphics | null = null;
   private mapZone: Phaser.GameObjects.Zone | null = null;
+  private mapViewportContainer: Phaser.GameObjects.Container | null = null;
+  private mapWorldLayer: Phaser.GameObjects.Container | null = null;
+  private mapOverlayLayer: Phaser.GameObjects.Container | null = null;
+  private mapMaskShape: Phaser.GameObjects.Graphics | null = null;
+  private mapMask: Phaser.Display.Masks.GeometryMask | null = null;
+  private mapMode: 'destination' | 'status' | null = null;
+  private mapInitialized = false;
   private mapRect = { x: 12, y: 90, width: 216, height: 190 };
   private mapCenter = { x: 0, y: 0 };
   private mapZoom = 1;
@@ -47,9 +55,12 @@ export class SnappPhoneView extends UIComponent {
   private mapLastPointer = { x: 0, y: 0 };
   private selectedMapPoint: Phaser.Math.Vector2 | null = null;
   private readonly roadNodes = new Map<number, { x: number; y: number }>();
+  private statusRemainingLabel: Label | null = null;
+  private statusWaitLabel: Label | null = null;
 
-  constructor(scene: Phaser.Scene, _context: PhoneAppContext) {
+  constructor(scene: Phaser.Scene, context: PhoneAppContext) {
     super(scene);
+    this.context = context;
     this.transportation = ServiceLocator.tryResolve<TransportationSystem>(ServiceKeys.Transportation);
     this.player = ServiceLocator.tryResolve<PlayerController>(ServiceKeys.Player);
     this.world = ServiceLocator.tryResolve<WorldManager>(ServiceKeys.World);
@@ -78,7 +89,10 @@ export class SnappPhoneView extends UIComponent {
     }
     this.unsubs.push(eventBus.on(EventKeys.SnappTrackingUpdated, (snapshot) => {
       this.trackingSnapshot = snapshot;
-      if (this.viewState === 'status' && this.mapGraphics) this.redrawMap();
+      if (this.viewState === 'status' && this.mapGraphics) {
+        this.redrawMap();
+        this.updateStatusOverlay(snapshot);
+      }
       else this.render();
     }));
     this.render();
@@ -97,6 +111,7 @@ export class SnappPhoneView extends UIComponent {
     this.paymentTimer = null;
     for (const unsub of this.unsubs) unsub();
     this.unsubs.length = 0;
+    this.disposeMapLayers();
     this.content.destroy(true);
     this.mapGraphics = null;
     this.mapZone = null;
@@ -104,12 +119,13 @@ export class SnappPhoneView extends UIComponent {
   }
 
   private render(): void {
+    this.disposeMapLayers();
     this.content.removeAll(true);
-    this.mapGraphics = null;
-    this.mapZone = null;
+    this.statusRemainingLabel = null;
+    this.statusWaitLabel = null;
     const booking = this.transportation?.snappBooking ?? null;
     this.trackingSnapshot = this.transportation?.snappTracking ?? this.trackingSnapshot;
-    if (booking?.state === 'DRIVER_EN_ROUTE' || booking?.state === 'DRIVER_ARRIVED' || booking?.state === 'RIDING' || booking?.state === 'ARRIVED') {
+    if (booking?.state === 'DRIVER_EN_ROUTE' || booking?.state === 'DRIVER_ARRIVED' || booking?.state === 'PASSENGER_BOARDING' || booking?.state === 'RIDING' || booking?.state === 'ARRIVED') {
       this.viewState = 'status';
     } else if (booking?.state === 'QUOTE_READY' || booking?.state === 'PAYMENT_PENDING') {
       this.viewState = 'quote';
@@ -132,6 +148,25 @@ export class SnappPhoneView extends UIComponent {
         this.renderHome();
         break;
     }
+  }
+
+  /** Dispose the map hierarchy before a rerender, relayout, or app teardown. */
+  private disposeMapLayers(): void {
+    this.mapWorldLayer?.clearMask(false);
+    this.mapMask?.destroy();
+    this.mapMask = null;
+    if (this.mapMaskShape) {
+      this.mapViewportContainer?.remove(this.mapMaskShape, false);
+      this.mapMaskShape.destroy();
+      this.mapMaskShape = null;
+    }
+    this.mapZone?.removeAllListeners();
+    this.mapViewportContainer?.destroy(true);
+    this.mapViewportContainer = null;
+    this.mapWorldLayer = null;
+    this.mapOverlayLayer = null;
+    this.mapGraphics = null;
+    this.mapZone = null;
   }
 
   private renderHome(): void {
@@ -193,9 +228,9 @@ export class SnappPhoneView extends UIComponent {
     this.addText(`${t('phoneSnappDestination')}: ${quote.destination.label}`, 82, TURQUOISE, true, 11);
     this.addText(`${t('phoneSnappDistance')}: ${quote.distanceKm.toFixed(2)} km`, 108, undefined, false, 11);
     this.addText(`${t('phoneSnappDuration')}: ${quote.estimatedDurationMinutes} min`, 130, undefined, false, 11);
-    this.addText(`${t('phoneSnappPickupAnchor')}: ${Math.round(quote.pickupWalkingDistancePx)} m`, 150, undefined, false, 10);
+    this.addText(`${t('phoneSnappPickupAnchor')}: ${this.worldPixelsToMeters(quote.pickupWalkingDistancePx)} m`, 150, undefined, false, 10);
     if (quote.dropoffSnapDistancePx > 4) {
-      this.addText(`${t('phoneSnappDropoffSnap')}: ${Math.round(quote.dropoffSnapDistancePx)} m`, 170, TURQUOISE, false, 10);
+      this.addText(`${t('phoneSnappDropoffSnap')}: ${this.worldPixelsToMeters(quote.dropoffSnapDistancePx)} m`, 170, TURQUOISE, false, 10);
     }
     this.addText(`${t('phoneSnappWallet')}: $${this.player?.player?.inventory.money ?? 0}`, 194, undefined, false, 11);
     this.addText(`${t('phoneSnappFare')}: $${quote.total}`, 218, TEXT, true, 14);
@@ -244,31 +279,63 @@ export class SnappPhoneView extends UIComponent {
 
   private renderStatus(): void {
     const booking = this.transportation?.snappBooking;
+    const expanded = this.context.getPresentationMode() === 'landscape-fullscreen';
     this.addHeader(t('phoneSnapp'));
     const state = booking?.state;
     const message = state === 'DRIVER_ARRIVED'
       ? t('phoneSnappDriverArrived')
-      : state === 'RIDING'
-        ? t('phoneSnappRiding')
-        : state === 'ARRIVED'
-          ? t('phoneSnappDriverArrived')
-          : t('phoneSnappDriverEnRoute');
-    this.addText(message, this.screenHeight * 0.34, TURQUOISE, true, 14);
-    if (booking?.destination) this.addText(`${t('phoneSnappDestination')}: ${booking.destination.label}`, this.screenHeight * 0.44, undefined, false, 11);
-    if (booking?.pickupAnchor && booking.pickupAnchorLabel) {
-      this.addText(
-        `${t('phoneSnappMeetAt')} ${booking.pickupAnchorLabel}  •  ${Math.round(booking.pickupWalkingDistancePx * 1000 / TRANSIT_PIXELS_PER_KILOMETER)} m`,
-        this.screenHeight * 0.48,
-        undefined,
-        false,
-        10,
-      );
-    }
-    this.addText(`${t('phoneSnappFare')}: $${booking?.quote?.total ?? 0}  •  PAID`, this.screenHeight * 0.54, TEXT, true, 11);
+      : state === 'PASSENGER_BOARDING'
+        ? t('phoneSnappBoard')
+        : state === 'RIDING'
+          ? t('phoneSnappRiding')
+          : state === 'ARRIVED'
+            ? t('phoneSnappDriverArrived')
+            : t('phoneSnappDriverEnRoute');
     const snapshot = this.trackingSnapshot ?? this.transportation?.snappTracking ?? null;
+    if (!expanded) {
+      this.addText(message, this.screenHeight * 0.34, TURQUOISE, true, 14);
+      if (booking?.destination) this.addText(`${t('phoneSnappDestination')}: ${booking.destination.label}`, this.screenHeight * 0.44, undefined, false, 11);
+      if (booking?.pickupAnchor && booking.pickupAnchorLabel) {
+        this.addText(
+          `${t('phoneSnappMeetAt')} ${booking.pickupAnchorLabel}  •  ${Math.round(booking.pickupWalkingDistancePx * 1000 / TRANSIT_PIXELS_PER_KILOMETER)} m`,
+          this.screenHeight * 0.48,
+          undefined,
+          false,
+          10,
+        );
+      }
+      this.addText(`${t('phoneSnappFare')}: $${booking?.quote?.total ?? 0}  •  PAID`, this.screenHeight * 0.54, TEXT, true, 11);
+    }
     if (snapshot) {
       const eta = Math.max(0, Math.ceil(snapshot.estimatedTimeOfArrivalMs / 60000));
-      this.addText(`${t('phoneSnappRemaining')}: ${(snapshot.remainingDistancePx / TRANSIT_PIXELS_PER_KILOMETER).toFixed(2)} km  •  ${eta} min`, this.screenHeight * 0.60, undefined, false, 10);
+      if (expanded) {
+        const panelX = 12 + Math.max(112, Math.min(this.screenWidth - 24, Math.floor(this.screenWidth * 0.68))) + 8;
+        const panelWidth = Math.max(88, this.screenWidth - panelX - 12);
+        const panel = this.uiScene.add.graphics();
+        panel.fillStyle(SURFACE, 1);
+        panel.fillRoundedRect(panelX, 48, panelWidth, Math.max(64, this.screenHeight - 60), 8);
+        panel.lineStyle(1, TURQUOISE, 0.45);
+        panel.strokeRoundedRect(panelX, 48, panelWidth, Math.max(64, this.screenHeight - 60), 8);
+        this.content.add(panel);
+        this.addPanelText(message, panelX + 8, 62, panelWidth - 16, TURQUOISE, true, 13);
+        if (booking?.destination) this.addPanelText(`${t('phoneSnappDestination')}: ${booking.destination.label}`, panelX + 8, 98, panelWidth - 16, TEXT, false, 10);
+        this.addPanelText(`${t('phoneSnappFare')}: $${booking?.quote?.total ?? 0}  •  PAID`, panelX + 8, 124, panelWidth - 16, TEXT, true, 10);
+        this.statusRemainingLabel = this.addPanelText(`${t('phoneSnappRemaining')}: ${(snapshot.remainingDistancePx / TRANSIT_PIXELS_PER_KILOMETER).toFixed(2)} km  •  ${eta} min`, panelX + 8, 150, panelWidth - 16, TEXT, false, 9);
+        if (state === 'DRIVER_ARRIVED') {
+          this.statusWaitLabel = this.addPanelText(`${t('phoneSnappPickupWait')} — ${this.formatWait(snapshot.pickupWaitRemainingMs)}`, panelX + 8, 178, panelWidth - 16, TURQUOISE, true, 10);
+        }
+      } else {
+        this.statusRemainingLabel = this.addText(`${t('phoneSnappRemaining')}: ${(snapshot.remainingDistancePx / TRANSIT_PIXELS_PER_KILOMETER).toFixed(2)} km  •  ${eta} min`, this.screenHeight * 0.60, undefined, false, 10);
+        if (state === 'DRIVER_ARRIVED') {
+          this.statusWaitLabel = this.addText(
+            `${t('phoneSnappPickupWait')} — ${this.formatWait(snapshot.pickupWaitRemainingMs)}`,
+            this.screenHeight * 0.64,
+            TURQUOISE,
+            true,
+            11,
+          );
+        }
+      }
       this.createMap('status', snapshot.pickupAnchor, snapshot);
     }
     const actionY = Math.min(
@@ -276,33 +343,71 @@ export class SnappPhoneView extends UIComponent {
       Math.max(this.screenHeight * 0.66, this.mapRect.y + this.mapRect.height + 30),
     );
     if (state === 'DRIVER_ARRIVED') {
-      const board = this.addButton(t('phoneSnappBoard'), actionY, () => {
-        if (!booking?.assignedVehicleId || !this.transportation?.requestSnappBoarding(booking.assignedVehicleId)) {
+      const board = expanded
+        ? this.addButtonAt(t('phoneSnappBoard'), this.screenWidth * 0.84, this.screenHeight - 34, () => {
+          if (booking?.assignedVehicleId === null || booking?.assignedVehicleId === undefined || !this.transportation?.requestSnappBoarding(booking.assignedVehicleId)) {
+            this.errorMessage = t('phoneSnappPickupHint');
+            this.render();
+          } else {
+            this.errorMessage = null;
+            this.context.closePhone();
+          }
+        }, TURQUOISE)
+        : this.addButton(t('phoneSnappBoard'), actionY, () => {
+        if (booking?.assignedVehicleId === null || booking?.assignedVehicleId === undefined || !this.transportation?.requestSnappBoarding(booking.assignedVehicleId)) {
           this.errorMessage = t('phoneSnappPickupHint');
+          this.render();
         } else {
           this.errorMessage = null;
+          this.context.closePhone();
         }
-        this.render();
       }, TURQUOISE);
       board.setData('accessibility-label', t('phoneSnappBoard'));
     } else if (state === 'DRIVER_EN_ROUTE') {
-      this.addButton(t('phoneSnappCancel'), actionY, () => {
+      const cancel = expanded
+        ? this.addButtonAt(t('phoneSnappCancel'), this.screenWidth * 0.84, this.screenHeight - 34, () => {
+          this.transportation?.cancelSnappBooking();
+          this.render();
+        }, COLORS.HEALTH)
+        : this.addButton(t('phoneSnappCancel'), actionY, () => {
         this.transportation?.cancelSnappBooking();
         this.render();
       }, COLORS.HEALTH);
+      cancel.setData('accessibility-label', t('phoneSnappCancel'));
     }
     if (this.errorMessage) this.addText(this.errorMessage, this.screenHeight * 0.78, COLORS.HEALTH, true, 10);
-    this.addText(t('phoneSnappCloseHint'), this.screenHeight * 0.86, undefined, false, 10);
+    if (!expanded) this.addText(t('phoneSnappCloseHint'), this.screenHeight * 0.86, undefined, false, 10);
     this.addBackButton(() => {
       this.viewState = 'home';
       this.render();
     });
   }
 
+  private updateStatusOverlay(snapshot: SnappTrackingSnapshot): void {
+    if (this.statusRemainingLabel) {
+      const eta = Math.max(0, Math.ceil(snapshot.estimatedTimeOfArrivalMs / 60000));
+      this.statusRemainingLabel.setText(`${t('phoneSnappRemaining')}: ${(snapshot.remainingDistancePx / TRANSIT_PIXELS_PER_KILOMETER).toFixed(2)} km  •  ${eta} min`);
+    }
+    if (this.statusWaitLabel) {
+      this.statusWaitLabel.setText(`${t('phoneSnappPickupWait')} — ${this.formatWait(snapshot.pickupWaitRemainingMs)}`);
+    }
+  }
+
+  private formatWait(remainingMs: number): string {
+    const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }
+
+  private worldPixelsToMeters(distancePx: number): number {
+    return Math.round(Math.max(0, distancePx) * 1000 / TRANSIT_PIXELS_PER_KILOMETER);
+  }
+
   private addDestinationButton(destination: TaxiDestination, y: number): void {
     const button = new Button(this.uiScene, this.screenWidth / 2, y, {
       text: destination.label,
-      width: Math.max(120, this.screenWidth - 24),
+      width: Math.max(44, this.screenWidth - 24),
       height: 44,
       onClick: () => {
         const quote = this.transportation?.previewSnappDestination(destination);
@@ -345,15 +450,41 @@ export class SnappPhoneView extends UIComponent {
     const world = this.world;
     if (!world) return;
     const compact = this.screenHeight < 240 || this.screenWidth < 150;
-    const top = compact ? 48 : mode === 'status' ? 86 : 90;
-    const reserved = compact ? 18 : mode === 'status' ? 148 : 164;
+    const expanded = this.context.getPresentationMode() === 'landscape-fullscreen';
+    const top = expanded ? 48 : compact ? 48 : mode === 'status' ? 86 : 90;
     const maxHeight = mode === 'status' ? 154 : 184;
-    const height = Math.max(compact ? 64 : 118, Math.min(maxHeight, this.screenHeight - reserved));
-    this.mapRect = { x: 12, y: top, width: this.screenWidth - 24, height };
-    if (focus) this.mapCenter = { x: focus.x, y: focus.y };
-    else this.mapCenter = { x: world.map.widthTiles * world.map.tileSize / 2, y: world.map.heightTiles * world.map.tileSize / 2 };
-    this.mapZoom = mode === 'status' ? 1.7 : 1.15;
+    const usableWidth = Math.max(40, this.screenWidth - 24);
+    const usableHeight = Math.max(40, this.screenHeight - top - 12);
+    const height = expanded
+      ? usableHeight
+      : Math.max(Math.min(compact ? 64 : 118, usableHeight), Math.min(maxHeight, usableHeight));
+    const width = expanded
+      ? Math.min(usableWidth, Math.max(64, Math.floor(this.screenWidth * 0.68)))
+      : usableWidth;
+    this.mapRect = { x: 12, y: top, width, height };
+    const preserveViewport = this.mapInitialized && this.mapMode === mode;
+    if (!preserveViewport) {
+      if (focus) this.mapCenter = { x: focus.x, y: focus.y };
+      else this.mapCenter = { x: world.map.widthTiles * world.map.tileSize / 2, y: world.map.heightTiles * world.map.tileSize / 2 };
+      this.mapZoom = mode === 'status' ? 1.7 : 1.15;
+    }
+    this.mapMode = mode;
+    this.mapInitialized = true;
+    this.clampMapCenter();
+    this.mapViewportContainer = this.uiScene.add.container();
+    this.mapWorldLayer = this.uiScene.add.container();
+    this.mapOverlayLayer = this.uiScene.add.container();
+    this.mapViewportContainer.add([this.mapWorldLayer, this.mapOverlayLayer]);
+    this.content.add(this.mapViewportContainer);
+    this.mapMaskShape = this.uiScene.make.graphics({ x: 0, y: 0 }, false);
+    this.mapMaskShape.setVisible(false);
+    this.mapMaskShape.fillStyle(0xffffff, 1);
+    this.mapMaskShape.fillRoundedRect(this.mapRect.x, this.mapRect.y, this.mapRect.width, this.mapRect.height, 6);
+    this.mapViewportContainer.add(this.mapMaskShape);
+    this.mapMask = this.mapMaskShape.createGeometryMask();
+    this.mapWorldLayer.setMask(this.mapMask);
     this.mapGraphics = this.uiScene.add.graphics();
+    this.mapWorldLayer.add(this.mapGraphics);
     this.mapZone = this.uiScene.add.zone(
       this.mapRect.x + this.mapRect.width / 2,
       this.mapRect.y + this.mapRect.height / 2,
@@ -374,6 +505,7 @@ export class SnappPhoneView extends UIComponent {
       const scale = this.mapScale();
       this.mapCenter.x -= dx / scale;
       this.mapCenter.y -= dy / scale;
+      this.clampMapCenter();
       this.mapLastPointer = { x: pointer.x, y: pointer.y };
       this.redrawMap();
     });
@@ -401,41 +533,60 @@ export class SnappPhoneView extends UIComponent {
     this.mapZone.on('wheel', (_pointer: Phaser.Input.Pointer, _over: unknown, _dx: number, dy: number, event: Phaser.Types.Input.EventData) => {
       event.stopPropagation();
       this.mapZoom = Phaser.Math.Clamp(this.mapZoom * (dy < 0 ? 1.12 : 0.9), 0.85, 3.2);
+      this.clampMapCenter();
       this.redrawMap();
     });
-    this.content.add([this.mapGraphics, this.mapZone]);
+    this.mapOverlayLayer.add(this.mapZone);
     if (!compact) {
       this.addMapControl('+', this.mapRect.x + this.mapRect.width - 22, this.mapRect.y + 24, () => {
         this.mapZoom = Phaser.Math.Clamp(this.mapZoom * 1.2, 0.85, 3.2);
+        this.clampMapCenter();
         this.redrawMap();
       });
       this.addMapControl('−', this.mapRect.x + this.mapRect.width - 22, this.mapRect.y + 72, () => {
         this.mapZoom = Phaser.Math.Clamp(this.mapZoom * 0.84, 0.85, 3.2);
+        this.clampMapCenter();
         this.redrawMap();
       });
     }
-    if (!compact) {
+    if (!compact && this.mapRect.width >= 190) {
       this.addMapControl('CENTER', this.mapRect.x + 42, this.mapRect.y + this.mapRect.height - 22, () => {
         const player = this.player?.playerPosition;
-        if (player) this.mapCenter = { ...player };
+        if (player) {
+          this.mapCenter = { ...player };
+          this.clampMapCenter();
+        }
         this.redrawMap();
       });
     }
-    if (mode === 'status' && !compact) {
-      this.addMapControl('FIT', this.mapRect.x + this.mapRect.width - 48, this.mapRect.y + this.mapRect.height - 22, () => {
+    if (mode === 'status' && !compact && this.mapRect.width >= 190) {
+      this.addMapControl('FIT', this.mapRect.x + 112, this.mapRect.y + this.mapRect.height - 22, () => {
         const current = this.trackingSnapshot ?? snapshot;
         if (current) this.fitTrackingRoute(current);
       });
     }
+    this.addMapControl(
+      expanded ? 'PORTRAIT' : 'EXPAND',
+      this.mapRect.x + this.mapRect.width - 48,
+      this.mapRect.y + this.mapRect.height - 22,
+      () => expanded ? this.context.exitExpandedMode() : this.context.setPresentationMode('landscape-fullscreen'),
+    );
     if (mode === 'status') this.addMapLegend();
-    if (mode === 'status' && snapshot) this.fitTrackingRoute(snapshot);
+    if (mode === 'status' && snapshot && !preserveViewport) this.fitTrackingRoute(snapshot);
     else this.redrawMap(snapshot);
   }
 
   private addMapControl(text: string, x: number, y: number, onClick: () => void): void {
     const button = new Button(this.uiScene, x, y, { text, width: text.length > 2 ? 68 : 44, height: 44, onClick });
-    button.setData('accessibility-label', text === 'CENTER' ? t('phoneSnappRecenter') : text === 'FIT' ? t('phoneSnappFitRoute') : `Zoom ${text}`);
-    this.content.add(button);
+    button.setData(
+      'accessibility-label',
+      text === 'CENTER' ? t('phoneSnappRecenter')
+        : text === 'FIT' ? t('phoneSnappFitRoute')
+          : text === 'EXPAND' ? t('phoneSnappExpandMap')
+            : text === 'PORTRAIT' ? t('phoneSnappPortraitMap')
+              : `Zoom ${text}`,
+    );
+    (this.mapOverlayLayer ?? this.content).add(button);
   }
 
   /** Compact, non-color-only key for the live tracking markers. */
@@ -467,7 +618,7 @@ export class SnappPhoneView extends UIComponent {
       });
       legend.add([symbol, label]);
     });
-    this.content.add(legend);
+    (this.mapOverlayLayer ?? this.content).add(legend);
   }
 
   private redrawMap(snapshot: SnappTrackingSnapshot | null = this.trackingSnapshot): void {
@@ -574,7 +725,29 @@ export class SnappPhoneView extends UIComponent {
   private mapScale(): number {
     const world = this.world;
     if (!world) return 0.001;
-    return Math.min(this.mapRect.width / (world.map.widthTiles * world.map.tileSize), this.mapRect.height / (world.map.heightTiles * world.map.tileSize)) * this.mapZoom;
+    return Math.max(
+      0.0001,
+      Math.min(this.mapRect.width / (world.map.widthTiles * world.map.tileSize), this.mapRect.height / (world.map.heightTiles * world.map.tileSize)) * this.mapZoom,
+    );
+  }
+
+  /** Keep the visible map anchored to authoritative world bounds. */
+  private clampMapCenter(): void {
+    const world = this.world;
+    if (!world || this.mapRect.width <= 0 || this.mapRect.height <= 0) return;
+    const worldWidth = world.map.widthTiles * world.map.tileSize;
+    const worldHeight = world.map.heightTiles * world.map.tileSize;
+    const scale = this.mapScale();
+    const halfWorldWidth = this.mapRect.width / (2 * scale);
+    const halfWorldHeight = this.mapRect.height / (2 * scale);
+    const centerX = worldWidth / 2;
+    const centerY = worldHeight / 2;
+    this.mapCenter.x = halfWorldWidth >= worldWidth / 2
+      ? centerX
+      : Phaser.Math.Clamp(this.mapCenter.x, halfWorldWidth, worldWidth - halfWorldWidth);
+    this.mapCenter.y = halfWorldHeight >= worldHeight / 2
+      ? centerY
+      : Phaser.Math.Clamp(this.mapCenter.y, halfWorldHeight, worldHeight - halfWorldHeight);
   }
 
   /** Fit both the active driver leg and passenger leg inside the map viewport. */
@@ -614,6 +787,7 @@ export class SnappPhoneView extends UIComponent {
     const worldScale = Math.min(this.mapRect.width / worldWidth, this.mapRect.height / worldHeight);
     this.mapZoom = Phaser.Math.Clamp(baseScale / Math.max(0.0001, worldScale), 0.85, 3.2);
     this.mapCenter = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+    this.clampMapCenter();
     this.redrawMap();
   }
 
@@ -683,7 +857,7 @@ export class SnappPhoneView extends UIComponent {
   private addButton(text: string, y: number, onClick: () => void, accent = TURQUOISE): Button {
     const button = new Button(this.uiScene, this.screenWidth / 2, Math.round(y), {
       text,
-      width: Math.max(128, this.screenWidth - 24),
+      width: Math.max(44, this.screenWidth - 24),
       height: 48,
       onClick,
     });
@@ -693,15 +867,46 @@ export class SnappPhoneView extends UIComponent {
   }
 
   private addBackButton(onClick: () => void): Button {
-    const button = new Button(this.uiScene, 50, this.screenHeight - 28, {
+    const width = Math.min(88, Math.max(44, this.screenWidth - 16));
+    const button = new Button(this.uiScene, Math.min(50, this.screenWidth / 2), this.screenHeight - 28, {
       text: t('phoneBack'),
-      width: 88,
+      width,
       height: 48,
-      onClick,
+      onClick: () => {
+        if (this.context.getPresentationMode() !== 'portrait') {
+          this.context.exitExpandedMode();
+          return;
+        }
+        onClick();
+      },
     });
     button.setData('accessibility-label', t('phoneBack'));
     this.content.add(button);
     return button;
+  }
+
+  private addButtonAt(text: string, x: number, y: number, onClick: () => void, accent = TURQUOISE): Button {
+    const button = new Button(this.uiScene, Math.round(x), Math.round(y), {
+      text,
+      width: Math.max(44, Math.min(220, this.screenWidth - 24)),
+      height: 48,
+      onClick,
+    });
+    button.setData('snapp-accent', accent);
+    this.content.add(button);
+    return button;
+  }
+
+  private addPanelText(text: string, x: number, y: number, width: number, color: string | number, bold: boolean, fontSize: number): Label {
+    const label = new Label(this.uiScene, Math.round(x), Math.round(y), text, {
+      fontSize: `${fontSize}px`,
+      fontStyle: bold ? 'bold' : 'normal',
+      color: typeof color === 'number' ? `#${color.toString(16).padStart(6, '0')}` : color,
+      fixedWidth: Math.max(20, Math.round(width)),
+      align: 'left',
+    });
+    this.content.add(label);
+    return label;
   }
 
   private locationSummary(): string {
