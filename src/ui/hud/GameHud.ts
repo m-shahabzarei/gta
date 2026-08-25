@@ -19,16 +19,22 @@
 
 import Phaser from 'phaser';
 import { UIComponent } from '@/ui/UIComponent';
-import { Label, ProgressBar } from '@/ui/components';
+import { Button, Label, ProgressBar } from '@/ui/components';
 import { WEAPONS } from '@/data';
 import type { PlayerVitalsSnapshot, WeaponDef } from '@/gameplay/types';
 import { TextureKeys } from '@/config/AssetKeys';
 import { COLORS, GAME_WIDTH, GAME_HEIGHT, PLAYER, WANTED } from '@/config/Constants';
 import { DepthLayers } from '@/config/DepthLayers';
 import { EventKeys } from '@/config/EventKeys';
+import { t } from '@/config/Strings';
 import { eventBus } from '@/core/EventBus';
 import { DEFAULT_HUD_STATE } from '@/core/types';
 import type { Unsubscribe } from '@/core/types';
+import { ServiceLocator } from '@/core/ServiceLocator';
+import { ServiceKeys } from '@/config/ServiceKeys';
+import type { PhoneManager } from '@/managers/PhoneManager';
+import type { MobilePlatform } from '@/platform';
+import { TRANSIT_PIXELS_PER_KILOMETER } from '@/gameplay/transit';
 
 /** Glyph used for a weapon that has unlimited ammunition. */
 const INFINITY = '∞';
@@ -80,6 +86,11 @@ export class GameHud extends UIComponent {
   private readonly interactionPrompt: Label;
   private readonly toastLabel: Label;
   private readonly compass: Phaser.GameObjects.Graphics;
+  private readonly snappArrivalPanel: Phaser.GameObjects.Container;
+  private readonly snappArrivalDetail: Label;
+  private readonly snappArrivalOpen: Button;
+  private readonly snappArrivalDismiss: Button;
+  private readonly snappArrivalBookings = new Set<string>();
 
   /** All active event-bus unsubscribe handles, released on destroy. */
   private readonly unsubscribes: Unsubscribe[] = [];
@@ -185,6 +196,34 @@ export class GameHud extends UIComponent {
     });
     this.toastLabel.setVisible(false);
 
+    this.snappArrivalPanel = scene.add.container(GAME_WIDTH / 2, 132);
+    const arrivalBg = scene.add.graphics();
+    arrivalBg.fillStyle(0x071a1d, 0.98);
+    arrivalBg.lineStyle(2, 0x13c8bc, 1);
+    arrivalBg.fillRoundedRect(-270, -52, 540, 104, 10);
+    arrivalBg.strokeRoundedRect(-270, -52, 540, 104, 10);
+    const arrivalTitle = new Label(scene, -250, -42, t('phoneSnappDriverArrived'), {
+      color: '#f2ffff', fontSize: '17px', fontStyle: 'bold', fixedWidth: 500,
+    });
+    this.snappArrivalDetail = new Label(scene, -250, -16, '', {
+      color: '#a8c3c5', fontSize: '12px', fixedWidth: 500,
+    });
+    this.snappArrivalOpen = new Button(scene, 150, 28, {
+      text: t('phoneSnappOpen'), width: 122, height: 44,
+      onClick: () => {
+        const phone = ServiceLocator.tryResolve<PhoneManager>(ServiceKeys.Phone);
+        if (!phone?.openPhoneToApp('snapp')) phone?.openPhone();
+        this.hideSnappArrival();
+      },
+    });
+    this.snappArrivalDismiss = new Button(scene, 34, 28, {
+      text: t('phoneSnappDismiss'), width: 104, height: 44,
+      onClick: () => this.hideSnappArrival(),
+    });
+    this.snappArrivalPanel.add([arrivalBg, arrivalTitle, this.snappArrivalDetail, this.snappArrivalDismiss, this.snappArrivalOpen]);
+    this.snappArrivalPanel.setDepth(DepthLayers.Overlay + 20);
+    this.snappArrivalPanel.setVisible(false);
+
     this.add([
       this.hpLabel,
       this.healthBar,
@@ -205,6 +244,7 @@ export class GameHud extends UIComponent {
       this.interactionPrompt,
       this.toastLabel,
     ]);
+    this.add(this.snappArrivalPanel);
 
     this.applyDefaultState();
     this.registerEvents();
@@ -239,6 +279,8 @@ export class GameHud extends UIComponent {
     this.missionBanner.setPosition(Math.round(width / 2), top + 70);
     this.compass.setPosition(Math.round(width / 2), top + 108);
     this.toastLabel.setPosition(Math.round(width / 2), Math.round(height - safe.bottom - 182));
+    this.snappArrivalPanel.setPosition(Math.round(width / 2), Math.round(safe.top + 136));
+    this.snappArrivalPanel.setScale(Math.min(1, Math.max(0.72, (width - safe.left - safe.right - 24) / 560)));
     this.centerHorizontally(this.missionBanner);
     this.centerHorizontally(this.toastLabel);
   }
@@ -329,7 +371,36 @@ export class GameHud extends UIComponent {
           this.clockLabel.setText(p.timeLabel);
         }
       }),
+      eventBus.on(EventKeys.SnappDriverArrived, (payload) => this.showSnappArrival(payload)),
     );
+  }
+
+  private showSnappArrival(payload: {
+    bookingId: string;
+    walkingDistancePx: number;
+    pickupAnchorLabel: string;
+  }): void {
+    if (this.snappArrivalBookings.has(payload.bookingId)) return;
+    this.snappArrivalBookings.add(payload.bookingId);
+    const walking = Math.round(payload.walkingDistancePx * 1000 / TRANSIT_PIXELS_PER_KILOMETER);
+    this.snappArrivalDetail.setText(
+      walking > 1
+        ? `${t('phoneSnappMeetAt')} ${payload.pickupAnchorLabel}  •  ${walking} m away`
+        : `${t('phoneSnappMeetAt')} ${payload.pickupAnchorLabel}`,
+    );
+    this.snappArrivalPanel.setVisible(true);
+    const settings = ServiceLocator.tryResolve<import('@/managers/SettingsManager').SettingsManager>(ServiceKeys.Settings)?.settings as Readonly<{ reducedMotion?: boolean }> | undefined;
+    const reduced = settings?.reducedMotion === true;
+    this.uiScene.tweens.killTweensOf(this.snappArrivalPanel);
+    this.snappArrivalPanel.setAlpha(reduced ? 1 : 0);
+    if (!reduced) this.uiScene.tweens.add({ targets: this.snappArrivalPanel, alpha: 1, duration: 180, ease: 'Cubic.Out' });
+    eventBus.emit(EventKeys.AudioPlaySound, { key: 'snapp-driver-arrived', volume: 0.8 });
+    ServiceLocator.tryResolve<MobilePlatform>(ServiceKeys.Platform)?.vibrate(18);
+  }
+
+  private hideSnappArrival(): void {
+    this.uiScene.tweens.killTweensOf(this.snappArrivalPanel);
+    this.snappArrivalPanel.setVisible(false);
   }
 
   /** Update the regional locator without coupling HUD code to world state. */
@@ -485,6 +556,8 @@ export class GameHud extends UIComponent {
     this.bannerTimer = undefined;
     this.toastTween?.stop();
     this.toastTween = undefined;
+    this.snappArrivalBookings.clear();
+    this.uiScene.tweens.killTweensOf(this.snappArrivalPanel);
     super.destroy(fromScene);
   }
 }

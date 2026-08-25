@@ -305,6 +305,33 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     this.debugOverlay?.update(delta);
   }
 
+  /** Advance only assigned Snapp traffic while the Phone modal is open. */
+  public updateWhilePhoneOpen(time: number, delta: number): void {
+    const scene = this.scene;
+    if (!scene) return;
+    this.resolveServices();
+    this.ensureRuntime();
+    this.accumulatorMs += Math.min(delta, FIXED_STEP_MS * MAX_STEPS_PER_FRAME);
+    const snappOnly = (driver: TrafficDriver): boolean => {
+      const vehicleId = driver.snapshot()?.vehicleId;
+      return vehicleId !== undefined && this.vehicleSystem?.vehicles.some(
+        (vehicle) => vehicle.id === vehicleId && typeof vehicle.sprite.getData('snappBookingId') === 'string',
+      ) === true;
+    };
+    let steps = 0;
+    while (this.accumulatorMs >= FIXED_STEP_MS && steps < MAX_STEPS_PER_FRAME) {
+      this.simulationClockMs += FIXED_STEP_MS;
+      this.simulateFixedStep(this.simulationClockMs, FIXED_STEP_MS / 1000, snappOnly);
+      this.accumulatorMs -= FIXED_STEP_MS;
+      steps += 1;
+    }
+    const interpolation = this.accumulatorMs / FIXED_STEP_MS;
+    for (const driver of this.drivers.values()) {
+      if (snappOnly(driver)) driver.render(interpolation);
+    }
+    void time;
+  }
+
   /** Legacy component endpoint now registers configuration; it never advances simulation. */
   public advanceDriver(
     vehicle: Vehicle,
@@ -517,7 +544,11 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     };
   }
 
-  private simulateFixedStep(now: number, deltaSeconds: number): void {
+  private simulateFixedStep(
+    now: number,
+    deltaSeconds: number,
+    filter: ((driver: TrafficDriver) => boolean) | null = null,
+  ): void {
     const intersections = this.intersections;
     if (!intersections) return;
     intersections.beginFrame(now);
@@ -527,9 +558,15 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       if (snapshot) this.perception.upsert(snapshot);
     }
     const player = getPlayerRef()?.playerPosition ?? null;
+    const isSnappDriver = (driver: TrafficDriver): boolean => {
+      const vehicleId = driver.snapshot()?.vehicleId;
+      return vehicleId !== undefined && this.vehicleSystem?.vehicles.some(
+        (vehicle) => vehicle.id === vehicleId && typeof vehicle.sprite.getData('snappBookingId') === 'string',
+      ) === true;
+    };
     this.scheduler.schedule(now, deltaSeconds, player, this.drivers.values(), (work) => {
       work.driver.fixedUpdate(now, work.deltaSeconds, this.perception, work.detail);
-    });
+    }, filter ? (driver) => filter(driver) : isSnappDriver);
     intersections.resolve(now);
   }
 

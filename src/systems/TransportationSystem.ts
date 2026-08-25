@@ -38,6 +38,7 @@ import {
   type SnappBookingState,
   type SnappPaymentResult,
   type SnappQuote,
+  type SnappTrackingSnapshot,
   isSnappBookingSnapshot,
 } from '@/gameplay/transit';
 import type { TrafficLaneStopTarget } from '@/gameplay/traffic';
@@ -83,8 +84,12 @@ interface TaxiRuntime {
   playerRequestPosition: Vector2 | null;
   /** Legal lane point where the driver stops for pickup. */
   pickupPosition: Vector2 | null;
+  /** Exact directed lane arc used by Snapp pickup validation. */
+  pickupLaneStop: TrafficLaneStopTarget | null;
   /** Legal lane point where the driver stops near the selected destination. */
   dropoffPosition: Vector2 | null;
+  /** Exact directed lane arc used by Snapp drop-off validation. */
+  dropoffLaneStop: TrafficLaneStopTarget | null;
   destination: TaxiDestination | null;
   fare: TaxiFareQuote | null;
   farePaid: boolean;
@@ -107,6 +112,8 @@ interface PassengerPlan {
 interface TaxiRoadTarget {
   position: Vector2;
   route: TrafficRoutePreview;
+  /** Present for targets selected from the authoritative lane graph. */
+  laneStop?: TrafficLaneStopTarget;
 }
 
 /** One authored bus line awaiting its bounded startup resolution pass. */
@@ -144,6 +151,10 @@ const TAXI_PICKUP_JUNCTION_CLEARANCE = 92;
 const TAXI_PICKUP_CLEARANCE = 54;
 const TAXI_PICKUP_ARRIVAL_RANGE = 44;
 const TAXI_DROPOFF_ARRIVAL_RANGE = 48;
+/** Exact lane-arc tolerance applied after TrafficDriver reports arrival. */
+const TAXI_LANE_STOP_TOLERANCE = TAXI_STOP_RANGE + 4;
+const TAXI_LANE_HEADING_TOLERANCE = 0.35;
+const TAXI_EXACT_TARGET_TOLERANCE = 12;
 const SERVICE_STOP_SPEED = 3.5;
 const TAXI_ENCOUNTER_MIN_SPAWN_DISTANCE = 168;
 const TAXI_ENCOUNTER_PREFERRED_SPAWN_DISTANCE = 360;
@@ -183,6 +194,10 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     gilan: 0,
   };
   private snappBookingValue: SnappBookingSnapshot | null = null;
+  private snappTrackingValue: SnappTrackingSnapshot | null = null;
+  private snappTrackingAccumulatorMs = 0;
+  private snappTrackingSequence = 0;
+  private snappSelectionErrorValue: string | null = null;
   private snappSequence = 1;
   private snappRecoveryChecked = false;
 
@@ -197,6 +212,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         if (taxi.snappBookingId) this.returnTaxiToService(taxi);
       }
       this.snappBookingValue = null;
+      this.snappTrackingValue = null;
+      this.snappTrackingAccumulatorMs = 0;
+      this.snappSelectionErrorValue = null;
       this.snappRecoveryChecked = false;
     });
   }
@@ -230,6 +248,7 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     if (!this.runtimeReady) return;
 
     this.serviceAccumulatorMs += Math.min(delta, SERVICE_TICK_MS * 4);
+    this.snappTrackingAccumulatorMs += Math.max(0, Math.min(1000, delta));
     this.passengerPlanAccumulatorMs += Math.min(delta, PASSENGER_PLAN_TICK_MS * 2);
     while (this.serviceAccumulatorMs >= SERVICE_TICK_MS) {
       this.serviceAccumulatorMs -= SERVICE_TICK_MS;
@@ -239,6 +258,28 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       this.passengerPlanAccumulatorMs = 0;
       this.refreshPassengerPlans();
     }
+    this.refreshSnappTracking(time);
+  }
+
+  /**
+   * Phone policy: the modal freezes the world, but an active paid Snapp taxi
+   * is allowed to advance through the existing TrafficSystem while the phone
+   * is open. No player, pedestrian, mission, economy, or ambient traffic loop
+   * is ticked by this path.
+   */
+  public updateWhilePhoneOpen(time: number, delta: number): void {
+    this.resolveServices();
+    this.initializeRuntime();
+    this.processRouteInitialization();
+    if (!this.runtimeReady) return;
+    const booking = this.snappBookingValue;
+    const taxi = booking?.assignedVehicleId === null || booking?.assignedVehicleId === undefined
+      ? null
+      : this.taxis.get(booking.assignedVehicleId) ?? null;
+    if (!booking || !taxi || this.isSnappTerminal(booking.state)) return;
+    this.snappTrackingAccumulatorMs += Math.max(0, Math.min(1000, delta));
+    this.updateTaxi(taxi, time);
+    this.refreshSnappTracking(time);
   }
 
   /** Durable transit discovery only; vehicle/AI state is intentionally regenerated. */
@@ -261,7 +302,7 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     }
     const snapp = data['snapp'];
     if (snapp !== undefined && snapp !== null && isSnappBookingSnapshot(snapp)) {
-      this.snappBookingValue = this.cloneSnappBooking(snapp as unknown as SnappBookingSnapshot);
+      this.snappBookingValue = this.normalizeSnappBooking(snapp as unknown as SnappBookingSnapshot);
       this.snappRecoveryChecked = false;
     }
   }
@@ -354,6 +395,16 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     return this.snappBookingValue ? this.cloneSnappBooking(this.snappBookingValue) : null;
   }
 
+  /** Read-only live pose/route data for the Phone map and HUD. */
+  public get snappTracking(): SnappTrackingSnapshot | null {
+    return this.snappTrackingValue ? this.cloneSnappTracking(this.snappTrackingValue) : null;
+  }
+
+  /** Last request-time validation message, suitable for the Phone UI. */
+  public get snappError(): string | null {
+    return this.snappSelectionErrorValue;
+  }
+
   /** Authoritative destinations available to Snapp in the player's current city. */
   public snappDestinations(cityId?: CityId): TaxiDestination[] {
     const position = this.player?.playerPosition;
@@ -363,20 +414,40 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
 
   /** Begin a new destination selection; a second active booking is rejected. */
   public beginSnappSelection(): boolean {
+    this.snappSelectionErrorValue = null;
     const existing = this.snappBookingValue;
     if (existing && !this.isSnappTerminal(existing.state)) return false;
     const player = this.player;
     const position = player?.playerPosition;
     const city = position ? this.world?.cityAt(position.x, position.y)?.id : undefined;
-    if (!player?.player || !position || !city || player.playerInVehicle) return false;
+    if (!player?.player || !position || !city || player.playerInVehicle) {
+      this.snappSelectionErrorValue = 'Snapp pickup is only available while you are on foot inside a city.';
+      return false;
+    }
+    const geometryTaxi = this.findSnappGeometryTaxi(city);
+    const pickup = geometryTaxi ? this.resolveTaxiRoadTarget(geometryTaxi, position, true) : null;
+    if (!pickup) {
+      this.snappSelectionErrorValue = 'No legal curb pickup is reachable from here.';
+      return false;
+    }
+    const pickupWalkingDistancePx = Math.hypot(pickup.position.x - position.x, pickup.position.y - position.y);
+    if (pickupWalkingDistancePx > SNAPP_CONFIG.maxPickupWalkDistancePx) {
+      this.snappSelectionErrorValue = 'The nearest legal pickup point is too far away.';
+      return false;
+    }
     this.snappBookingValue = {
-      version: 1,
+      version: 2,
       id: this.nextSnappId('booking'),
       transactionId: this.nextSnappId('tx'),
       state: 'SELECTING_DESTINATION',
       cityId: city,
       pickup: { ...position },
+      pickupRotation: this.playerEntityRotation(),
+      pickupAnchor: { ...pickup.position },
+      pickupWalkingDistancePx,
+      pickupAnchorLabel: this.pickupAnchorLabel(city),
       destination: null,
+      dropoffPosition: null,
       quote: null,
       payment: 'unpaid',
       assignedVehicleId: null,
@@ -407,9 +478,19 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       booking.error = 'No Snapp vehicle is available right now.';
       return null;
     }
-    const pickup = this.resolveTaxiRoadTarget(geometryTaxi, position, true);
+    const pickupAnchor = booking.pickupAnchor ?? this.resolveTaxiRoadTarget(geometryTaxi, booking.pickup, true)?.position ?? null;
+    const pickupRoute = pickupAnchor
+      ? this.traffic?.routePreview({ x: geometryTaxi.vehicle.sprite.x, y: geometryTaxi.vehicle.sprite.y }, pickupAnchor) ?? null
+      : null;
+    const pickup = pickupAnchor && pickupRoute
+      ? { position: { ...pickupAnchor }, route: pickupRoute }
+      : null;
+    if (pickup && Math.hypot(pickup.position.x - booking.pickup.x, pickup.position.y - booking.pickup.y) > SNAPP_CONFIG.maxPickupWalkDistancePx) {
+      booking.error = 'The nearest legal pickup point is too far away.';
+      return null;
+    }
     const dropoff = this.resolveTaxiRoadTarget(geometryTaxi, canonical.position, false);
-    if (!pickup || !dropoff) {
+    if (!pickup || pickup.route.laneIds.length === 0 || !dropoff) {
       booking.error = 'This destination is not reachable by road.';
       return null;
     }
@@ -425,10 +506,16 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       canonical,
       world.trafficDensityAt(position.x, position.y),
       Date.now(),
+      pickup.position,
+      booking.pickupAnchorLabel ?? this.pickupAnchorLabel(city),
+      dropoff.position,
     );
     booking.cityId = city;
-    booking.pickup = { ...position };
+    booking.pickupAnchor = { ...pickup.position };
+    booking.pickupWalkingDistancePx = Math.hypot(pickup.position.x - booking.pickup.x, pickup.position.y - booking.pickup.y);
+    booking.pickupAnchorLabel = booking.pickupAnchorLabel ?? this.pickupAnchorLabel(city);
     booking.destination = { ...canonical, position: { ...canonical.position } };
+    booking.dropoffPosition = { ...dropoff.position };
     booking.quote = quote;
     booking.state = 'QUOTE_READY';
     booking.error = null;
@@ -436,6 +523,71 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       bookingId: booking.id,
       destinationId: canonical.id,
     });
+    this.bus.emit(EventKeys.SnappQuoteCreated, { bookingId: booking.id, quote });
+    return { ...quote, pickup: { ...quote.pickup }, destination: { ...quote.destination, position: { ...quote.destination.position } } };
+  }
+
+  /** Select an authoritative world-map point, snapping it to a legal drop-off. */
+  public previewSnappMapPoint(position: Vector2, label = 'Map pin'): SnappQuote | null {
+    const world = this.world;
+    const player = this.player;
+    if (!world || !player?.player || player.playerInVehicle || !Number.isFinite(position.x) || !Number.isFinite(position.y)) {
+      return null;
+    }
+    const city = world.cityAt(position.x, position.y)?.id;
+    if (!city) {
+      if (this.snappBookingValue) this.snappBookingValue.error = 'Choose a point inside a city service area.';
+      return null;
+    }
+    const geometryTaxi = this.findSnappGeometryTaxi(city);
+    if (!geometryTaxi) {
+      if (this.snappBookingValue) this.snappBookingValue.error = 'No Snapp vehicle is available right now.';
+      return null;
+    }
+    if (!this.snappBookingValue || this.isSnappTerminal(this.snappBookingValue.state)) {
+      if (!this.beginSnappSelection()) return null;
+    }
+    const booking = this.snappBookingValue;
+    if (!booking || !this.isSnappSelectionState(booking.state) || !booking.pickupAnchor) return null;
+    const pickupRoute = this.traffic?.routePreview(
+      { x: geometryTaxi.vehicle.sprite.x, y: geometryTaxi.vehicle.sprite.y },
+      booking.pickupAnchor,
+    );
+    const dropoff = this.resolveTaxiRoadTarget(geometryTaxi, position, false);
+    if (!pickupRoute || pickupRoute.laneIds.length === 0 || !dropoff) {
+      booking.error = 'This map point has no legal road drop-off.';
+      return null;
+    }
+    const route = this.traffic?.routePreview(booking.pickupAnchor, dropoff.position) ?? null;
+    if (!route || route.laneIds.length === 0) {
+      booking.error = 'This destination is not reachable by road.';
+      return null;
+    }
+    const destination: TaxiDestination = {
+      id: `map:${Math.round(position.x)}:${Math.round(position.y)}`,
+      label,
+      position: { x: position.x, y: position.y },
+      cityId: city,
+      source: 'map',
+    };
+    const quote = calculateSnappFare(
+      CITY_TRANSIT_CONFIG[city].taxi,
+      route,
+      booking.pickup,
+      destination,
+      world.trafficDensityAt(booking.pickup.x, booking.pickup.y),
+      Date.now(),
+      booking.pickupAnchor,
+      booking.pickupAnchorLabel ?? this.pickupAnchorLabel(city),
+      dropoff.position,
+    );
+    booking.cityId = city;
+    booking.destination = destination;
+    booking.dropoffPosition = { ...dropoff.position };
+    booking.quote = quote;
+    booking.state = 'QUOTE_READY';
+    booking.error = null;
+    this.bus.emit(EventKeys.SnappDestinationSelected, { bookingId: booking.id, destinationId: destination.id });
     this.bus.emit(EventKeys.SnappQuoteCreated, { bookingId: booking.id, quote });
     return { ...quote, pickup: { ...quote.pickup }, destination: { ...quote.destination, position: { ...quote.destination.position } } };
   }
@@ -471,7 +623,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     taxi.snappBookingId = booking.id;
     taxi.playerRequestPosition = { ...booking.pickup };
     taxi.pickupPosition = { ...candidate.pickup.position };
+    taxi.pickupLaneStop = candidate.pickup.laneStop ?? null;
     taxi.dropoffPosition = { ...candidate.dropoff.position };
+    taxi.dropoffLaneStop = candidate.dropoff.laneStop ?? null;
     taxi.destination = { ...booking.destination, position: { ...booking.destination.position } };
     taxi.fare = { ...booking.quote, route: booking.quote.route };
     taxi.farePaid = true;
@@ -483,7 +637,20 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     taxi.vehicle.sprite.setData('serviceLivery', 'snapp');
     taxi.vehicle.sprite.setTint(SNAPP_CONFIG.turquoise);
     this.setTaxiState(taxi, 'APPROACHING_PICKUP');
-    this.traffic?.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
+    const configured = taxi.pickupLaneStop
+      ? this.traffic?.configureDriverAtLaneStop(
+        taxi.vehicle,
+        () => this.taxiTarget(taxi.vehicle.id),
+        taxi.pickupLaneStop,
+        TAXI_STOP_RANGE,
+        false,
+        candidate.pickup.route.laneIds,
+      )
+      : this.traffic?.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
+    if (configured === false) {
+      this.failSnappBooking('Snapp pickup route became unavailable');
+      return 'invalid-quote';
+    }
     this.bus.emit(EventKeys.SnappPaymentCompleted, {
       bookingId: booking.id,
       transactionId: booking.transactionId,
@@ -1224,7 +1391,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         standAtNextTarget: false,
         playerRequestPosition: null,
         pickupPosition: null,
+        pickupLaneStop: null,
         dropoffPosition: null,
+        dropoffLaneStop: null,
         destination: null,
         fare: null,
         farePaid: false,
@@ -1510,7 +1679,14 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         const booking = this.snappBookingValue;
         if (taxi.snappBookingId && booking?.id === taxi.snappBookingId) {
           booking.state = 'DRIVER_ARRIVED';
-          this.bus.emit(EventKeys.SnappDriverArrived, { bookingId: booking.id, vehicleId: taxi.vehicle.id });
+          this.bus.emit(EventKeys.SnappDriverArrived, {
+            bookingId: booking.id,
+            vehicleId: taxi.vehicle.id,
+            pickupPosition: { ...booking.pickup },
+            pickupAnchor: { ...booking.pickupAnchor ?? taxi.pickupPosition },
+            walkingDistancePx: booking.pickupWalkingDistancePx,
+            pickupAnchorLabel: booking.pickupAnchorLabel ?? 'Nearest legal curb',
+          });
         }
       }
     } else if (taxi.state === 'WAITING_FOR_PASSENGER') {
@@ -1523,10 +1699,24 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         traffic.setDriverStopped(taxi.vehicle, true);
         const booking = this.snappBookingValue;
         if (taxi.snappBookingId && booking?.id === taxi.snappBookingId) {
+          if (taxi.dropoffLaneStop) {
+            const configured = traffic.configureDriverAtLaneStop(
+              taxi.vehicle,
+              () => this.taxiTarget(taxi.vehicle.id),
+              taxi.dropoffLaneStop,
+              TAXI_STOP_RANGE,
+              false,
+            );
+            if (!configured) {
+              this.failSnappBooking('Snapp destination route became unavailable');
+              return;
+            }
+          } else {
+            traffic.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
+          }
           this.setTaxiState(taxi, 'IN_SERVICE');
           booking.state = 'RIDING';
           this.bus.emit(EventKeys.SnappRideStarted, { bookingId: booking.id, vehicleId: taxi.vehicle.id });
-          traffic.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
         } else {
           this.setTaxiState(taxi, 'DESTINATION_SELECTION');
           ServiceLocator.tryResolve<GameManager>(ServiceKeys.Game)?.openMap();
@@ -1823,7 +2013,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     }
     taxi.playerRequestPosition = { x: position.x, y: position.y };
     taxi.pickupPosition = { ...pickup.position };
+    taxi.pickupLaneStop = null;
     taxi.dropoffPosition = null;
+    taxi.dropoffLaneStop = null;
     taxi.destination = null;
     taxi.fare = null;
     taxi.farePaid = false;
@@ -1844,7 +2036,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     taxi.snappBookingId = null;
     taxi.playerRequestPosition = null;
     taxi.pickupPosition = null;
+    taxi.pickupLaneStop = null;
     taxi.dropoffPosition = null;
+    taxi.dropoffLaneStop = null;
     taxi.destination = null;
     taxi.fare = null;
     taxi.farePaid = false;
@@ -1945,12 +2139,13 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   }
 
   private taxiIsAtPickup(taxi: TaxiRuntime): boolean {
-    return this.isVehicleStoppedAt(
+    if (!this.isVehicleStoppedAt(
       taxi.vehicle,
       taxi.pickupPosition,
       TAXI_PICKUP_ARRIVAL_RANGE,
       true,
-    );
+    )) return false;
+    return this.taxiIsAtExactLaneStop(taxi, taxi.pickupLaneStop);
   }
 
   private taxiCanBoard(taxi: TaxiRuntime): boolean {
@@ -1962,12 +2157,25 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   }
 
   private taxiIsAtDropoff(taxi: TaxiRuntime): boolean {
-    return this.isVehicleStoppedAt(
+    if (!this.isVehicleStoppedAt(
       taxi.vehicle,
       taxi.dropoffPosition,
       TAXI_DROPOFF_ARRIVAL_RANGE,
       true,
-    );
+    )) return false;
+    return this.taxiIsAtExactLaneStop(taxi, taxi.dropoffLaneStop);
+  }
+
+  /** Final service-side guard against a generic driver's approximate radius. */
+  private taxiIsAtExactLaneStop(
+    taxi: TaxiRuntime,
+    target: TrafficLaneStopTarget | null,
+  ): boolean {
+    if (!target) return true;
+    const debug = this.traffic?.driverFor(taxi.vehicle)?.debug;
+    if (!debug || debug.laneId !== target.laneId) return false;
+    if (Math.abs((debug.laneDistance ?? target.laneDistance) - target.laneDistance) > TAXI_LANE_STOP_TOLERANCE) return false;
+    return Math.abs(Phaser.Math.Angle.Wrap(taxi.vehicle.movement.heading - target.heading)) <= TAXI_LANE_HEADING_TOLERANCE;
   }
 
   /**
@@ -1998,7 +2206,8 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         clearance,
         lane.spline.length - clearance,
       );
-      const position = network.pointAt(lane, distance).point;
+      const pose = network.pointAt(lane, distance);
+      const position = pose.point;
       if (world.cityAt(position.x, position.y)?.id !== taxi.cityId) continue;
       if (requireClearCurb && !this.isTaxiCurbClear(taxi.vehicle, position)) continue;
       const route = traffic.routePreview(
@@ -2009,9 +2218,72 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       const score = Math.hypot(position.x - requested.x, position.y - requested.y) +
         Math.min(route.distancePx * 0.025, 120);
       if (score < selectedScore) {
-        selected = { position: { x: position.x, y: position.y }, route };
+        selected = {
+          position: { x: position.x, y: position.y },
+          route,
+          laneStop: {
+            laneId: lane.id,
+            laneDistance: distance,
+            position: { x: position.x, y: position.y },
+            heading: pose.heading,
+          },
+        };
         selectedScore = score;
       }
+    }
+    return selected;
+  }
+
+  /**
+   * Rebind a persisted/selected point to the exact directed lane arc that
+   * authored it. Snapp uses this instead of silently picking a nearby lane,
+   * keeping its arrival state tied to the stored operational anchor.
+   */
+  private resolveExactTaxiRoadTarget(
+    taxi: TaxiRuntime,
+    requested: Vector2,
+    requireClearCurb: boolean,
+  ): TaxiRoadTarget | null {
+    const traffic = this.traffic;
+    const world = this.world;
+    const network = traffic?.roadNetwork;
+    if (!traffic || !world || !network) return null;
+    let selected: TaxiRoadTarget | null = null;
+    let selectedDistance = Infinity;
+    for (const lane of network.nearbyTravelLanes(requested, TAXI_PICKUP_SEARCH_RADIUS)) {
+      const projection = network.projectPoint(requested, lane);
+      const clearance = Math.min(
+        TAXI_PICKUP_JUNCTION_CLEARANCE,
+        Math.max(52, Math.floor(lane.spline.length * 0.22)),
+      );
+      if (lane.spline.length <= clearance * 2 + TAXI_STOP_RANGE * 2) continue;
+      const distance = Phaser.Math.Clamp(
+        projection.distance,
+        clearance,
+        lane.spline.length - clearance,
+      );
+      const pose = network.pointAt(lane, distance);
+      const position = pose.point;
+      const error = Math.hypot(position.x - requested.x, position.y - requested.y);
+      if (error > TAXI_EXACT_TARGET_TOLERANCE) continue;
+      if (world.cityAt(position.x, position.y)?.id !== taxi.cityId) continue;
+      if (requireClearCurb && !this.isTaxiCurbClear(taxi.vehicle, position)) continue;
+      const route = traffic.routePreview(
+        { x: taxi.vehicle.sprite.x, y: taxi.vehicle.sprite.y },
+        position,
+      );
+      if (!route || route.laneIds.length === 0 || error >= selectedDistance) continue;
+      selectedDistance = error;
+      selected = {
+        position: { x: position.x, y: position.y },
+        route,
+        laneStop: {
+          laneId: lane.id,
+          laneDistance: distance,
+          position: { x: position.x, y: position.y },
+          heading: pose.heading,
+        },
+      };
     }
     return selected;
   }
@@ -2302,6 +2574,63 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     return state === 'COMPLETED' || state === 'CANCELLED' || state === 'FAILED' || state === 'REFUNDED';
   }
 
+  private refreshSnappTracking(time: number): void {
+    if (this.snappTrackingAccumulatorMs < SNAPP_CONFIG.trackingUpdateMs && this.snappTrackingValue) return;
+    this.snappTrackingAccumulatorMs = 0;
+    const booking = this.snappBookingValue;
+    const taxi = booking?.assignedVehicleId === null || booking?.assignedVehicleId === undefined
+      ? null
+      : this.taxis.get(booking.assignedVehicleId) ?? null;
+    if (!booking || !taxi || !booking.destination || !booking.pickupAnchor || this.isSnappTerminal(booking.state)) {
+      this.snappTrackingValue = null;
+      return;
+    }
+    const driverPosition = { x: taxi.vehicle.sprite.x, y: taxi.vehicle.sprite.y };
+    const destinationPosition = booking.dropoffPosition ?? booking.destination.position;
+    const isDriverPhase = booking.state === 'DRIVER_EN_ROUTE' || booking.state === 'DRIVER_ARRIVED';
+    const driverRoute = isDriverPhase
+      ? this.traffic?.routePreview(driverPosition, booking.pickupAnchor) ?? null
+      : null;
+    const passengerRoute = booking.state === 'RIDING' || booking.state === 'ARRIVED'
+      ? this.traffic?.routePreview(driverPosition, destinationPosition) ?? booking.quote?.route ?? null
+      : booking.quote?.route ?? null;
+    const routeDistance = isDriverPhase
+      ? driverRoute?.distancePx ?? 0
+      : passengerRoute?.distancePx ?? 0;
+    const initialDistance = booking.quote?.route.distancePx ?? Math.max(1, routeDistance);
+    const remainingDistancePx = Math.max(0, routeDistance);
+    const progressRatio = Phaser.Math.Clamp(1 - remainingDistancePx / Math.max(1, initialDistance), 0, 1);
+    const snapshot: SnappTrackingSnapshot = {
+      bookingId: booking.id,
+      vehicleId: taxi.vehicle.id,
+      driverPosition,
+      playerPosition: this.player?.playerPosition ? { ...this.player.playerPosition } : null,
+      pickupPosition: { ...booking.pickup },
+      pickupAnchor: { ...booking.pickupAnchor },
+      destinationPosition: { ...destinationPosition },
+      state: booking.state,
+      driverRoute,
+      passengerRoute,
+      remainingDistancePx,
+      estimatedTimeOfArrivalMs: Math.round((remainingDistancePx / SNAPP_CONFIG.averageSpeedPxPerSecond) * 1000),
+      progressRatio,
+      vehicleHeading: taxi.vehicle.movement.heading,
+      timestamp: time,
+      updateSequence: this.snappTrackingSequence + 1,
+    };
+    this.snappTrackingSequence = snapshot.updateSequence;
+    this.snappTrackingValue = snapshot;
+    this.bus.emit(EventKeys.SnappTrackingUpdated, this.cloneSnappTracking(snapshot));
+  }
+
+  private playerEntityRotation(): number {
+    return this.player?.player?.sprite.rotation ?? 0;
+  }
+
+  private pickupAnchorLabel(cityId: CityId): string {
+    return `${CITY_TRANSIT_CONFIG[cityId].cityId.toUpperCase()} curb`;
+  }
+
   private isSnappSelectionState(state: SnappBookingState): boolean {
     return state === 'SELECTING_DESTINATION' || state === 'QUOTE_READY';
   }
@@ -2330,14 +2659,20 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   ): { taxi: TaxiRuntime; pickup: TaxiRoadTarget; dropoff: TaxiRoadTarget } | null {
     const destination = booking.destination;
     if (!destination) return null;
+    const pickupPosition = booking.pickupAnchor ?? booking.pickup;
+    const destinationPosition = booking.dropoffPosition ?? destination.position;
     const candidates = Array.from(this.taxis.values())
       .filter((taxi) => taxi.cityId === booking.cityId && this.isTaxiHireable(taxi))
       .sort((left, right) =>
         this.distanceSq(booking.pickup, left.vehicle.sprite) - this.distanceSq(booking.pickup, right.vehicle.sprite),
       );
     for (const taxi of candidates) {
-      const pickup = this.resolveTaxiRoadTarget(taxi, booking.pickup, true);
-      const dropoff = this.resolveTaxiRoadTarget(taxi, destination.position, false);
+      const pickup = booking.pickupAnchor
+        ? this.resolveExactTaxiRoadTarget(taxi, booking.pickupAnchor, true)
+        : this.resolveTaxiRoadTarget(taxi, pickupPosition, true);
+      const dropoff = booking.dropoffPosition
+        ? this.resolveExactTaxiRoadTarget(taxi, booking.dropoffPosition, false)
+        : this.resolveTaxiRoadTarget(taxi, destinationPosition, false);
       if (!pickup || !dropoff) continue;
       const route = this.traffic?.routePreview(pickup.position, dropoff.position);
       if (!route || route.laneIds.length === 0) continue;
@@ -2413,8 +2748,13 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       this.snappRecoveryChecked = true;
       return;
     }
-    const pickup = this.resolveTaxiRoadTarget(taxi, booking.pickup, true);
-    const dropoff = this.resolveTaxiRoadTarget(taxi, booking.destination.position, false);
+    const pickup = booking.pickupAnchor
+      ? this.resolveExactTaxiRoadTarget(taxi, booking.pickupAnchor, false)
+      : this.resolveTaxiRoadTarget(taxi, booking.pickup, true);
+    const destinationPosition = booking.dropoffPosition ?? booking.destination.position;
+    const dropoff = booking.dropoffPosition
+      ? this.resolveExactTaxiRoadTarget(taxi, booking.dropoffPosition, false)
+      : this.resolveTaxiRoadTarget(taxi, destinationPosition, false);
     if (!pickup || !dropoff) {
       this.failSnappBooking('Saved Snapp route is no longer reachable');
       this.snappRecoveryChecked = true;
@@ -2423,29 +2763,49 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     taxi.snappBookingId = booking.id;
     taxi.playerRequestPosition = { ...booking.pickup };
     taxi.pickupPosition = { ...pickup.position };
+    taxi.pickupLaneStop = pickup.laneStop ?? null;
     taxi.dropoffPosition = { ...dropoff.position };
+    taxi.dropoffLaneStop = dropoff.laneStop ?? null;
     taxi.destination = { ...booking.destination, position: { ...booking.destination.position } };
     taxi.fare = { ...booking.quote, route: booking.quote.route };
     taxi.farePaid = true;
     taxi.vehicle.sprite.setData('snappBookingId', booking.id);
     taxi.vehicle.sprite.setData('serviceLivery', 'snapp');
     taxi.vehicle.sprite.setTint(SNAPP_CONFIG.turquoise);
-    this.traffic?.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
+    if (taxi.pickupLaneStop) {
+      this.traffic?.configureDriverAtLaneStop(
+        taxi.vehicle,
+        () => this.taxiTarget(taxi.vehicle.id),
+        taxi.pickupLaneStop,
+        TAXI_STOP_RANGE,
+        false,
+      );
+    } else {
+      this.traffic?.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
+    }
     this.snappRecoveryChecked = true;
   }
 
   private cloneSnappBooking(booking: SnappBookingSnapshot): SnappBookingSnapshot {
     return {
       ...booking,
+      version: 2,
       pickup: { ...booking.pickup },
+      pickupRotation: booking.pickupRotation ?? 0,
+      pickupAnchor: booking.pickupAnchor ? { ...booking.pickupAnchor } : null,
+      pickupWalkingDistancePx: booking.pickupWalkingDistancePx ?? 0,
+      pickupAnchorLabel: booking.pickupAnchorLabel ?? null,
       destination: booking.destination
         ? { ...booking.destination, position: { ...booking.destination.position } }
         : null,
+      dropoffPosition: booking.dropoffPosition ? { ...booking.dropoffPosition } : null,
       quote: booking.quote
         ? {
             ...booking.quote,
             pickup: { ...booking.quote.pickup },
             destination: { ...booking.quote.destination, position: { ...booking.quote.destination.position } },
+            pickupAnchor: { ...booking.quote.pickupAnchor },
+            dropoffPosition: { ...booking.quote.dropoffPosition },
             route: {
               ...booking.quote.route,
               start: { ...booking.quote.route.start },
@@ -2453,6 +2813,49 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
               laneIds: booking.quote.route.laneIds.slice(),
             },
           }
+        : null,
+    };
+  }
+
+  /** Migrate a version-one save without changing the transport save root. */
+  private normalizeSnappBooking(booking: SnappBookingSnapshot): SnappBookingSnapshot {
+    const quote = booking.quote;
+    const pickupAnchor = booking.pickupAnchor ?? quote?.pickupAnchor ?? quote?.route.start ?? booking.pickup;
+    const dropoffPosition = booking.dropoffPosition ?? quote?.dropoffPosition ?? quote?.route.end ?? null;
+    return this.cloneSnappBooking({
+      ...booking,
+      version: 2,
+      pickupRotation: booking.pickupRotation ?? 0,
+      pickupAnchor,
+      pickupWalkingDistancePx: booking.pickupWalkingDistancePx ?? Math.hypot(pickupAnchor.x - booking.pickup.x, pickupAnchor.y - booking.pickup.y),
+      pickupAnchorLabel: booking.pickupAnchorLabel ?? 'Nearest legal curb',
+      dropoffPosition,
+      quote: quote
+        ? {
+            ...quote,
+            pickupAnchor: quote.pickupAnchor ?? pickupAnchor,
+            pickupWalkingDistancePx: quote.pickupWalkingDistancePx ?? Math.hypot(pickupAnchor.x - quote.pickup.x, pickupAnchor.y - quote.pickup.y),
+            pickupAnchorLabel: quote.pickupAnchorLabel ?? 'Nearest legal curb',
+            dropoffPosition: quote.dropoffPosition ?? dropoffPosition ?? quote.route.end,
+            dropoffSnapDistancePx: quote.dropoffSnapDistancePx ?? Math.hypot(quote.destination.position.x - (quote.dropoffPosition ?? quote.route.end).x, quote.destination.position.y - (quote.dropoffPosition ?? quote.route.end).y),
+          }
+        : null,
+    });
+  }
+
+  private cloneSnappTracking(snapshot: SnappTrackingSnapshot): SnappTrackingSnapshot {
+    return {
+      ...snapshot,
+      driverPosition: { ...snapshot.driverPosition },
+      playerPosition: snapshot.playerPosition ? { ...snapshot.playerPosition } : null,
+      pickupPosition: { ...snapshot.pickupPosition },
+      pickupAnchor: { ...snapshot.pickupAnchor },
+      destinationPosition: { ...snapshot.destinationPosition },
+      driverRoute: snapshot.driverRoute
+        ? { ...snapshot.driverRoute, start: { ...snapshot.driverRoute.start }, end: { ...snapshot.driverRoute.end }, laneIds: snapshot.driverRoute.laneIds.slice() }
+        : null,
+      passengerRoute: snapshot.passengerRoute
+        ? { ...snapshot.passengerRoute, start: { ...snapshot.passengerRoute.start }, end: { ...snapshot.passengerRoute.end }, laneIds: snapshot.passengerRoute.laneIds.slice() }
         : null,
     };
   }
@@ -2622,6 +3025,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     this.taxis.clear();
     this.passengerPlans.clear();
     this.snappRecoveryChecked = false;
+    this.snappTrackingValue = null;
+    this.snappTrackingAccumulatorMs = 0;
+    this.snappSelectionErrorValue = null;
   }
 
   private distanceSq(first: Vector2, second: { x: number; y: number }): number {

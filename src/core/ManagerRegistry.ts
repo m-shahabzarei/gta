@@ -14,6 +14,7 @@
  */
 import Phaser from 'phaser';
 import { ServiceLocator } from '@/core/ServiceLocator';
+import { ServiceKeys } from '@/config/ServiceKeys';
 import { isUpdatable } from '@/core/interfaces';
 import type { IManager, IUpdatable } from '@/core/interfaces';
 import { Logger } from '@/utils/Logger';
@@ -152,22 +153,35 @@ export class ManagerRegistry {
   /** Subscribe the update loop to the game STEP event. */
   private startTicking(): void {
     this.stepHandler = (time: number, delta: number): void => {
-      // Freeze the whole simulation while the game is paused; the pause overlay
-      // scene runs independently and drives resume.
-      if (this.gameManager && this.gameManager.state === GameState.Paused) {
+      const paused = this.gameManager?.state === GameState.Paused;
+      const phoneOpen = ServiceLocator.tryResolve<PhoneManager>(ServiceKeys.Phone)?.isOpen === true;
+      // Freeze the whole simulation for ordinary modal overlays. The phone has
+      // one narrowly-scoped exception: TrafficSystem and TransportationSystem
+      // may advance an assigned Snapp taxi only, so its live tracking remains
+      // truthful while player/world simulation stays paused.
+      if (paused && !phoneOpen) {
         return;
       }
       // Cap delta so a background tab that resumes doesn't teleport everything.
       const dt = delta > 100 ? 100 : delta;
       EngineDiagnostics.beginFrame(time, dt);
       for (const manager of this.updatables) {
-        // An input edge can pause the game in the middle of this frame. Stop
-        // immediately so no simulation manager advances after the modal opens.
-        if (this.gameManager?.state === GameState.Paused) break;
+        const nowPaused = this.gameManager?.state === GameState.Paused;
+        if (nowPaused && !phoneOpen) break;
+        if (nowPaused && phoneOpen && manager.key !== ServiceKeys.Traffic && manager.key !== ServiceKeys.Transportation) {
+          continue;
+        }
         const startedAt = performance.now();
         EngineDiagnostics.beginSystem(manager.key);
         try {
-          manager.update(time, dt);
+          if (nowPaused && phoneOpen) {
+            const phoneTick = manager as UpdatableManager & {
+              updateWhilePhoneOpen?: (tickTime: number, tickDelta: number) => void;
+            };
+            phoneTick.updateWhilePhoneOpen?.(time, dt);
+          } else {
+            manager.update(time, dt);
+          }
         } catch (error) {
           EngineDiagnostics.recordError(error, 'manager-update', manager.key);
           EngineDiagnostics.recordRecovery(manager.key, 'continued-after-manager-exception');

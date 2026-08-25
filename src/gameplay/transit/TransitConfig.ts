@@ -16,6 +16,10 @@ export const SNAPP_CONFIG = {
   waitingForPassengerTimeoutMs: 60000,
   turquoise: 0x13c8bc,
   marker: 0x13c8bc,
+  /** Maximum walking distance from the request pose to a legal pickup curb. */
+  maxPickupWalkDistancePx: 192,
+  /** Pickup marker/route snapshots are refreshed at this cadence. */
+  trackingUpdateMs: 200,
 } as const;
 
 /** Shared curb-service tuning; deliberately small enough to reject adjacent lanes. */
@@ -263,6 +267,9 @@ export function calculateSnappFare(
   destination: TaxiDestination,
   trafficDensity = 0,
   now = 0,
+  pickupAnchor: Vector2 = route.start,
+  pickupAnchorLabel = 'Nearest legal curb',
+  dropoffPosition: Vector2 = route.end,
 ): import('./SnappTypes').SnappQuote {
   const base = calculateTaxiFare(config, route, trafficDensity);
   const total = Math.min(SNAPP_CONFIG.maxFare, Math.max(SNAPP_CONFIG.minFare, base.total));
@@ -270,7 +277,12 @@ export function calculateSnappFare(
     ...base,
     total,
     pickup: { ...pickup },
+    pickupAnchor: { ...pickupAnchor },
+    pickupWalkingDistancePx: Math.hypot(pickup.x - pickupAnchor.x, pickup.y - pickupAnchor.y),
+    pickupAnchorLabel,
     destination: { ...destination, position: { ...destination.position } },
+    dropoffPosition: { ...dropoffPosition },
+    dropoffSnapDistancePx: Math.hypot(destination.position.x - dropoffPosition.x, destination.position.y - dropoffPosition.y),
     estimatedDurationMinutes: Math.max(1, Math.ceil(route.distancePx / SNAPP_CONFIG.averageSpeedPxPerSecond / 60)),
     quoteVersion: 1,
     createdAt: now,

@@ -64,9 +64,12 @@ export class PhoneScene extends Phaser.Scene {
     this.shell = new PhoneShell(this, { onClose: () => this.beginClose() });
     const apps = this.phoneManager?.registry.listInstalled({ scene: this }) ?? [];
     this.shell.setApps(apps, (app) => this.openApp(app));
+    const pendingAppId = this.phoneManager?.consumePendingAppId() ?? null;
     this.layoutUnsub = this.platform?.onLayoutChanged(() => this.applyLayout()) ?? null;
     this.applyLayout();
     this.startOpenTransition();
+    const pendingApp = pendingAppId ? apps.find((app) => app.id === pendingAppId) : null;
+    if (pendingApp) this.openApp(pendingApp);
 
     this.scene.bringToTop();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.onShutdown, this);

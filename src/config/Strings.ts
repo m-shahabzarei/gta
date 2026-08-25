@@ -72,6 +72,20 @@ export type StringKey =
   | 'phoneSnappUnavailable'
   | 'phoneSnappPickupHint'
   | 'phoneSnappCloseHint'
+  | 'phoneSnappMapHint'
+  | 'phoneSnappPickupAnchor'
+  | 'phoneSnappDropoffSnap'
+  | 'phoneSnappRemaining'
+  | 'phoneSnappRecenter'
+  | 'phoneSnappFitRoute'
+  | 'phoneSnappMeetAt'
+  | 'phoneSnappMapPin'
+  | 'phoneSnappOpen'
+  | 'phoneSnappDismiss'
+  | 'phoneSnappLegendPlayer'
+  | 'phoneSnappLegendDriver'
+  | 'phoneSnappLegendPickup'
+  | 'phoneSnappLegendDestination'
   | 'phoneNoApps'
   | 'phoneNoAppsCompact'
   | 'phoneRegistryReady'
@@ -136,7 +150,7 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappInsufficientFunds: 'Not enough money for this ride.',
     phoneSnappPaymentProcessing: 'Payment processing…',
     phoneSnappDriverEnRoute: 'Driver is on the way',
-    phoneSnappDriverArrived: 'Your driver has arrived',
+    phoneSnappDriverArrived: 'Your Snapp driver has arrived',
     phoneSnappBoard: 'BOARD VEHICLE',
     phoneSnappRiding: 'Ride in progress',
     phoneSnappCompleted: 'Ride completed',
@@ -146,6 +160,20 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappUnavailable: 'No Snapp vehicle is available right now.',
     phoneSnappPickupHint: 'Pickup is locked to your current position.',
     phoneSnappCloseHint: 'You may close the Phone while your driver continues.',
+    phoneSnappMapHint: 'Tap a road or landmark. Drag to pan; wheel or +/- to zoom.',
+    phoneSnappPickupAnchor: 'Pickup walk',
+    phoneSnappDropoffSnap: 'Drop-off adjusted',
+    phoneSnappRemaining: 'Remaining',
+    phoneSnappRecenter: 'Center map on player',
+    phoneSnappFitRoute: 'Fit active route',
+    phoneSnappMeetAt: 'Meet at',
+    phoneSnappMapPin: 'Map pin',
+    phoneSnappOpen: 'OPEN SNAPP',
+    phoneSnappDismiss: 'DISMISS',
+    phoneSnappLegendPlayer: 'PLAYER',
+    phoneSnappLegendDriver: 'DRIVER',
+    phoneSnappLegendPickup: 'PICKUP',
+    phoneSnappLegendDestination: 'DESTINATION',
     phoneNoApps: 'NO APPS AVAILABLE',
     phoneNoAppsCompact: 'NO APPS',
     phoneRegistryReady: 'APP REGISTRY READY',
@@ -206,7 +234,7 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappInsufficientFunds: 'No tienes suficiente dinero.',
     phoneSnappPaymentProcessing: 'Procesando pago…',
     phoneSnappDriverEnRoute: 'El conductor está en camino',
-    phoneSnappDriverArrived: 'Tu conductor ha llegado',
+    phoneSnappDriverArrived: 'Tu conductor de Snapp ha llegado',
     phoneSnappBoard: 'SUBIR AL VEHÍCULO',
     phoneSnappRiding: 'Viaje en curso',
     phoneSnappCompleted: 'Viaje completado',
@@ -216,6 +244,20 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappUnavailable: 'No hay vehículo Snapp disponible.',
     phoneSnappPickupHint: 'La recogida usa tu posición actual.',
     phoneSnappCloseHint: 'Puedes cerrar el teléfono mientras llega el conductor.',
+    phoneSnappMapHint: 'Toca una carretera o lugar. Arrastra para mover; rueda o +/- para zoom.',
+    phoneSnappPickupAnchor: 'Caminata a recogida',
+    phoneSnappDropoffSnap: 'Destino ajustado',
+    phoneSnappRemaining: 'Restante',
+    phoneSnappRecenter: 'Centrar mapa en jugador',
+    phoneSnappFitRoute: 'Ajustar ruta',
+    phoneSnappMeetAt: 'Encuentro en',
+    phoneSnappMapPin: 'Punto del mapa',
+    phoneSnappOpen: 'ABRIR SNAPP',
+    phoneSnappDismiss: 'DESCARTAR',
+    phoneSnappLegendPlayer: 'JUGADOR',
+    phoneSnappLegendDriver: 'CONDUCTOR',
+    phoneSnappLegendPickup: 'RECOGIDA',
+    phoneSnappLegendDestination: 'DESTINO',
     phoneNoApps: 'NO HAY APPS DISPONIBLES',
     phoneNoAppsCompact: 'SIN APPS',
     phoneRegistryReady: 'REGISTRO DE APPS LISTO',
@@ -276,7 +318,7 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappInsufficientFunds: 'Fonds insuffisants pour ce trajet.',
     phoneSnappPaymentProcessing: 'Paiement en cours…',
     phoneSnappDriverEnRoute: 'Le conducteur arrive',
-    phoneSnappDriverArrived: 'Votre conducteur est arrivé',
+    phoneSnappDriverArrived: 'Votre conducteur Snapp est arrivé',
     phoneSnappBoard: 'MONTER',
     phoneSnappRiding: 'Trajet en cours',
     phoneSnappCompleted: 'Trajet terminé',
@@ -286,6 +328,20 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappUnavailable: 'Aucun véhicule Snapp disponible.',
     phoneSnappPickupHint: 'La prise en charge utilise votre position.',
     phoneSnappCloseHint: 'Vous pouvez fermer le téléphone pendant l’arrivée.',
+    phoneSnappMapHint: 'Touchez une route ou un lieu. Glissez pour déplacer; molette ou +/- pour zoomer.',
+    phoneSnappPickupAnchor: 'Marche jusqu’à la prise en charge',
+    phoneSnappDropoffSnap: 'Dépose ajustée',
+    phoneSnappRemaining: 'Restant',
+    phoneSnappRecenter: 'Centrer la carte sur le joueur',
+    phoneSnappFitRoute: 'Afficher la route',
+    phoneSnappMeetAt: 'Rendez-vous à',
+    phoneSnappMapPin: 'Point sur la carte',
+    phoneSnappOpen: 'OUVRIR SNAPP',
+    phoneSnappDismiss: 'FERMER',
+    phoneSnappLegendPlayer: 'JOUEUR',
+    phoneSnappLegendDriver: 'CONDUCTEUR',
+    phoneSnappLegendPickup: 'PRISE EN CHARGE',
+    phoneSnappLegendDestination: 'DESTINATION',
     phoneNoApps: 'AUCUNE APP DISPONIBLE',
     phoneNoAppsCompact: 'AUCUNE APP',
     phoneRegistryReady: 'REGISTRE DES APPS PRÊT',

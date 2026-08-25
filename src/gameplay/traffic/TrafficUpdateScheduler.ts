@@ -81,6 +81,7 @@ export class TrafficUpdateScheduler {
     player: Vector2 | null,
     drivers: Iterable<TrafficDriver>,
     execute: (work: TrafficScheduleWork) => void,
+    forceNear: (driver: TrafficDriver) => boolean = () => false,
   ): void {
     this.fixedStep += 1;
     this.nearQueue.length = 0;
@@ -91,7 +92,7 @@ export class TrafficUpdateScheduler {
     resetFrameStats(stats);
 
     for (const driver of drivers) {
-      const tier = this.tierFor(driver, player);
+      const tier = forceNear(driver) ? 'near' : this.tierFor(driver, player);
       const schedule = this.scheduleFor(driver.id, tier, now);
       if (tier === 'near') stats.nearDrivers += 1;
       else if (tier === 'medium') stats.mediumDrivers += 1;

@@ -23,6 +23,7 @@ export class PhoneManager extends BaseManager implements ISerializable {
   public readonly registry = new PhoneAppRegistry();
 
   private phoneOpen = false;
+  private pendingAppId: string | null = null;
 
   protected onInit(): void {
     if (!this.registry.get(STORE_APP_ID)) {
@@ -61,18 +62,37 @@ export class PhoneManager extends BaseManager implements ISerializable {
     return true;
   }
 
+  /** Open the phone and mount one installed app directly (HUD notifications use this). */
+  public openPhoneToApp(appId: string): boolean {
+    const app = this.registry.get(appId);
+    if (!app || !this.registry.isInstalled(appId)) return false;
+    this.pendingAppId = app.id;
+    if (this.openPhone()) return true;
+    this.pendingAppId = null;
+    return false;
+  }
+
+  /** Consume the one-shot app request after PhoneScene has been created. */
+  public consumePendingAppId(): string | null {
+    const appId = this.pendingAppId;
+    this.pendingAppId = null;
+    return appId;
+  }
+
   /** Close the phone and resume only the pause owned by this manager. */
   public closePhone(): boolean {
     if (!this.phoneOpen) return false;
     const game = ServiceLocator.tryResolve<GameManager>(ServiceKeys.Game);
     if (!game || game.state !== GameState.Paused) {
       this.phoneOpen = false;
+      this.pendingAppId = null;
       return false;
     }
     // Consume the close key/touch release before the gameplay scene resumes so
     // Escape/N cannot leak into Pause or immediately reopen the phone.
     ServiceLocator.tryResolve<InputManager>(ServiceKeys.Input)?.resetGameplayInput();
     game.resumeGame();
+    this.pendingAppId = null;
     return true;
   }
 
@@ -121,6 +141,7 @@ export class PhoneManager extends BaseManager implements ISerializable {
 
   protected override onDestroy(): void {
     this.phoneOpen = false;
+    this.pendingAppId = null;
     this.registry.clear();
   }
 }

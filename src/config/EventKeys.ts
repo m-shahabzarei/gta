@@ -142,6 +142,7 @@ export enum EventKeys {
   SnappBookingCancelled = 'snapp:booking-cancelled',
   SnappBookingFailed = 'snapp:booking-failed',
   SnappRefundIssued = 'snapp:refund-issued',
+  SnappTrackingUpdated = 'snapp:tracking-updated',
 
   // ── Crime & wanted ────────────────────────────────────────────────────────
   CrimeCommitted = 'crime:committed',
