@@ -39,6 +39,8 @@ export class PhoneShell extends UIComponent {
   /** Hidden stencil geometry matching the physical screen opening. */
   private screenMaskShape: Phaser.GameObjects.Graphics | null = null;
   private screenMask: Phaser.Display.Masks.GeometryMask | null = null;
+  private readonly screenMaskTransform = new Phaser.GameObjects.Components.TransformMatrix();
+  private readonly screenMaskParentTransform = new Phaser.GameObjects.Components.TransformMatrix();
   private readonly title = new Label(this.uiScene, 0, 0, 'PIXEL CITY', {
     fontSize: '12px',
     fontStyle: 'bold',
@@ -113,6 +115,7 @@ export class PhoneShell extends UIComponent {
       this.closeButton,
     ]);
     this.layout(1280, 720, { top: 0, right: 0, bottom: 0, left: 0 });
+    this.uiScene.events.on(Phaser.Scenes.Events.UPDATE, this.syncScreenMaskTransform, this);
   }
 
   /** Refit the body and all child controls inside safe insets. */
@@ -219,19 +222,35 @@ export class PhoneShell extends UIComponent {
     this.screenMask?.destroy();
     this.screenMask = null;
     if (this.screenMaskShape) {
-      this.remove(this.screenMaskShape, false);
       this.screenMaskShape.destroy();
       this.screenMaskShape = null;
     }
     const shape = this.uiScene.make.graphics({ x: 0, y: 0 }, false);
-    shape.setVisible(false);
+    shape.setScrollFactor(0);
     shape.fillStyle(0xffffff, 1);
     shape.fillRoundedRect(screenX, screenY, this.screenWidth, this.screenHeight, SCREEN_RADIUS);
-    this.add(shape);
     this.screenMaskShape = shape;
     this.screenMask = shape.createGeometryMask();
     this.appViewContainer.setMask(this.screenMask);
     this.appGrid.setMask(this.screenMask);
+    this.syncScreenMaskTransform();
+  }
+
+  /**
+   * GeometryMask renders its source without the target Container's parent
+   * matrix. Keep the off-list stencil aligned to the shell's world transform.
+   */
+  private syncScreenMaskTransform(): void {
+    const shape = this.screenMaskShape;
+    if (!shape || !this.scene) return;
+    const transform = this.getWorldTransformMatrix(
+      this.screenMaskTransform,
+      this.screenMaskParentTransform,
+    ).decomposeMatrix();
+    shape
+      .setPosition(transform.translateX, transform.translateY)
+      .setRotation(transform.rotation)
+      .setScale(transform.scaleX, transform.scaleY);
   }
 
   /** Render installed apps generically; the built-in Store is the first entry. */
@@ -288,15 +307,17 @@ export class PhoneShell extends UIComponent {
   }
 
   public override destroy(fromScene?: boolean): void {
+    this.uiScene.events.off(Phaser.Scenes.Events.UPDATE, this.syncScreenMaskTransform, this);
     this.appViewContainer.clearMask(false);
     this.appGrid.clearMask(false);
     this.screenMask?.destroy();
     this.screenMask = null;
     if (this.screenMaskShape) {
-      this.remove(this.screenMaskShape, false);
       this.screenMaskShape.destroy();
       this.screenMaskShape = null;
     }
+    this.screenMaskTransform.destroy();
+    this.screenMaskParentTransform.destroy();
     super.destroy(fromScene);
   }
 

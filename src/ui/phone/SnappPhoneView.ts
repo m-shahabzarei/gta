@@ -45,6 +45,8 @@ export class SnappPhoneView extends UIComponent {
   private mapOverlayLayer: Phaser.GameObjects.Container | null = null;
   private mapMaskShape: Phaser.GameObjects.Graphics | null = null;
   private mapMask: Phaser.Display.Masks.GeometryMask | null = null;
+  private readonly mapMaskTransform = new Phaser.GameObjects.Components.TransformMatrix();
+  private readonly mapMaskParentTransform = new Phaser.GameObjects.Components.TransformMatrix();
   private mapMode: 'destination' | 'status' | null = null;
   private mapInitialized = false;
   private mapRect = { x: 12, y: 90, width: 216, height: 190 };
@@ -66,6 +68,7 @@ export class SnappPhoneView extends UIComponent {
     this.world = ServiceLocator.tryResolve<WorldManager>(ServiceKeys.World);
     this.traffic = ServiceLocator.tryResolve<TrafficSystem>(ServiceKeys.Traffic);
     this.add(this.content);
+    this.uiScene.events.on(Phaser.Scenes.Events.UPDATE, this.syncMapMaskTransform, this);
     this.setData('accessibility-label', t('phoneSnapp'));
     const refresh = (): void => this.render();
     for (const key of [
@@ -107,6 +110,7 @@ export class SnappPhoneView extends UIComponent {
   }
 
   public override destroy(fromScene?: boolean): void {
+    this.uiScene.events.off(Phaser.Scenes.Events.UPDATE, this.syncMapMaskTransform, this);
     this.paymentTimer?.remove(false);
     this.paymentTimer = null;
     for (const unsub of this.unsubs) unsub();
@@ -115,6 +119,8 @@ export class SnappPhoneView extends UIComponent {
     this.content.destroy(true);
     this.mapGraphics = null;
     this.mapZone = null;
+    this.mapMaskTransform.destroy();
+    this.mapMaskParentTransform.destroy();
     super.destroy(fromScene);
   }
 
@@ -156,7 +162,6 @@ export class SnappPhoneView extends UIComponent {
     this.mapMask?.destroy();
     this.mapMask = null;
     if (this.mapMaskShape) {
-      this.mapViewportContainer?.remove(this.mapMaskShape, false);
       this.mapMaskShape.destroy();
       this.mapMaskShape = null;
     }
@@ -477,12 +482,12 @@ export class SnappPhoneView extends UIComponent {
     this.mapViewportContainer.add([this.mapWorldLayer, this.mapOverlayLayer]);
     this.content.add(this.mapViewportContainer);
     this.mapMaskShape = this.uiScene.make.graphics({ x: 0, y: 0 }, false);
-    this.mapMaskShape.setVisible(false);
+    this.mapMaskShape.setScrollFactor(0);
     this.mapMaskShape.fillStyle(0xffffff, 1);
     this.mapMaskShape.fillRoundedRect(this.mapRect.x, this.mapRect.y, this.mapRect.width, this.mapRect.height, 6);
-    this.mapViewportContainer.add(this.mapMaskShape);
     this.mapMask = this.mapMaskShape.createGeometryMask();
     this.mapWorldLayer.setMask(this.mapMask);
+    this.syncMapMaskTransform();
     this.mapGraphics = this.uiScene.add.graphics();
     this.mapWorldLayer.add(this.mapGraphics);
     this.mapZone = this.uiScene.add.zone(
@@ -574,6 +579,20 @@ export class SnappPhoneView extends UIComponent {
     if (mode === 'status') this.addMapLegend();
     if (mode === 'status' && snapshot && !preserveViewport) this.fitTrackingRoute(snapshot);
     else this.redrawMap(snapshot);
+  }
+
+  /** Align the off-list map stencil with this nested Phone view every frame. */
+  private syncMapMaskTransform(): void {
+    const shape = this.mapMaskShape;
+    if (!shape || !this.scene) return;
+    const transform = this.getWorldTransformMatrix(
+      this.mapMaskTransform,
+      this.mapMaskParentTransform,
+    ).decomposeMatrix();
+    shape
+      .setPosition(transform.translateX, transform.translateY)
+      .setRotation(transform.rotation)
+      .setScale(transform.scaleX, transform.scaleY);
   }
 
   private addMapControl(text: string, x: number, y: number, onClick: () => void): void {
