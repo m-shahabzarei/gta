@@ -127,6 +127,22 @@ export enum EventKeys {
   VehicleRemoved = 'vehicle:removed',
   VehicleOccupancyChanged = 'vehicle:occupancy-changed',
 
+  // ── Snapp ride-hailing ───────────────────────────────────────────────────
+  SnappDestinationSelected = 'snapp:destination-selected',
+  SnappQuoteCreated = 'snapp:quote-created',
+  SnappPaymentCompleted = 'snapp:payment-completed',
+  SnappPaymentFailed = 'snapp:payment-failed',
+  SnappDriverAssigned = 'snapp:driver-assigned',
+  SnappDriverEnRoute = 'snapp:driver-en-route',
+  SnappDriverArrived = 'snapp:driver-arrived',
+  SnappBoardingStarted = 'snapp:boarding-started',
+  SnappRideStarted = 'snapp:ride-started',
+  SnappRideArrived = 'snapp:ride-arrived',
+  SnappRideCompleted = 'snapp:ride-completed',
+  SnappBookingCancelled = 'snapp:booking-cancelled',
+  SnappBookingFailed = 'snapp:booking-failed',
+  SnappRefundIssued = 'snapp:refund-issued',
+
   // ── Crime & wanted ────────────────────────────────────────────────────────
   CrimeCommitted = 'crime:committed',
   CrimeCreated = 'crime:created',

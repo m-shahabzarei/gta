@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 import { SceneKeys } from '@/config/SceneKeys';
 import { ServiceKeys } from '@/config/ServiceKeys';
 import { DepthLayers } from '@/config/DepthLayers';
+import { t } from '@/config/Strings';
 import { ServiceLocator } from '@/core/ServiceLocator';
 import type { MobilePlatform } from '@/platform';
 import type { PhoneAppDefinition } from '@/phone/PhoneTypes';
@@ -21,6 +22,9 @@ export class PhoneScene extends Phaser.Scene {
   private layoutUnsub: (() => void) | null = null;
   private activeApp: PhoneAppDefinition | null = null;
   private activeAppView: Phaser.GameObjects.GameObject | null = null;
+  private transitioningView: Phaser.GameObjects.GameObject | null = null;
+  private appTransition: Phaser.Tweens.Tween | null = null;
+  private navigatingHome = false;
   private closing = false;
   private reducedMotion = false;
 
@@ -58,7 +62,7 @@ export class PhoneScene extends Phaser.Scene {
     );
 
     this.shell = new PhoneShell(this, { onClose: () => this.beginClose() });
-    const apps = this.phoneManager?.registry.listAvailable({ scene: this }) ?? [];
+    const apps = this.phoneManager?.registry.listInstalled({ scene: this }) ?? [];
     this.shell.setApps(apps, (app) => this.openApp(app));
     this.layoutUnsub = this.platform?.onLayoutChanged(() => this.applyLayout()) ?? null;
     this.applyLayout();
@@ -68,7 +72,7 @@ export class PhoneScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.onShutdown, this);
   }
 
-  /** Tick only the active future app; the v1 registry has no active app. */
+  /** Tick only the currently mounted phone application. */
   public override update(time: number, delta: number): void {
     if (!this.activeApp || !this.activeApp.update) return;
     this.activeApp.update(this.appContext(), time, delta);
@@ -150,8 +154,18 @@ export class PhoneScene extends Phaser.Scene {
   /** Request pointer-lock restoration while a close click is still a gesture. */
   private preflightPointerLockRestore(): void {
     const ui = this.scene.get(SceneKeys.UI);
+    const canvas = this.game.canvas as HTMLCanvasElement & {
+      mozRequestPointerLock?: () => void;
+      webkitRequestPointerLock?: () => void;
+    };
+    if (typeof canvas.requestPointerLock !== 'function' &&
+      typeof canvas.mozRequestPointerLock !== 'function' &&
+      typeof canvas.webkitRequestPointerLock !== 'function') return;
     try {
-      ui?.input.mouse?.requestPointerLock();
+      const result = ui?.input.mouse?.requestPointerLock() as unknown;
+      if (result && typeof result === 'object' && 'catch' in result) {
+        void (result as Promise<void>).catch(() => undefined);
+      }
     } catch {
       // Escape or browser policy may reject this; UIScene retries on resume.
     }
@@ -166,16 +180,69 @@ export class PhoneScene extends Phaser.Scene {
     if (!view) return;
     this.add.existing(view);
     this.activeAppView = view;
+    this.shell?.mountAppView(view, app.titleKey ? t(app.titleKey) : app.title, () => this.navigateHome());
+    this.transitioningView = view;
+    const animatedView = view as Phaser.GameObjects.GameObject & {
+      setAlpha?: (alpha: number) => Phaser.GameObjects.GameObject;
+      setScale?: (scale: number) => Phaser.GameObjects.GameObject;
+    };
+    animatedView.setAlpha?.(0);
+    animatedView.setScale?.(0.96);
+    this.appTransition = this.tweens.add({
+      targets: view,
+      alpha: 1,
+      scale: 1,
+      duration: this.reducedMotion ? 1 : 180,
+      ease: 'Cubic.Out',
+      onComplete: () => {
+        this.appTransition = null;
+        this.transitioningView = null;
+      },
+    });
+  }
+
+  private refreshInstalledApps(): void {
+    const apps = this.phoneManager?.registry.listInstalled({ scene: this }) ?? [];
+    this.shell?.setApps(apps, (app) => this.openApp(app));
   }
 
   private navigateHome(): void {
+    if (this.navigatingHome) return;
+    if (!this.activeApp) {
+      this.shell?.showHome();
+      return;
+    }
+    this.navigatingHome = true;
+    this.appTransition?.stop();
+    this.appTransition = null;
     if (this.activeApp) {
       const app = this.activeApp;
       app.onClose?.({ ...this.appContext(), app });
     }
-    this.activeAppView?.destroy();
+    const view = this.activeAppView;
     this.activeAppView = null;
     this.activeApp = null;
+    if (!view || this.closing) {
+      this.finishNavigateHome(view);
+      return;
+    }
+    this.transitioningView = view;
+    this.appTransition = this.tweens.add({
+      targets: view,
+      alpha: 0,
+      scale: 0.97,
+      duration: this.reducedMotion ? 1 : 130,
+      ease: 'Cubic.In',
+      onComplete: () => this.finishNavigateHome(view),
+    });
+  }
+
+  private finishNavigateHome(view: Phaser.GameObjects.GameObject | null): void {
+    this.appTransition = null;
+    this.transitioningView = null;
+    view?.destroy();
+    this.navigatingHome = false;
+    this.shell?.showHome();
   }
 
   private appContext() {
@@ -183,10 +250,18 @@ export class PhoneScene extends Phaser.Scene {
       scene: this,
       navigateHome: (): void => this.navigateHome(),
       closePhone: (): void => this.beginClose(),
+      refreshInstalledApps: (): void => this.refreshInstalledApps(),
+      listCatalogApps: (): PhoneAppDefinition[] =>
+        this.phoneManager?.registry.listCatalogApps({ scene: this }) ?? [],
+      installApp: (appId: string): boolean => this.phoneManager?.installApp(appId) ?? false,
     };
   }
 
   private onEscape(): void {
+    if (this.activeApp) {
+      this.navigateHome();
+      return;
+    }
     this.beginClose();
   }
 
@@ -205,8 +280,23 @@ export class PhoneScene extends Phaser.Scene {
     this.input.keyboard?.off('keydown-N', this.onEscape, this);
     this.layoutUnsub?.();
     this.layoutUnsub = null;
+    this.appTransition?.stop();
+    this.appTransition = null;
+    // Phaser begins tearing down the scene display list before SHUTDOWN is
+    // delivered. Do not call navigateHome() here: it asks PhoneShell to
+    // relayout and update Text objects that may already have been destroyed.
+    // Dispose the mounted app directly instead, keeping teardown idempotent.
+    const app = this.activeApp;
+    if (app) app.onClose?.({ ...this.appContext(), app });
+    const mountedView = this.activeAppView;
+    const transitioningView = this.transitioningView;
+    this.activeApp = null;
+    mountedView?.destroy();
+    this.activeAppView = null;
+    if (transitioningView && transitioningView !== mountedView) transitioningView.destroy();
+    this.transitioningView = null;
+    this.navigatingHome = false;
     this.tweens.killTweensOf([this.scrim, this.shell]);
-    this.navigateHome();
     this.shell?.destroy();
     this.scrim?.destroy();
     this.shell = null;

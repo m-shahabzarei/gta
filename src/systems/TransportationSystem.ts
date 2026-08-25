@@ -32,6 +32,13 @@ import {
   type TrafficRoutePreview,
   type TransitRideSnapshot,
   type TransportationDebugSnapshot,
+  calculateSnappFare,
+  SNAPP_CONFIG,
+  type SnappBookingSnapshot,
+  type SnappBookingState,
+  type SnappPaymentResult,
+  type SnappQuote,
+  isSnappBookingSnapshot,
 } from '@/gameplay/transit';
 import type { TrafficLaneStopTarget } from '@/gameplay/traffic';
 import type { BusStopSite, CityId, VehicleOccupantRecord } from '@/gameplay/types';
@@ -85,6 +92,8 @@ interface TaxiRuntime {
   recoveryAttempts: number;
   nextRecoveryAt: number;
   validLaneRoute: boolean;
+  /** Set only while this existing taxi is assigned to a Snapp booking. */
+  snappBookingId: string | null;
 }
 
 interface PassengerPlan {
@@ -173,11 +182,23 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     yazd: 0,
     gilan: 0,
   };
+  private snappBookingValue: SnappBookingSnapshot | null = null;
+  private snappSequence = 1;
+  private snappRecoveryChecked = false;
 
   protected onInit(): void {
     this.subscribe(EventKeys.PlayerInteract, (position) => this.handlePlayerInteraction(position));
     this.subscribe(EventKeys.VehicleDestroyed, ({ vehicleId }) => this.removeDestroyedService(vehicleId));
     this.subscribe(EventKeys.VehicleRemoved, ({ vehicleId }) => this.removeDestroyedService(vehicleId));
+    this.subscribe(EventKeys.PlayerDied, () => this.failSnappBooking('Player died before the ride completed'));
+    this.subscribe(EventKeys.PlayerBusted, () => this.failSnappBooking('Ride cancelled after arrest'));
+    this.subscribe(EventKeys.GameNew, () => {
+      for (const taxi of this.taxis.values()) {
+        if (taxi.snappBookingId) this.returnTaxiToService(taxi);
+      }
+      this.snappBookingValue = null;
+      this.snappRecoveryChecked = false;
+    });
   }
 
   protected onAttach(_scene: Phaser.Scene): void {
@@ -189,6 +210,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   }
 
   protected override onDetach(_scene: Phaser.Scene): void {
+    if (this.snappBookingValue && !this.isSnappTerminal(this.snappBookingValue.state)) {
+      this.failSnappBooking('Transit service was closed before the ride completed');
+    }
     this.removeServiceVehicles();
     this.resetRuntime();
     this.world = null;
@@ -219,16 +243,26 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
 
   /** Durable transit discovery only; vehicle/AI state is intentionally regenerated. */
   public serialize(): Json {
-    return { discoveredStopIds: Array.from(this.discoveredStopIds).sort() };
+    return {
+      version: 2,
+      discoveredStopIds: Array.from(this.discoveredStopIds).sort(),
+      snapp: this.snappBookingValue as unknown as Json,
+    };
   }
 
   public deserialize(data: Json): void {
     if (typeof data !== 'object' || data === null || Array.isArray(data)) return;
     const ids = data.discoveredStopIds;
-    if (!Array.isArray(ids)) return;
-    this.discoveredStopIds.clear();
-    for (const id of ids) {
-      if (typeof id === 'string') this.discoveredStopIds.add(id);
+    if (Array.isArray(ids)) {
+      this.discoveredStopIds.clear();
+      for (const id of ids) {
+        if (typeof id === 'string') this.discoveredStopIds.add(id);
+      }
+    }
+    const snapp = data['snapp'];
+    if (snapp !== undefined && snapp !== null && isSnappBookingSnapshot(snapp)) {
+      this.snappBookingValue = this.cloneSnappBooking(snapp as unknown as SnappBookingSnapshot);
+      this.snappRecoveryChecked = false;
     }
   }
 
@@ -313,6 +347,176 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       });
     }
     return destinations;
+  }
+
+  /** Current live Snapp booking, copied so Phone views cannot mutate gameplay state. */
+  public get snappBooking(): SnappBookingSnapshot | null {
+    return this.snappBookingValue ? this.cloneSnappBooking(this.snappBookingValue) : null;
+  }
+
+  /** Authoritative destinations available to Snapp in the player's current city. */
+  public snappDestinations(cityId?: CityId): TaxiDestination[] {
+    const position = this.player?.playerPosition;
+    const resolvedCity = cityId ?? (position ? this.world?.cityAt(position.x, position.y)?.id : undefined);
+    return resolvedCity ? this.taxiDestinations(resolvedCity) : [];
+  }
+
+  /** Begin a new destination selection; a second active booking is rejected. */
+  public beginSnappSelection(): boolean {
+    const existing = this.snappBookingValue;
+    if (existing && !this.isSnappTerminal(existing.state)) return false;
+    const player = this.player;
+    const position = player?.playerPosition;
+    const city = position ? this.world?.cityAt(position.x, position.y)?.id : undefined;
+    if (!player?.player || !position || !city || player.playerInVehicle) return false;
+    this.snappBookingValue = {
+      version: 1,
+      id: this.nextSnappId('booking'),
+      transactionId: this.nextSnappId('tx'),
+      state: 'SELECTING_DESTINATION',
+      cityId: city,
+      pickup: { ...position },
+      destination: null,
+      quote: null,
+      payment: 'unpaid',
+      assignedVehicleId: null,
+      createdAt: Date.now(),
+      error: null,
+    };
+    this.snappRecoveryChecked = true;
+    return true;
+  }
+
+  /** Select a real destination and create a legal-route quote without charging. */
+  public previewSnappDestination(destination: TaxiDestination): SnappQuote | null {
+    const player = this.player;
+    const world = this.world;
+    const position = player?.playerPosition;
+    if (!player?.player || !world || !position || player.playerInVehicle) return null;
+    const city = world.cityAt(position.x, position.y)?.id;
+    if (!city || destination.cityId !== city) return null;
+    const canonical = this.snappDestinations(city).find((candidate) => candidate.id === destination.id);
+    if (!canonical) return null;
+    if (!this.snappBookingValue || this.isSnappTerminal(this.snappBookingValue.state)) {
+      if (!this.beginSnappSelection()) return null;
+    }
+    const booking = this.snappBookingValue;
+    if (!booking || !this.isSnappSelectionState(booking.state)) return null;
+    const geometryTaxi = this.findSnappGeometryTaxi(city);
+    if (!geometryTaxi) {
+      booking.error = 'No Snapp vehicle is available right now.';
+      return null;
+    }
+    const pickup = this.resolveTaxiRoadTarget(geometryTaxi, position, true);
+    const dropoff = this.resolveTaxiRoadTarget(geometryTaxi, canonical.position, false);
+    if (!pickup || !dropoff) {
+      booking.error = 'This destination is not reachable by road.';
+      return null;
+    }
+    const route = this.traffic?.routePreview(pickup.position, dropoff.position) ?? null;
+    if (!route || route.laneIds.length === 0) {
+      booking.error = 'This destination is not reachable by road.';
+      return null;
+    }
+    const quote = calculateSnappFare(
+      CITY_TRANSIT_CONFIG[city].taxi,
+      route,
+      position,
+      canonical,
+      world.trafficDensityAt(position.x, position.y),
+      Date.now(),
+    );
+    booking.cityId = city;
+    booking.pickup = { ...position };
+    booking.destination = { ...canonical, position: { ...canonical.position } };
+    booking.quote = quote;
+    booking.state = 'QUOTE_READY';
+    booking.error = null;
+    this.bus.emit(EventKeys.SnappDestinationSelected, {
+      bookingId: booking.id,
+      destinationId: canonical.id,
+    });
+    this.bus.emit(EventKeys.SnappQuoteCreated, { bookingId: booking.id, quote });
+    return { ...quote, pickup: { ...quote.pickup }, destination: { ...quote.destination, position: { ...quote.destination.position } } };
+  }
+
+  /** Pay the exact quote once, then dispatch an existing legal taxi as Snapp. */
+  public confirmSnappBooking(): SnappPaymentResult {
+    const booking = this.snappBookingValue;
+    const player = this.player?.player;
+    if (!booking || booking.state !== 'QUOTE_READY' || !booking.quote || !booking.destination || !player) {
+      return booking?.payment === 'paid' ? 'already-paid' : 'invalid-quote';
+    }
+    if (booking.payment === 'paid') return 'already-paid';
+    const candidate = this.findSnappDispatchCandidate(booking);
+    if (!candidate) {
+      booking.state = 'FAILED';
+      booking.error = 'No Snapp vehicle is available right now.';
+      this.bus.emit(EventKeys.SnappPaymentFailed, { bookingId: booking.id, reason: booking.error });
+      this.bus.emit(EventKeys.SnappBookingFailed, { bookingId: booking.id, reason: booking.error, refunded: false });
+      return 'invalid-quote';
+    }
+    booking.state = 'PAYMENT_PENDING';
+    if (!player.inventory.spendMoney(booking.quote.total)) {
+      booking.state = 'QUOTE_READY';
+      booking.error = 'Not enough money for this ride.';
+      this.bus.emit(EventKeys.SnappPaymentFailed, { bookingId: booking.id, reason: booking.error });
+      return 'insufficient-funds';
+    }
+    booking.payment = 'paid';
+    booking.state = 'DRIVER_EN_ROUTE';
+    booking.assignedVehicleId = candidate.taxi.vehicle.id;
+    booking.error = null;
+    const taxi = candidate.taxi;
+    taxi.snappBookingId = booking.id;
+    taxi.playerRequestPosition = { ...booking.pickup };
+    taxi.pickupPosition = { ...candidate.pickup.position };
+    taxi.dropoffPosition = { ...candidate.dropoff.position };
+    taxi.destination = { ...booking.destination, position: { ...booking.destination.position } };
+    taxi.fare = { ...booking.quote, route: booking.quote.route };
+    taxi.farePaid = true;
+    taxi.validLaneRoute = true;
+    taxi.idleUntil = 0;
+    taxi.standAtNextTarget = false;
+    taxi.recoveryAttempts = 0;
+    taxi.vehicle.sprite.setData('snappBookingId', booking.id);
+    taxi.vehicle.sprite.setData('serviceLivery', 'snapp');
+    taxi.vehicle.sprite.setTint(SNAPP_CONFIG.turquoise);
+    this.setTaxiState(taxi, 'APPROACHING_PICKUP');
+    this.traffic?.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
+    this.bus.emit(EventKeys.SnappPaymentCompleted, {
+      bookingId: booking.id,
+      transactionId: booking.transactionId,
+      amount: booking.quote.total,
+    });
+    this.bus.emit(EventKeys.SnappDriverAssigned, { bookingId: booking.id, vehicleId: taxi.vehicle.id });
+    this.bus.emit(EventKeys.SnappDriverEnRoute, { bookingId: booking.id, vehicleId: taxi.vehicle.id });
+    return 'paid';
+  }
+
+  /** Cancel before boarding and refund exactly once; riding cancellation is not offered in the MVP. */
+  public cancelSnappBooking(): boolean {
+    const booking = this.snappBookingValue;
+    if (!booking || !['DRIVER_EN_ROUTE', 'DRIVER_ARRIVED'].includes(booking.state)) return false;
+    const taxi = booking.assignedVehicleId === null ? null : this.taxis.get(booking.assignedVehicleId) ?? null;
+    if (taxi && taxi.state !== 'APPROACHING_PICKUP' && taxi.state !== 'WAITING_FOR_PASSENGER') return false;
+    if (taxi) this.returnTaxiToService(taxi);
+    booking.state = 'CANCELLED';
+    const refunded = this.refundSnappBooking('Ride cancelled');
+    this.bus.emit(EventKeys.SnappBookingCancelled, { bookingId: booking.id, refunded });
+    return true;
+  }
+
+  /** Board a waiting Snapp taxi through the existing player/occupant transition. */
+  public requestSnappBoarding(vehicleId: number): boolean {
+    const booking = this.snappBookingValue;
+    if (!booking || booking.assignedVehicleId !== vehicleId || booking.state !== 'DRIVER_ARRIVED') return false;
+    const playerPosition = this.player?.playerPosition;
+    const taxi = this.taxis.get(vehicleId);
+    if (!playerPosition || !taxi || this.distanceSq(playerPosition, taxi.vehicle.sprite) > TAXI_INTERACTION_RANGE * TAXI_INTERACTION_RANGE) {
+      return false;
+    }
+    return this.requestTaxiBoarding(vehicleId);
   }
 
   /** Select a map destination and produce a lane-route-based quote without charging the player. */
@@ -515,14 +719,14 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   }
 
   /** Iterate only visible service vehicle positions for compact minimap blips. */
-  public forEachServiceBlip(visitor: (kind: 'bus' | 'taxi', position: Vector2) => void): void {
+  public forEachServiceBlip(visitor: (kind: 'bus' | 'taxi' | 'snapp', position: Vector2) => void): void {
     for (const bus of this.buses.values()) {
       if (bus.vehicle.isDestroyed || !bus.vehicle.sprite.active) continue;
       visitor('bus', { x: bus.vehicle.sprite.x, y: bus.vehicle.sprite.y });
     }
     for (const taxi of this.taxis.values()) {
       if (taxi.vehicle.isDestroyed || !taxi.vehicle.sprite.active) continue;
-      visitor('taxi', { x: taxi.vehicle.sprite.x, y: taxi.vehicle.sprite.y });
+      visitor(taxi.snappBookingId ? 'snapp' : 'taxi', { x: taxi.vehicle.sprite.x, y: taxi.vehicle.sprite.y });
     }
   }
 
@@ -579,6 +783,7 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
 
   private updateServices(time: number, delta: number): void {
     this.ensureServicePopulation(time);
+    this.validateRestoredSnappBooking();
     this.processCompletedPassengerExits();
     for (const bus of Array.from(this.buses.values())) this.updateBus(bus, time, delta);
     for (const taxi of Array.from(this.taxis.values())) this.updateTaxi(taxi, time);
@@ -1027,6 +1232,7 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         recoveryAttempts: 0,
         nextRecoveryAt: 0,
         validLaneRoute: true,
+        snappBookingId: null,
       };
       this.taxis.set(vehicle.id, runtime);
       traffic.configureDriver(vehicle, () => this.taxiTarget(vehicle.id), TAXI_STOP_RANGE, false);
@@ -1295,35 +1501,62 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       }
     } else if (taxi.state === 'APPROACHING_PICKUP') {
       if (!taxi.playerRequestPosition || !taxi.pickupPosition || time - taxi.stateSince > TAXI_PICKUP_TIMEOUT_MS) {
-        this.returnTaxiToService(taxi);
+        if (taxi.snappBookingId) this.failSnappBooking('Driver could not reach the pickup point');
+        else this.returnTaxiToService(taxi);
       } else if (this.taxiIsAtPickup(taxi)) {
         this.setTaxiState(taxi, 'WAITING_FOR_PASSENGER');
         taxi.recoveryAttempts = 0;
         traffic.setDriverStopped(taxi.vehicle, true);
+        const booking = this.snappBookingValue;
+        if (taxi.snappBookingId && booking?.id === taxi.snappBookingId) {
+          booking.state = 'DRIVER_ARRIVED';
+          this.bus.emit(EventKeys.SnappDriverArrived, { bookingId: booking.id, vehicleId: taxi.vehicle.id });
+        }
       }
     } else if (taxi.state === 'WAITING_FOR_PASSENGER') {
       if (time - taxi.stateSince > TAXI_WAITING_FOR_PASSENGER_TIMEOUT_MS) {
-        this.returnTaxiToService(taxi);
+        if (taxi.snappBookingId) this.failSnappBooking('Pickup window expired');
+        else this.returnTaxiToService(taxi);
       }
     } else if (taxi.state === 'PASSENGER_BOARDING') {
       if (this.player?.playerIsTransitPassenger && this.player.currentVehicle?.id === taxi.vehicle.id) {
-        this.setTaxiState(taxi, 'DESTINATION_SELECTION');
         traffic.setDriverStopped(taxi.vehicle, true);
-        ServiceLocator.tryResolve<GameManager>(ServiceKeys.Game)?.openMap();
+        const booking = this.snappBookingValue;
+        if (taxi.snappBookingId && booking?.id === taxi.snappBookingId) {
+          this.setTaxiState(taxi, 'IN_SERVICE');
+          booking.state = 'RIDING';
+          this.bus.emit(EventKeys.SnappRideStarted, { bookingId: booking.id, vehicleId: taxi.vehicle.id });
+          traffic.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
+        } else {
+          this.setTaxiState(taxi, 'DESTINATION_SELECTION');
+          ServiceLocator.tryResolve<GameManager>(ServiceKeys.Game)?.openMap();
+        }
       } else if (time - taxi.stateSince > TAXI_BOARD_TIMEOUT_MS) {
         this.occupants?.releasePlayerPassengerSeat(taxi.vehicle);
-        this.returnTaxiToService(taxi);
+        if (taxi.snappBookingId) this.failSnappBooking('Boarding timed out');
+        else this.returnTaxiToService(taxi);
       }
     } else if (taxi.state === 'IN_SERVICE') {
       if (this.taxiIsAtDropoff(taxi)) {
         this.setTaxiState(taxi, 'ARRIVING');
         taxi.recoveryAttempts = 0;
         traffic.setDriverStopped(taxi.vehicle, true);
+        const booking = this.snappBookingValue;
+        if (taxi.snappBookingId && booking?.id === taxi.snappBookingId) {
+          booking.state = 'ARRIVED';
+          this.bus.emit(EventKeys.SnappRideArrived, { bookingId: booking.id, vehicleId: taxi.vehicle.id });
+        }
       }
     } else if (taxi.state === 'ARRIVING') {
-      if (this.player?.currentVehicle?.id !== taxi.vehicle.id) this.returnTaxiToService(taxi);
+      if (this.player?.currentVehicle?.id !== taxi.vehicle.id) {
+        if (taxi.snappBookingId) this.completeSnappRide(taxi);
+        else this.returnTaxiToService(taxi);
+      }
     } else if (taxi.state === 'PASSENGER_EXITING') {
-      if (this.player?.currentVehicle?.id !== taxi.vehicle.id) this.returnTaxiToService(taxi);
+      if (this.player?.currentVehicle?.id !== taxi.vehicle.id) {
+        if (taxi.snappBookingId) this.completeSnappRide(taxi);
+        else this.returnTaxiToService(taxi);
+      }
     } else if (taxi.state === 'RETURNING_TO_SERVICE') {
       this.setTaxiState(taxi, 'AVAILABLE');
     }
@@ -1338,6 +1571,10 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       if (taxi.recoveryAttempts <= MAX_RECOVERY_ATTEMPTS) driver.forceReplan();
       else {
         taxi.recoveryAttempts = 0;
+        if (taxi.snappBookingId) {
+          this.failSnappBooking('Driver route became unavailable');
+          return;
+        }
         if (taxi.state === 'IN_SERVICE' && taxi.dropoffPosition) {
           traffic.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
         } else if (taxi.state === 'APPROACHING_PICKUP' && taxi.pickupPosition) {
@@ -1562,6 +1799,12 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     }
     traffic.setDriverStopped(taxi.vehicle, true);
     this.setTaxiState(taxi, 'PASSENGER_BOARDING');
+    if (taxi.snappBookingId) {
+      const booking = this.snappBookingValue;
+      if (booking?.id === taxi.snappBookingId) {
+        this.bus.emit(EventKeys.SnappBoardingStarted, { bookingId: booking.id, vehicleId: taxi.vehicle.id });
+      }
+    }
     if (!player.beginPassengerBoarding(taxi.vehicle, seat)) {
       occupants.releasePlayerPassengerSeat(taxi.vehicle);
       this.returnTaxiToService(taxi);
@@ -1595,6 +1838,10 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   private returnTaxiToService(taxi: TaxiRuntime): void {
     const traffic = this.traffic;
     this.setTaxiState(taxi, 'RETURNING_TO_SERVICE');
+    taxi.vehicle.sprite.clearTint();
+    taxi.vehicle.sprite.data?.remove('snappBookingId');
+    taxi.vehicle.sprite.data?.remove('serviceLivery');
+    taxi.snappBookingId = null;
     taxi.playerRequestPosition = null;
     taxi.pickupPosition = null;
     taxi.dropoffPosition = null;
@@ -2051,6 +2298,165 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     return vehicle ? (this.taxis.get(vehicle.id) ?? null) : null;
   }
 
+  private isSnappTerminal(state: SnappBookingState): boolean {
+    return state === 'COMPLETED' || state === 'CANCELLED' || state === 'FAILED' || state === 'REFUNDED';
+  }
+
+  private isSnappSelectionState(state: SnappBookingState): boolean {
+    return state === 'SELECTING_DESTINATION' || state === 'QUOTE_READY';
+  }
+
+  private nextSnappId(prefix: string): string {
+    const id = `snapp-${prefix}-${Date.now().toString(36)}-${this.snappSequence}`;
+    this.snappSequence += 1;
+    return id;
+  }
+
+  /** Pick a real taxi for route geometry; no vehicle is reserved during quoting. */
+  private findSnappGeometryTaxi(cityId: CityId): TaxiRuntime | null {
+    return (
+      Array.from(this.taxis.values()).find(
+        (taxi) => taxi.cityId === cityId && !taxi.vehicle.isDestroyed && taxi.vehicle.sprite.active && this.taxiHasDriverAndPassengerSeat(taxi),
+      ) ??
+      Array.from(this.taxis.values()).find(
+        (taxi) => taxi.cityId === cityId && !taxi.vehicle.isDestroyed && taxi.vehicle.sprite.active,
+      ) ??
+      null
+    );
+  }
+
+  private findSnappDispatchCandidate(
+    booking: SnappBookingSnapshot,
+  ): { taxi: TaxiRuntime; pickup: TaxiRoadTarget; dropoff: TaxiRoadTarget } | null {
+    const destination = booking.destination;
+    if (!destination) return null;
+    const candidates = Array.from(this.taxis.values())
+      .filter((taxi) => taxi.cityId === booking.cityId && this.isTaxiHireable(taxi))
+      .sort((left, right) =>
+        this.distanceSq(booking.pickup, left.vehicle.sprite) - this.distanceSq(booking.pickup, right.vehicle.sprite),
+      );
+    for (const taxi of candidates) {
+      const pickup = this.resolveTaxiRoadTarget(taxi, booking.pickup, true);
+      const dropoff = this.resolveTaxiRoadTarget(taxi, destination.position, false);
+      if (!pickup || !dropoff) continue;
+      const route = this.traffic?.routePreview(pickup.position, dropoff.position);
+      if (!route || route.laneIds.length === 0) continue;
+      return { taxi, pickup, dropoff };
+    }
+    return null;
+  }
+
+  private refundSnappBooking(reason: string): boolean {
+    const booking = this.snappBookingValue;
+    const amount = booking?.quote?.total ?? 0;
+    if (!booking || booking.payment !== 'paid' || amount <= 0) return false;
+    const player = this.player?.player;
+    if (!player) return false;
+    player.inventory.addMoney(amount);
+    booking.payment = 'refunded';
+    booking.state = 'REFUNDED';
+    booking.error = reason;
+    this.bus.emit(EventKeys.SnappRefundIssued, {
+      bookingId: booking.id,
+      transactionId: booking.transactionId,
+      amount,
+      state: booking.state,
+    });
+    return true;
+  }
+
+  private failSnappBooking(reason: string): void {
+    const booking = this.snappBookingValue;
+    if (!booking || this.isSnappTerminal(booking.state) || booking.state === 'QUOTE_READY' || booking.state === 'SELECTING_DESTINATION') return;
+    const taxi = booking.assignedVehicleId === null ? null : this.taxis.get(booking.assignedVehicleId) ?? null;
+    if (taxi) {
+      if (taxi.state === 'PASSENGER_BOARDING') this.occupants?.releasePlayerPassengerSeat(taxi.vehicle);
+      this.returnTaxiToService(taxi);
+    }
+    booking.state = 'FAILED';
+    booking.error = reason;
+    const refunded = this.refundSnappBooking(reason);
+    this.bus.emit(EventKeys.SnappBookingFailed, { bookingId: booking.id, reason, refunded });
+  }
+
+  private completeSnappRide(taxi: TaxiRuntime): void {
+    const booking = this.snappBookingValue;
+    if (!taxi.snappBookingId || booking?.id !== taxi.snappBookingId) {
+      this.returnTaxiToService(taxi);
+      return;
+    }
+    booking.state = 'COMPLETED';
+    booking.error = null;
+    this.bus.emit(EventKeys.SnappRideCompleted, { bookingId: booking.id, vehicleId: taxi.vehicle.id });
+    this.returnTaxiToService(taxi);
+  }
+
+  private validateRestoredSnappBooking(): void {
+    if (this.snappRecoveryChecked || !this.snappBookingValue) return;
+    const booking = this.snappBookingValue;
+    if (this.isSnappTerminal(booking.state) || booking.payment !== 'paid') {
+      if (booking.state === 'PAYMENT_PENDING') {
+        booking.state = 'QUOTE_READY';
+        booking.error = 'Payment was interrupted before dispatch.';
+      }
+      this.snappRecoveryChecked = true;
+      return;
+    }
+    if (booking.assignedVehicleId === null) {
+      this.failSnappBooking('Saved Snapp vehicle is no longer available');
+      this.snappRecoveryChecked = true;
+      return;
+    }
+    const taxi = this.taxis.get(booking.assignedVehicleId) ?? null;
+    if (!taxi || taxi.snappBookingId !== booking.id || !booking.destination || !booking.quote) {
+      this.failSnappBooking('Saved Snapp vehicle is no longer available');
+      this.snappRecoveryChecked = true;
+      return;
+    }
+    const pickup = this.resolveTaxiRoadTarget(taxi, booking.pickup, true);
+    const dropoff = this.resolveTaxiRoadTarget(taxi, booking.destination.position, false);
+    if (!pickup || !dropoff) {
+      this.failSnappBooking('Saved Snapp route is no longer reachable');
+      this.snappRecoveryChecked = true;
+      return;
+    }
+    taxi.snappBookingId = booking.id;
+    taxi.playerRequestPosition = { ...booking.pickup };
+    taxi.pickupPosition = { ...pickup.position };
+    taxi.dropoffPosition = { ...dropoff.position };
+    taxi.destination = { ...booking.destination, position: { ...booking.destination.position } };
+    taxi.fare = { ...booking.quote, route: booking.quote.route };
+    taxi.farePaid = true;
+    taxi.vehicle.sprite.setData('snappBookingId', booking.id);
+    taxi.vehicle.sprite.setData('serviceLivery', 'snapp');
+    taxi.vehicle.sprite.setTint(SNAPP_CONFIG.turquoise);
+    this.traffic?.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
+    this.snappRecoveryChecked = true;
+  }
+
+  private cloneSnappBooking(booking: SnappBookingSnapshot): SnappBookingSnapshot {
+    return {
+      ...booking,
+      pickup: { ...booking.pickup },
+      destination: booking.destination
+        ? { ...booking.destination, position: { ...booking.destination.position } }
+        : null,
+      quote: booking.quote
+        ? {
+            ...booking.quote,
+            pickup: { ...booking.quote.pickup },
+            destination: { ...booking.quote.destination, position: { ...booking.quote.destination.position } },
+            route: {
+              ...booking.quote.route,
+              start: { ...booking.quote.route.start },
+              end: { ...booking.quote.route.end },
+              laneIds: booking.quote.route.laneIds.slice(),
+            },
+          }
+        : null,
+    };
+  }
+
   private playerRideSnapshot(): TransitRideSnapshot | null {
     const player = this.player;
     const vehicle = player?.currentVehicle;
@@ -2182,6 +2588,8 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   }
 
   private removeDestroyedService(vehicleId: number): void {
+    const taxi = this.taxis.get(vehicleId);
+    if (taxi?.snappBookingId) this.failSnappBooking('Assigned Snapp vehicle was destroyed');
     this.buses.delete(vehicleId);
     this.taxis.delete(vehicleId);
   }
@@ -2213,6 +2621,7 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     this.buses.clear();
     this.taxis.clear();
     this.passengerPlans.clear();
+    this.snappRecoveryChecked = false;
   }
 
   private distanceSq(first: Vector2, second: { x: number; y: number }): number {

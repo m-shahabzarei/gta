@@ -568,8 +568,8 @@ export class MapScene extends Phaser.Scene {
         this.drawMarker(
           g,
           position,
-          kind === 'bus' ? 0x38bdf8 : 0xf6c453,
-          (kind === 'bus' ? 3.4 : 2.7) / this.zoom,
+          kind === 'bus' ? 0x38bdf8 : kind === 'snapp' ? 0x13c8bc : 0xf6c453,
+          (kind === 'bus' ? 3.4 : kind === 'snapp' ? 3.2 : 2.7) / this.zoom,
           kind === 'bus' ? 'diamond' : 'circle',
         );
       },

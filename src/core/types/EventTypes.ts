@@ -19,6 +19,7 @@ import type { WeaponId } from '@/gameplay/types/WeaponTypes';
 import type { PickupKind } from '@/gameplay/types/PickupTypes';
 import type { InteriorKind } from '@/gameplay/types/InteriorTypes';
 import type { InteractionContext } from '@/gameplay/types/InteractionTypes';
+import type { SnappBookingState, SnappQuote } from '@/gameplay/transit';
 import type { InteriorAmbienceKind } from '@/gameplay/types/WorldTypes';
 import type {
   DamageAttribution,
@@ -180,6 +181,22 @@ export interface EventPayloadMap {
   [EventKeys.VehicleSpawned]: { vehicleId: number; kind: VehicleKind };
   [EventKeys.VehicleRemoved]: { vehicleId: number };
   [EventKeys.VehicleOccupancyChanged]: { vehicleId: number; occupantCount: number };
+
+  // Snapp ride-hailing
+  [EventKeys.SnappDestinationSelected]: { bookingId: string; destinationId: string };
+  [EventKeys.SnappQuoteCreated]: { bookingId: string; quote: SnappQuote };
+  [EventKeys.SnappPaymentCompleted]: { bookingId: string; transactionId: string; amount: number };
+  [EventKeys.SnappPaymentFailed]: { bookingId: string; reason: string };
+  [EventKeys.SnappDriverAssigned]: { bookingId: string; vehicleId: number };
+  [EventKeys.SnappDriverEnRoute]: { bookingId: string; vehicleId: number };
+  [EventKeys.SnappDriverArrived]: { bookingId: string; vehicleId: number };
+  [EventKeys.SnappBoardingStarted]: { bookingId: string; vehicleId: number };
+  [EventKeys.SnappRideStarted]: { bookingId: string; vehicleId: number };
+  [EventKeys.SnappRideArrived]: { bookingId: string; vehicleId: number };
+  [EventKeys.SnappRideCompleted]: { bookingId: string; vehicleId: number };
+  [EventKeys.SnappBookingCancelled]: { bookingId: string; refunded: boolean };
+  [EventKeys.SnappBookingFailed]: { bookingId: string; reason: string; refunded: boolean };
+  [EventKeys.SnappRefundIssued]: { bookingId: string; transactionId: string; amount: number; state: SnappBookingState };
 
   // Crime & wanted
   [EventKeys.CrimeCommitted]: {

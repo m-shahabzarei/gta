@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { COLORS } from '@/config/Constants';
 import { DepthLayers } from '@/config/DepthLayers';
+import { t } from '@/config/Strings';
 import { UIComponent } from '@/ui/UIComponent';
 import { Button, Label } from '@/ui/components';
 import type { PhoneAppDefinition } from '@/phone/PhoneTypes';
@@ -34,33 +35,42 @@ export class PhoneShell extends UIComponent {
   private readonly screen = this.uiScene.add.graphics();
   private readonly details = this.uiScene.add.graphics();
   private readonly appGrid = this.uiScene.add.container();
+  private readonly appViewContainer = this.uiScene.add.container();
   private readonly title = new Label(this.uiScene, 0, 0, 'PIXEL CITY', {
     fontSize: '12px',
     fontStyle: 'bold',
     color: cssColor(COLORS.TEXT),
   });
-  private readonly status = new Label(this.uiScene, 0, 0, 'PHONE READY', {
+  private readonly status = new Label(this.uiScene, 0, 0, t('phoneReady'), {
     fontSize: '11px',
     color: cssColor(COLORS.ACCENT),
   });
-  private readonly emptyState = new Label(this.uiScene, 0, 0, 'NO APPS AVAILABLE', {
+  private readonly emptyState = new Label(this.uiScene, 0, 0, t('phoneNoApps'), {
     fontSize: '14px',
     fontStyle: 'bold',
     color: cssColor(COLORS.TEXT),
     align: 'center',
   });
-  private readonly emptyHint = new Label(this.uiScene, 0, 0, 'APP REGISTRY READY', {
+  private readonly emptyHint = new Label(this.uiScene, 0, 0, t('phoneRegistryReady'), {
     fontSize: '11px',
     color: cssColor(COLORS.UI_BORDER),
     align: 'center',
   });
+  private readonly backButton: Button;
   private readonly closeButton: Button;
   private apps: readonly PhoneAppDefinition[] = [];
   private onAppOpen: ((app: PhoneAppDefinition) => void) | null = null;
+  private mountedView: Phaser.GameObjects.GameObject | null = null;
+  private homeVisible = true;
   private screenWidth = 0;
   private screenHeight = 0;
   private screenOriginX = 0;
   private screenOriginY = 0;
+  private lastLayout = {
+    width: 1280,
+    height: 720,
+    safe: { top: 0, right: 0, bottom: 0, left: 0 } as PhoneShellSafeArea,
+  };
 
   constructor(scene: Phaser.Scene, config: PhoneShellConfig) {
     super(scene);
@@ -68,12 +78,21 @@ export class PhoneShell extends UIComponent {
     this.setScrollFactor(0);
 
     this.closeButton = new Button(scene, 0, 0, {
-      text: 'CLOSE',
+      text: t('phoneClose'),
       width: 88,
       height: 48,
       onClick: config.onClose,
     });
     this.closeButton.setDepth(DepthLayers.Overlay + 11);
+    this.closeButton.setData('accessibility-label', t('phoneClose'));
+    this.backButton = new Button(scene, 0, 0, {
+      text: t('phoneBack'),
+      width: 88,
+      height: 48,
+    });
+    this.backButton.setDepth(DepthLayers.Overlay + 11);
+    this.backButton.setData('accessibility-label', t('phoneBack'));
+    this.backButton.setEnabled(false);
 
     this.add([
       this.bodyGfx,
@@ -84,6 +103,8 @@ export class PhoneShell extends UIComponent {
       this.emptyState,
       this.emptyHint,
       this.appGrid,
+      this.appViewContainer,
+      this.backButton,
       this.closeButton,
     ]);
     this.layout(1280, 720, { top: 0, right: 0, bottom: 0, left: 0 });
@@ -91,6 +112,7 @@ export class PhoneShell extends UIComponent {
 
   /** Refit the portrait body and all child controls inside safe insets. */
   public layout(width: number, height: number, safe: PhoneShellSafeArea): this {
+    this.lastLayout = { width, height, safe: { ...safe } };
     const availableWidth = Math.max(120, width - safe.left - safe.right - OUTER_GUTTER * 2);
     const availableHeight = Math.max(180, height - safe.top - safe.bottom - OUTER_GUTTER * 2);
     let bodyHeight = Math.min(MAX_BODY_HEIGHT, availableHeight);
@@ -111,10 +133,12 @@ export class PhoneShell extends UIComponent {
     this.screenWidth = Math.max(64, bodyWidth - 32);
     this.screenHeight = Math.max(96, bodyHeight - 112);
     const compact = this.screenWidth < 144;
-    this.title.setText(compact ? 'PIXEL' : 'PIXEL CITY');
-    this.status.setVisible(!compact);
-    this.emptyState.setText(compact ? 'NO APPS' : 'NO APPS AVAILABLE');
-    this.emptyHint.setText(compact ? 'READY' : 'APP REGISTRY READY');
+    if (this.homeVisible) this.title.setText(compact ? t('phoneTitleCompact') : t('title'));
+    this.status.setVisible(this.homeVisible && !compact);
+    this.emptyState.setText(compact ? t('phoneNoAppsCompact') : t('phoneNoApps'));
+    this.emptyHint.setText(compact ? t('phoneRegistryReadyCompact') : t('phoneRegistryReady'));
+    this.emptyState.setVisible(this.homeVisible && this.apps.length === 0);
+    this.emptyHint.setVisible(this.homeVisible && this.apps.length === 0);
     const screenX = -this.screenWidth / 2;
     const screenY = -bodyHeight / 2 + 64;
     this.screenOriginX = screenX;
@@ -139,7 +163,10 @@ export class PhoneShell extends UIComponent {
     this.details.fillStyle(COLORS.TEXT, 0.92);
     this.details.fillRoundedRect(-28, bodyHeight / 2 - 24, 56, 4, 2);
 
-    this.title.setPosition(screenX + 14, screenY + 12);
+    this.title.setPosition(
+      screenX + (this.homeVisible ? 14 : compact ? 8 : 104),
+      screenY + 12,
+    );
     this.status.setPosition(screenX + this.screenWidth - 92, screenY + 12);
     this.emptyState.setPosition(
       screenX + (this.screenWidth - this.emptyState.getBounds().width) / 2,
@@ -149,19 +176,73 @@ export class PhoneShell extends UIComponent {
       screenX + (this.screenWidth - this.emptyHint.getBounds().width) / 2,
       screenY + this.screenHeight * 0.48 + 18,
     );
+    this.backButton.setPosition(
+      compact && !this.homeVisible ? screenX + this.screenWidth / 2 : screenX + 52,
+      compact && !this.homeVisible ? screenY + this.screenHeight - 26 : screenY + 36,
+    );
+    this.backButton.setEnabled(!this.homeVisible);
     this.closeButton.setPosition(bodyWidth / 2 - 58, -bodyHeight / 2 + 42);
+    this.appViewContainer.setPosition(screenX, screenY);
+    this.appGrid.setVisible(this.homeVisible);
+    this.appGrid.setActive(this.homeVisible);
+    this.appViewContainer.setVisible(!this.homeVisible);
+    this.appViewContainer.setActive(!this.homeVisible);
+    this.redrawAppGrid(this.screenOriginX, this.screenOriginY);
+    this.layoutMountedView();
+    return this;
+  }
+
+  /** Render installed apps generically; the built-in Store is the first entry. */
+  public setApps(apps: readonly PhoneAppDefinition[], onOpen: (app: PhoneAppDefinition) => void): this {
+    this.apps = apps;
+    this.onAppOpen = onOpen;
+    this.emptyState.setVisible(this.homeVisible && apps.length === 0);
+    this.emptyHint.setVisible(this.homeVisible && apps.length === 0);
     this.redrawAppGrid(this.screenOriginX, this.screenOriginY);
     return this;
   }
 
-  /** Render registered apps generically; v1 passes an empty list. */
-  public setApps(apps: readonly PhoneAppDefinition[], onOpen: (app: PhoneAppDefinition) => void): this {
-    this.apps = apps;
-    this.onAppOpen = onOpen;
-    this.emptyState.setVisible(apps.length === 0);
-    this.emptyHint.setVisible(apps.length === 0);
-    this.redrawAppGrid(this.screenOriginX, this.screenOriginY);
+  /** Mount one app view inside the existing screen and expose a hierarchical Back control. */
+  public mountAppView(
+    view: Phaser.GameObjects.GameObject,
+    title: string,
+    onBack: () => void,
+  ): this {
+    this.appViewContainer.removeAll(false);
+    this.appViewContainer.add(view);
+    this.mountedView = view;
+    this.homeVisible = false;
+    this.title.setText(title);
+    this.backButton.setOnClick(onBack);
+    this.layout(this.lastLayout.width, this.lastLayout.height, this.lastLayout.safe);
     return this;
+  }
+
+  /** Return the shell to Home without destroying the app view owner. */
+  public showHome(): this {
+    this.appViewContainer.removeAll(false);
+    this.mountedView = null;
+    this.homeVisible = true;
+    this.title.setText(t('title'));
+    this.backButton.setOnClick(() => undefined);
+    this.emptyState.setVisible(this.apps.length === 0);
+    this.emptyHint.setVisible(this.apps.length === 0);
+    this.layoutMountedView();
+    this.layout(this.lastLayout.width, this.lastLayout.height, this.lastLayout.safe);
+    return this;
+  }
+
+  /** Whether the shell is currently presenting an app view rather than Home. */
+  public get isShowingApp(): boolean {
+    return !this.homeVisible;
+  }
+
+  private layoutMountedView(): void {
+    if (!this.mountedView) return;
+    const candidate = this.mountedView as unknown as {
+      layout?: (width: number, height: number) => void;
+    };
+    candidate.layout?.(this.screenWidth, this.screenHeight);
   }
 
   private redrawAppGrid(screenX: number, screenY: number): void {
@@ -175,11 +256,12 @@ export class PhoneShell extends UIComponent {
       const column = index % columns;
       const row = Math.floor(index / columns);
       const button = new Button(this.uiScene, 0, 0, {
-        text: app.title,
+        text: app.titleKey ? t(app.titleKey) : app.title,
         width: buttonWidth,
         height: buttonHeight,
         onClick: () => this.onAppOpen?.(app),
       });
+      button.setData('accessibility-label', app.titleKey ? t(app.titleKey) : app.title);
       button.setPosition(
         screenX + gap + buttonWidth / 2 + column * (buttonWidth + gap),
         screenY + 72 + row * (buttonHeight + gap),

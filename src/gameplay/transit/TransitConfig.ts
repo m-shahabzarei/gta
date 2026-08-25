@@ -1,8 +1,22 @@
 import type { CityId } from '@/gameplay/types';
+import type { Vector2 } from '@/core/types';
 import type { CityTransitConfig, TaxiConfig, TaxiFareQuote, TrafficRoutePreview } from './TransitTypes';
+import type { TaxiDestination } from './TransitTypes';
 
 /** World scale used only for player-facing distance/fare presentation. */
 export const TRANSIT_PIXELS_PER_KILOMETER = 4000;
+
+/** Centralized Snapp service tuning and original turquoise service identity. */
+export const SNAPP_CONFIG = {
+  minFare: 20,
+  maxFare: 900,
+  averageSpeedPxPerSecond: 190,
+  driverSearchTimeoutMs: 90000,
+  pickupTimeoutMs: 90000,
+  waitingForPassengerTimeoutMs: 60000,
+  turquoise: 0x13c8bc,
+  marker: 0x13c8bc,
+} as const;
 
 /** Shared curb-service tuning; deliberately small enough to reject adjacent lanes. */
 export const BUS_STOPPING_CONFIG = {
@@ -238,5 +252,27 @@ export function calculateTaxiFare(
     waitingCost,
     total: config.baseFare + distanceCost + waitingCost,
     route,
+  };
+}
+
+/** Route-based Snapp quote with deterministic duration and safety cap. */
+export function calculateSnappFare(
+  config: TaxiConfig,
+  route: TrafficRoutePreview,
+  pickup: Vector2,
+  destination: TaxiDestination,
+  trafficDensity = 0,
+  now = 0,
+): import('./SnappTypes').SnappQuote {
+  const base = calculateTaxiFare(config, route, trafficDensity);
+  const total = Math.min(SNAPP_CONFIG.maxFare, Math.max(SNAPP_CONFIG.minFare, base.total));
+  return {
+    ...base,
+    total,
+    pickup: { ...pickup },
+    destination: { ...destination, position: { ...destination.position } },
+    estimatedDurationMinutes: Math.max(1, Math.ceil(route.distancePx / SNAPP_CONFIG.averageSpeedPxPerSecond / 60)),
+    quoteVersion: 1,
+    createdAt: now,
   };
 }

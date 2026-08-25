@@ -254,8 +254,8 @@ export class UIScene extends Phaser.Scene {
           blips.push({
             x: position.x,
             y: position.y,
-            color: kind === 'bus' ? 0x38bdf8 : 0xf6c453,
-            size: kind === 'bus' ? 3 : 2.5,
+            color: kind === 'bus' ? 0x38bdf8 : kind === 'snapp' ? 0x13c8bc : 0xf6c453,
+            size: kind === 'bus' ? 3 : kind === 'snapp' ? 3 : 2.5,
           });
         },
       );
@@ -311,8 +311,18 @@ export class UIScene extends Phaser.Scene {
     const mouse = this.input.mouse;
     if (!mouse) return;
     if (playing) {
+      const canvas = this.game.canvas as HTMLCanvasElement & {
+        mozRequestPointerLock?: () => void;
+        webkitRequestPointerLock?: () => void;
+      };
+      if (typeof canvas.requestPointerLock !== 'function' &&
+        typeof canvas.mozRequestPointerLock !== 'function' &&
+        typeof canvas.webkitRequestPointerLock !== 'function') return;
       try {
-        mouse.requestPointerLock();
+        const result = mouse.requestPointerLock() as unknown;
+        if (result && typeof result === 'object' && 'catch' in result) {
+          void (result as Promise<void>).catch(() => undefined);
+        }
       } catch {
         // Browsers may reject pointer lock unless this follows a user gesture.
       }
