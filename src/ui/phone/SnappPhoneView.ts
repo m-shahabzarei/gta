@@ -350,7 +350,10 @@ export class SnappPhoneView extends UIComponent {
     if (state === 'DRIVER_ARRIVED') {
       const board = expanded
         ? this.addButtonAt(t('phoneSnappBoard'), this.screenWidth * 0.84, this.screenHeight - 34, () => {
-          if (booking?.assignedVehicleId === null || booking?.assignedVehicleId === undefined || !this.transportation?.requestSnappBoarding(booking.assignedVehicleId)) {
+          const result = booking?.assignedVehicleId === null || booking?.assignedVehicleId === undefined
+            ? null
+            : this.transportation?.requestSnappBoarding(booking.assignedVehicleId) ?? null;
+          if (!result?.ok) {
             this.errorMessage = this.transportation?.snappError ?? t('phoneSnappPickupHint');
             this.render();
           } else {
@@ -359,7 +362,10 @@ export class SnappPhoneView extends UIComponent {
           }
         }, TURQUOISE)
         : this.addButton(t('phoneSnappBoard'), actionY, () => {
-        if (booking?.assignedVehicleId === null || booking?.assignedVehicleId === undefined || !this.transportation?.requestSnappBoarding(booking.assignedVehicleId)) {
+        const result = booking?.assignedVehicleId === null || booking?.assignedVehicleId === undefined
+          ? null
+          : this.transportation?.requestSnappBoarding(booking.assignedVehicleId) ?? null;
+        if (!result?.ok) {
           this.errorMessage = this.transportation?.snappError ?? t('phoneSnappPickupHint');
           this.render();
         } else {

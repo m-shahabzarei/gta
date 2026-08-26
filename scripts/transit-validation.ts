@@ -4,8 +4,12 @@ import {
   calculateTaxiFare,
   TAXI_SERVICE_STATES,
   TRANSIT_PIXELS_PER_KILOMETER,
+  selectSnappPickupCandidate,
+  PASSENGER_BOARDING_FAILURE_REASONS,
+  SNAPP_CONFIG,
 } from '@/gameplay/transit';
 import { passengerSeatsFor } from '@/gameplay/occupants/OccupantRules';
+import { DEFAULT_KEY_BINDINGS, InputAction } from '@/config/InputConfig';
 import { TrafficNetwork } from '@/gameplay/traffic/TrafficNetwork';
 import { sampleSpline } from '@/gameplay/traffic/SplineMath';
 import type { BusStopSite, CityId, RoadEdge, RoadNode } from '@/gameplay/types';
@@ -31,6 +35,8 @@ validateParkingGeometry();
 validateRuntimeParkingFootprint();
 validateExplicitStopArrivalPrecision();
 validateManagedBlockerPolicy();
+validateSnappPickupPriority();
+validateSnappBoardingDiagnostics();
 
 if (failures.length > 0) {
   console.error(`Transit validation FAILED (${failures.length} failures / ${assertions} checks)`);
@@ -304,6 +310,89 @@ function validateManagedBlockerPolicy(): void {
   check(
     blockedSeconds >= thresholdSeconds && !false,
     'an unmanaged stationary blocker must remain eligible for legal bus recovery',
+  );
+}
+
+/** Snapp pickup placement is passenger-centric; driver convenience can only break an otherwise exact tie. */
+function validateSnappPickupPriority(): void {
+  const base = {
+    laneRole: 'outer' as const,
+    curbFacing: true,
+    approachUsable: true,
+    routeReachable: true,
+  };
+  const sameStreet = {
+    ...base,
+    id: 'same-street',
+    roadSegmentId: 'road:request',
+    displacementPx: 34,
+    routeDistancePx: 7200,
+  };
+  const adjacentStreet = {
+    ...base,
+    id: 'adjacent-street',
+    roadSegmentId: 'road:adjacent',
+    displacementPx: 22,
+    routeDistancePx: 40,
+  };
+  check(
+    selectSnappPickupCandidate([adjacentStreet, sameStreet], 'road:request', 88, 3)?.id === 'same-street',
+    'a shorter driver route must never move a Snapp pickup to another street',
+  );
+
+  const inner = {
+    ...sameStreet,
+    id: 'inner',
+    laneRole: 'inner' as const,
+    displacementPx: 20,
+    routeDistancePx: 20,
+  };
+  const outer = { ...sameStreet, id: 'outer', displacementPx: 34, routeDistancePx: 7000 };
+  check(
+    selectSnappPickupCandidate([inner, outer], 'road:request', 88, 3)?.id === 'outer',
+    'the curb-facing outer lane must beat a closer inner lane on the same road',
+  );
+
+  const tooFar = { ...sameStreet, id: 'too-far', displacementPx: 89 };
+  check(
+    selectSnappPickupCandidate([tooFar], 'road:request', 88, 3) === null,
+    'Snapp must reject a same-street anchor beyond its strict displacement limit',
+  );
+}
+
+function validateSnappBoardingDiagnostics(): void {
+  const required = [
+    'player-unavailable',
+    'player-already-in-vehicle',
+    'transition-in-progress',
+    'vehicle-destroyed',
+    'vehicle-moving',
+    'wrong-booking',
+    'wrong-vehicle',
+    'driver-not-arrived',
+    'too-far-from-door',
+    'seat-unavailable',
+    'door-position-blocked',
+    'path-to-door-blocked',
+    'boarding-approach-unavailable',
+  ] as const;
+  check(
+    required.every((reason) => PASSENGER_BOARDING_FAILURE_REASONS.includes(reason)),
+    'every transactional passenger-boarding guard must expose a typed diagnostic reason',
+  );
+  check(
+    SNAPP_CONFIG.maximumPickupDisplacementPx < 96,
+    'Snapp pickup displacement must stay below one generated-street offset',
+  );
+  check(
+    SNAPP_CONFIG.snappBoardingReachPx <= 64,
+    'rear-door boarding reach must not permit remote vehicle entry',
+  );
+  check(
+    DEFAULT_KEY_BINDINGS[InputAction.Interact].includes('E') &&
+      DEFAULT_KEY_BINDINGS[InputAction.EnterVehicle].includes('F') &&
+      DEFAULT_KEY_BINDINGS[InputAction.EnterVehicle].includes('ENTER'),
+    'E, F, and Enter must retain their shared Snapp interaction/vehicle-entry bindings',
   );
 }
 

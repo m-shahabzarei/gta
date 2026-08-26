@@ -121,7 +121,11 @@ export interface EventPayloadMap {
   [EventKeys.PlayerRespawned]: { x: number; y: number };
   [EventKeys.PlayerHealthChanged]: { health: number; maxHealth: number };
   [EventKeys.PlayerVitalsChanged]: PlayerVitalsSnapshot & { reason: PlayerVitalsChangeReason };
-  [EventKeys.PlayerEnteredVehicle]: { vehicleId: number };
+  [EventKeys.PlayerEnteredVehicle]: {
+    vehicleId: number;
+    seat: import('@/gameplay/types').VehicleSeat;
+    mode: 'driver' | 'passenger';
+  };
   [EventKeys.PlayerExitedVehicle]: { vehicleId: number };
   [EventKeys.PlayerInteract]: { x: number; y: number };
 

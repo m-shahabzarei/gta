@@ -51,6 +51,9 @@ interface TrafficLightSprite {
   readonly intersectionId: number;
 }
 
+/** Projection noise tolerated before an exact same-lane stop requires a legal loop. */
+const EXACT_LANE_STOP_BEHIND_EPSILON_PX = 2;
+
 interface SpawnPose {
   readonly lane: TrafficLane;
   readonly distance: number;
@@ -217,6 +220,76 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       distancePx,
       start: { x: from.x, y: from.y },
       end: { x: to.x, y: to.y },
+    };
+  }
+
+  /**
+   * Resolve a route to one exact directed lane arc. Service coordinators use
+   * this when a curb has already been accepted and must not be rebound to a
+   * visually nearby lane by a generic nearest-lane query.
+   */
+  public routePreviewToLaneStop(
+    from: Vector2,
+    target: TrafficLaneStopTarget,
+  ): TrafficRoutePreview | null {
+    const network = this.network;
+    if (!network) return null;
+    const start = network.nearestLane(from, undefined, true);
+    const goal = network.lane(target.laneId);
+    if (!start || !goal || goal.kind !== 'travel') return null;
+    let route = network.findCompleteRoute(start.id, goal.id);
+    if (!route || route.length === 0) return null;
+    const startDistance = network.projectPoint(from, start).distance;
+    const goalDistance = Phaser.Math.Clamp(target.laneDistance, 0, goal.spline.length);
+
+    // A zero-edge start->goal route is not drivable when the exact curb arc is
+    // already behind a vehicle on the same directed lane. Build the shortest
+    // legal cycle back to that lane instead; otherwise the service driver sees
+    // a negative remaining distance and can stop forever without approaching
+    // the stored pickup anchor.
+    if (
+      start.id === goal.id &&
+      goalDistance < startDistance - EXACT_LANE_STOP_BEHIND_EPSILON_PX
+    ) {
+      let cycle: readonly TrafficLane[] | null = null;
+      let cycleDistance = Infinity;
+      for (const connectionId of start.connectionIds) {
+        const returnRoute = network.findCompleteRoute(connectionId, goal.id);
+        if (!returnRoute || returnRoute.length === 0) continue;
+        const candidate = [start, ...returnRoute];
+        let candidateDistance = Math.max(0, start.spline.length - startDistance);
+        for (let index = 1; index < candidate.length; index += 1) {
+          const lane = candidate[index];
+          if (!lane) continue;
+          candidateDistance += index === candidate.length - 1
+            ? goalDistance
+            : lane.spline.length;
+        }
+        if (candidateDistance < cycleDistance) {
+          cycle = candidate;
+          cycleDistance = candidateDistance;
+        }
+      }
+      route = cycle;
+      if (!route) return null;
+    }
+    let distancePx = 0;
+    if (route.length === 1) {
+      distancePx = Math.max(0, goalDistance - startDistance);
+    } else {
+      for (let index = 0; index < route.length; index += 1) {
+        const lane = route[index];
+        if (!lane) continue;
+        if (index === 0) distancePx += Math.max(0, lane.spline.length - startDistance);
+        else if (index === route.length - 1) distancePx += goalDistance;
+        else distancePx += lane.spline.length;
+      }
+    }
+    return {
+      laneIds: route.map((lane) => lane.id),
+      distancePx,
+      start: { x: from.x, y: from.y },
+      end: { ...target.position },
     };
   }
 

@@ -36,6 +36,7 @@ import type { TrafficSystem } from '@/systems/TrafficSystem';
 import type { TransportationSystem } from '@/systems/TransportationSystem';
 import type { WantedSystem } from '@/systems/WantedSystem';
 import type { VehicleSystem } from '@/systems/VehicleSystem';
+import type { PassengerBoardingFailureReason, PassengerBoardingResult } from '@/gameplay/transit';
 
 interface VehicleEntryTransition {
   vehicle: Vehicle;
@@ -313,34 +314,43 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
    * Start a door-mediated passenger transition without stealing vehicle control.
    * Transit calls this only after reserving `seat` in VehicleOccupantSystem.
    */
-  public beginPassengerBoarding(vehicle: Vehicle, seat: VehicleSeat): boolean {
+  public beginPassengerBoarding(
+    vehicle: Vehicle,
+    seat: VehicleSeat,
+    boardingApproach?: Vector2,
+  ): PassengerBoardingResult {
     const player = this.playerEntity;
     const occupants = this.resolveOccupants();
-    if (
-      !player ||
-      player.isDead ||
-      !occupants ||
-      vehicle.isDestroyed ||
-      this.vehicleOccupied ||
-      this.passengerVehicle ||
-      this.entryTransition ||
-      this.exitTransition ||
-      Math.abs(vehicle.movement.speed) > OCCUPANTS.CARJACK_MAX_SPEED
-    ) {
-      return false;
+    if (!player || player.isDead) return this.rejectPassengerBoarding(vehicle, 'player-unavailable');
+    if (!occupants) return this.rejectPassengerBoarding(vehicle, 'boarding-approach-unavailable');
+    if (vehicle.isDestroyed || !vehicle.sprite.active) {
+      return this.rejectPassengerBoarding(vehicle, 'vehicle-destroyed');
+    }
+    if (this.vehicleOccupied || this.passengerVehicle) {
+      return this.rejectPassengerBoarding(vehicle, 'player-already-in-vehicle');
+    }
+    if (this.entryTransition || this.exitTransition) {
+      return this.rejectPassengerBoarding(vehicle, 'transition-in-progress');
+    }
+    if (Math.abs(vehicle.movement.speed) > OCCUPANTS.CARJACK_MAX_SPEED) {
+      return this.rejectPassengerBoarding(vehicle, 'vehicle-moving');
     }
     const start = { ...player.position };
-    const door = occupants.doorWorldPosition(vehicle, seat, 4);
-    const seatPosition = occupants.seatWorldPosition(vehicle, seat);
+    const door = boardingApproach
+      ? { ...boardingApproach }
+      : occupants.doorWorldPosition(vehicle, seat, 4);
     const world = getWorldQuery();
-    if (
-      !world ||
-      !world.isPedestrianClearAtWorld(door.x, door.y, PLAYER.RADIUS) ||
-      !world.isPedestrianSegmentClear(start, door, PLAYER.RADIUS) ||
-      !world.isPedestrianSegmentClear(door, seatPosition, PLAYER.RADIUS)
-    ) {
-      return false;
+    if (!world) return this.rejectPassengerBoarding(vehicle, 'boarding-approach-unavailable');
+    if (!world.isPedestrianClearAtWorld(door.x, door.y, PLAYER.RADIUS)) {
+      return this.rejectPassengerBoarding(vehicle, 'door-position-blocked');
     }
+    if (!world.isPedestrianSegmentClear(start, door, PLAYER.RADIUS)) {
+      return this.rejectPassengerBoarding(vehicle, 'path-to-door-blocked');
+    }
+    // The exterior approach is a world-space pedestrian path. The following
+    // door-to-seat phase is a controlled vehicle-entry animation whose target
+    // is intentionally inside the vehicle, so static pedestrian raster checks
+    // are not semantically valid for that interior segment.
     this.entryTransition = {
       vehicle,
       seat,
@@ -356,7 +366,15 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
     body.setVelocity(0, 0);
     body.enable = false;
     this.bus.emit(EventKeys.VehicleDoor, { open: true, vehicleId: vehicle.id, seat });
-    return true;
+    return { ok: true };
+  }
+
+  private rejectPassengerBoarding(
+    vehicle: Vehicle,
+    reason: PassengerBoardingFailureReason,
+  ): PassengerBoardingResult {
+    this.log.debug(`Passenger boarding rejected vehicle=${vehicle.id} reason=${reason}`);
+    return { ok: false, reason };
   }
 
   /** Begin a passenger exit to a transit-supplied curb/platform location. */
@@ -626,7 +644,11 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
         vehicleId: vehicle.id,
         seat: transition.seat,
       });
-      this.bus.emit(EventKeys.PlayerEnteredVehicle, { vehicleId: vehicle.id });
+      this.bus.emit(EventKeys.PlayerEnteredVehicle, {
+        vehicleId: vehicle.id,
+        seat: transition.seat,
+        mode: 'passenger',
+      });
       return;
     }
     this.vehicleOccupied = vehicle;
@@ -640,7 +662,11 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
       vehicleId: vehicle.id,
       seat: 'driver',
     });
-    this.bus.emit(EventKeys.PlayerEnteredVehicle, { vehicleId: vehicle.id });
+    this.bus.emit(EventKeys.PlayerEnteredVehicle, {
+      vehicleId: vehicle.id,
+      seat: 'driver',
+      mode: 'driver',
+    });
     this.bus.emit(EventKeys.EngineStateChanged, { running: true, vehicleKind: vehicle.def.kind });
   }
 

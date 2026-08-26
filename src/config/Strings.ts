@@ -93,6 +93,15 @@ export type StringKey =
   | 'phoneSnappExitVehicleFirst'
   | 'phoneSnappDriverNotReady'
   | 'phoneSnappBoardingBlocked'
+  | 'phoneSnappPlayerUnavailable'
+  | 'phoneSnappTransitionInProgress'
+  | 'phoneSnappVehicleUnavailable'
+  | 'phoneSnappVehicleMoving'
+  | 'phoneSnappWrongRide'
+  | 'phoneSnappMoveCloserDoor'
+  | 'phoneSnappSeatUnavailable'
+  | 'phoneSnappPathToDoorBlocked'
+  | 'phoneSnappApproachUnavailable'
   | 'phoneSnappExpandMap'
   | 'phoneSnappPortraitMap'
   | 'phoneNoApps'
@@ -185,11 +194,20 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappLegendDestination: 'DESTINATION',
     phoneSnappPickupWait: 'Driver waiting',
     phoneSnappNoShow: 'Your driver left because the 2-minute pickup window expired.',
-    phoneSnappEnterSnapp: 'ENTER SNAPP  E',
+    phoneSnappEnterSnapp: 'ENTER SNAPP  E / F',
     phoneSnappMoveCloser: 'Move closer to your assigned Snapp vehicle.',
     phoneSnappExitVehicleFirst: 'Exit your current vehicle before boarding Snapp.',
     phoneSnappDriverNotReady: 'Your assigned Snapp vehicle is not ready for boarding yet.',
     phoneSnappBoardingBlocked: 'The passenger door is blocked. Move beside the rear door and try again.',
+    phoneSnappPlayerUnavailable: 'You cannot board Snapp right now.',
+    phoneSnappTransitionInProgress: 'A vehicle entry or exit is already in progress.',
+    phoneSnappVehicleUnavailable: 'Your assigned Snapp vehicle is no longer available.',
+    phoneSnappVehicleMoving: 'Wait until your Snapp vehicle has fully stopped.',
+    phoneSnappWrongRide: 'This is not the vehicle assigned to your Snapp booking.',
+    phoneSnappMoveCloserDoor: 'Move {distance} m closer to the rear passenger door.',
+    phoneSnappSeatUnavailable: 'The rear-right passenger seat is unavailable.',
+    phoneSnappPathToDoorBlocked: 'The path to the rear passenger door is blocked.',
+    phoneSnappApproachUnavailable: 'No safe approach to the rear passenger door is available.',
     phoneSnappExpandMap: 'Open landscape map',
     phoneSnappPortraitMap: 'Return to portrait Phone',
     phoneNoApps: 'NO APPS AVAILABLE',
@@ -278,11 +296,20 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappLegendDestination: 'DESTINO',
     phoneSnappPickupWait: 'Conductor esperando',
     phoneSnappNoShow: 'Tu conductor se fue porque venció la ventana de recogida de 2 minutos.',
-    phoneSnappEnterSnapp: 'SUBIR A SNAPP  E',
+    phoneSnappEnterSnapp: 'SUBIR A SNAPP  E / F',
     phoneSnappMoveCloser: 'Acércate a tu vehículo Snapp asignado.',
     phoneSnappExitVehicleFirst: 'Sal de tu vehículo actual antes de subir a Snapp.',
     phoneSnappDriverNotReady: 'Tu vehículo Snapp aún no está listo para subir.',
     phoneSnappBoardingBlocked: 'La puerta trasera está bloqueada. Ponte junto a ella e inténtalo de nuevo.',
+    phoneSnappPlayerUnavailable: 'No puedes subir a Snapp ahora mismo.',
+    phoneSnappTransitionInProgress: 'Ya hay una entrada o salida de vehículo en curso.',
+    phoneSnappVehicleUnavailable: 'Tu vehículo Snapp asignado ya no está disponible.',
+    phoneSnappVehicleMoving: 'Espera a que tu vehículo Snapp se detenga por completo.',
+    phoneSnappWrongRide: 'Este no es el vehículo asignado a tu reserva Snapp.',
+    phoneSnappMoveCloserDoor: 'Acércate {distance} m más a la puerta trasera del pasajero.',
+    phoneSnappSeatUnavailable: 'El asiento trasero derecho no está disponible.',
+    phoneSnappPathToDoorBlocked: 'El camino a la puerta trasera está bloqueado.',
+    phoneSnappApproachUnavailable: 'No hay un acceso seguro a la puerta trasera.',
     phoneSnappExpandMap: 'Abrir mapa apaisado',
     phoneSnappPortraitMap: 'Volver al teléfono vertical',
     phoneNoApps: 'NO HAY APPS DISPONIBLES',
@@ -371,11 +398,20 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappLegendDestination: 'DESTINATION',
     phoneSnappPickupWait: 'Conducteur en attente',
     phoneSnappNoShow: 'Votre conducteur est parti après la fenêtre de prise en charge de 2 minutes.',
-    phoneSnappEnterSnapp: 'MONTER DANS SNAPP  E',
+    phoneSnappEnterSnapp: 'MONTER DANS SNAPP  E / F',
     phoneSnappMoveCloser: 'Rapprochez-vous du véhicule Snapp qui vous est attribué.',
     phoneSnappExitVehicleFirst: 'Quittez votre véhicule actuel avant de monter dans Snapp.',
     phoneSnappDriverNotReady: 'Votre véhicule Snapp n’est pas encore prêt pour l’embarquement.',
     phoneSnappBoardingBlocked: 'La porte arrière est bloquée. Placez-vous près de la porte et réessayez.',
+    phoneSnappPlayerUnavailable: 'Vous ne pouvez pas monter dans Snapp pour le moment.',
+    phoneSnappTransitionInProgress: 'Une entrée ou sortie de véhicule est déjà en cours.',
+    phoneSnappVehicleUnavailable: 'Votre véhicule Snapp assigné n’est plus disponible.',
+    phoneSnappVehicleMoving: 'Attendez que votre véhicule Snapp soit complètement arrêté.',
+    phoneSnappWrongRide: 'Ce véhicule n’est pas celui assigné à votre réservation Snapp.',
+    phoneSnappMoveCloserDoor: 'Approchez-vous encore de {distance} m de la porte arrière.',
+    phoneSnappSeatUnavailable: 'Le siège passager arrière droit n’est pas disponible.',
+    phoneSnappPathToDoorBlocked: 'Le passage vers la porte arrière est bloqué.',
+    phoneSnappApproachUnavailable: 'Aucun accès sûr à la porte arrière n’est disponible.',
     phoneSnappExpandMap: 'Ouvrir la carte paysage',
     phoneSnappPortraitMap: 'Revenir au téléphone portrait',
     phoneNoApps: 'AUCUNE APP DISPONIBLE',

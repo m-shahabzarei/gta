@@ -19,7 +19,18 @@ export const SNAPP_CONFIG = {
   turquoise: 0x13c8bc,
   marker: 0x13c8bc,
   /** Maximum walking distance from the request pose to a legal pickup curb. */
-  maxPickupWalkDistancePx: 192,
+  preferredPickupDisplacementPx: 48,
+  maximumPickupDisplacementPx: 88,
+  pickupCandidateDistanceEpsilonPx: 3,
+  pickupLaneSearchRadiusPx: 112,
+  pickupIntersectionClearancePx: 32,
+  boardingApproachSearchRadiusPx: 24,
+  boardingDoorOutsidePx: 5,
+  snappBoardingReachPx: 56,
+  pickupArrivalWorldTolerancePx: 30,
+  pickupArrivalLaneTolerancePx: 28,
+  pickupArrivalHeadingToleranceRadians: 0.35,
+  pickupStoppedSpeedPxPerSecond: 3.5,
   /** Pickup marker/route snapshots are refreshed at this cadence. */
   trackingUpdateMs: 200,
 } as const;

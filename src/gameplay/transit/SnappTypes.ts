@@ -22,6 +22,45 @@ export const SNAPP_BOOKING_STATES = [
 export type SnappBookingState = (typeof SNAPP_BOOKING_STATES)[number];
 export type SnappPaymentState = 'unpaid' | 'paid' | 'refunded';
 
+/** Immutable passenger-centric curb resolved before any driver is selected. */
+export interface SnappPickupAnchor {
+  roadSegmentId: string;
+  laneId: string;
+  laneDistance: number;
+  position: Vector2;
+  heading: number;
+  displacementPx: number;
+  curbSide: 'rear-right';
+  boardingApproach: Vector2;
+}
+
+export const PASSENGER_BOARDING_FAILURE_REASONS = [
+  'player-unavailable',
+  'player-already-in-vehicle',
+  'transition-in-progress',
+  'vehicle-destroyed',
+  'vehicle-moving',
+  'wrong-booking',
+  'wrong-vehicle',
+  'driver-not-arrived',
+  'too-far-from-door',
+  'seat-unavailable',
+  'door-position-blocked',
+  'path-to-door-blocked',
+  'boarding-approach-unavailable',
+] as const;
+
+export type PassengerBoardingFailureReason =
+  (typeof PASSENGER_BOARDING_FAILURE_REASONS)[number];
+
+export type PassengerBoardingResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: PassengerBoardingFailureReason;
+      distanceRemainingPx?: number;
+    };
+
 export interface SnappQuote extends TaxiFareQuote {
   pickup: Vector2;
   pickupAnchor: Vector2;
@@ -36,7 +75,7 @@ export interface SnappQuote extends TaxiFareQuote {
 }
 
 export interface SnappBookingSnapshot {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   id: string;
   transactionId: string;
   state: SnappBookingState;
@@ -46,6 +85,8 @@ export interface SnappBookingSnapshot {
   pickupRotation: number;
   /** Legal road/curb point where the vehicle will stop. */
   pickupAnchor: Vector2 | null;
+  /** Exact lane/door metadata for v3 bookings; legacy saves migrate once. */
+  pickupStop: SnappPickupAnchor | null;
   pickupWalkingDistancePx: number;
   pickupAnchorLabel: string | null;
   destination: TaxiDestination | null;
@@ -176,11 +217,28 @@ export function isSnappBookingSnapshot(value: Json): boolean {
       Number.isFinite(quote['createdAt'])
     );
   };
+  const isPickupStop = (candidate: Json | undefined): boolean => {
+    if (candidate === null) return true;
+    if (typeof candidate !== 'object' || Array.isArray(candidate)) return false;
+    return (
+      typeof candidate['roadSegmentId'] === 'string' &&
+      typeof candidate['laneId'] === 'string' &&
+      typeof candidate['laneDistance'] === 'number' &&
+      Number.isFinite(candidate['laneDistance']) &&
+      isVector(candidate['position']) &&
+      typeof candidate['heading'] === 'number' &&
+      Number.isFinite(candidate['heading']) &&
+      typeof candidate['displacementPx'] === 'number' &&
+      Number.isFinite(candidate['displacementPx']) &&
+      candidate['curbSide'] === 'rear-right' &&
+      isVector(candidate['boardingApproach'])
+    );
+  };
   const assignedVehicleId = record['assignedVehicleId'];
   const state = record['state'];
   const payment = record['payment'];
   return (
-    (record['version'] === 1 || record['version'] === 2) &&
+    (record['version'] === 1 || record['version'] === 2 || record['version'] === 3) &&
     typeof record['id'] === 'string' &&
     record['id'].length > 0 &&
     typeof record['transactionId'] === 'string' &&
@@ -191,6 +249,8 @@ export function isSnappBookingSnapshot(value: Json): boolean {
     isVector(record['pickup']) &&
     (record['pickupRotation'] === undefined || (typeof record['pickupRotation'] === 'number' && Number.isFinite(record['pickupRotation']))) &&
     (record['pickupAnchor'] === undefined || record['pickupAnchor'] === null || isVector(record['pickupAnchor'])) &&
+    (record['version'] !== 3 || (record['pickupStop'] !== null && isPickupStop(record['pickupStop']))) &&
+    (record['pickupStop'] === undefined || isPickupStop(record['pickupStop'])) &&
     (record['pickupWalkingDistancePx'] === undefined || (typeof record['pickupWalkingDistancePx'] === 'number' && Number.isFinite(record['pickupWalkingDistancePx']))) &&
     (record['pickupAnchorLabel'] === undefined || record['pickupAnchorLabel'] === null || typeof record['pickupAnchorLabel'] === 'string') &&
     (record['destination'] === null || isDestination(record['destination'])) &&
