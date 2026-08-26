@@ -527,7 +527,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       booking.error = 'This destination is not reachable by road.';
       return null;
     }
-    const route = this.traffic?.routePreview(pickupStop.position, dropoff.position) ?? null;
+    const route = dropoff.laneStop
+      ? this.traffic?.routePreviewToLaneStop(pickupStop.position, dropoff.laneStop) ?? null
+      : this.traffic?.routePreview(pickupStop.position, dropoff.position) ?? null;
     if (!route || route.laneIds.length === 0) {
       booking.error = 'This destination is not reachable by road.';
       return null;
@@ -590,7 +592,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       booking.error = 'This map point has no legal road drop-off.';
       return null;
     }
-    const route = this.traffic?.routePreview(pickupStop.position, dropoff.position) ?? null;
+    const route = dropoff.laneStop
+      ? this.traffic?.routePreviewToLaneStop(pickupStop.position, dropoff.laneStop) ?? null
+      : this.traffic?.routePreview(pickupStop.position, dropoff.position) ?? null;
     if (!route || route.laneIds.length === 0) {
       booking.error = 'This destination is not reachable by road.';
       return null;
@@ -1768,6 +1772,50 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     const driver = traffic?.driverFor(taxi.vehicle) ?? null;
     if (!traffic || !driver) return;
 
+    // TrafficDriver escalates a persistent service vehicle through the normal
+    // bounded recovery path instead of despawning it. The old taxi path never
+    // consumed that signal, so a Snapp vehicle could remain in
+    // holdForServiceRecovery() forever with externallyStopped=true even while
+    // the booking was still RIDING. Reinstall the exact paid drop-off route
+    // from the vehicle's current lane before allowing it to move again.
+    const serviceRecoveryReason = traffic.consumeServiceRecovery(taxi.vehicle.id);
+    if (serviceRecoveryReason !== null) {
+      if (taxi.snappBookingId) {
+        const booking = this.snappBookingValue;
+        if (booking?.id === taxi.snappBookingId && taxi.state === 'IN_SERVICE') {
+          if (!this.recoverSnappPassengerRoute(taxi, serviceRecoveryReason)) {
+            this.log.warn(
+              `Snapp passenger route recovery failed booking=${booking.id} vehicle=${taxi.vehicle.id} ` +
+                `reason=${serviceRecoveryReason}`,
+            );
+            this.failSnappBooking('Driver route became unavailable');
+            return;
+          }
+        } else if (taxi.state === 'APPROACHING_PICKUP') {
+          if (!this.recoverSnappPickupRoute(taxi, serviceRecoveryReason)) {
+            this.failSnappBooking('Driver could not reach the pickup point');
+            return;
+          }
+        } else if (!booking || booking.id !== taxi.snappBookingId) {
+          // A stale sprite booking marker must not leave a persistent taxi
+          // held forever after its authoritative booking has been cleaned up.
+          traffic.resumeServiceDriver(taxi.vehicle);
+          this.returnTaxiToService(taxi);
+          return;
+        }
+      } else {
+        // Keep ordinary taxis recoverable as well; this is the same service
+        // ownership boundary used by buses and does not create another driver.
+        traffic.resumeServiceDriver(taxi.vehicle);
+        taxi.recoveryAttempts = 0;
+        if (taxi.idleUntil > time) {
+          traffic.setDriverStopped(taxi.vehicle, true);
+        } else {
+          traffic.configureDriver(taxi.vehicle, () => this.taxiTarget(taxi.vehicle.id), TAXI_STOP_RANGE, false);
+        }
+      }
+    }
+
     if (taxi.state === 'AVAILABLE') {
       if (taxi.idleUntil > time) return;
       if (taxi.idleUntil !== 0) {
@@ -1836,6 +1884,13 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         }
       }
     } else if (taxi.state === 'IN_SERVICE') {
+      if (
+        taxi.snappBookingId &&
+        time - taxi.stateSince <= SNAPP_CONFIG.postBoardingDiagnosticWindowMs
+      ) {
+        const booking = this.snappBookingValue;
+        if (booking?.id === taxi.snappBookingId) this.logSnappRideDiagnostics(taxi, booking);
+      }
       if (this.taxiIsAtDropoff(taxi)) {
         this.setTaxiState(taxi, 'ARRIVING');
         taxi.recoveryAttempts = 0;
@@ -2183,32 +2238,212 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       return;
     }
     const traffic = this.traffic;
-    if (!traffic) return;
-    const configured = taxi.dropoffLaneStop
-      ? traffic.configureDriverAtLaneStop(
-          taxi.vehicle,
-          () => this.taxiTarget(taxi.vehicle.id),
-          taxi.dropoffLaneStop,
-          TAXI_STOP_RANGE,
-          false,
-        )
-      : (traffic.configureDriver(
-          taxi.vehicle,
-          () => this.taxiTarget(taxi.vehicle.id),
-          TAXI_STOP_RANGE,
-          false,
-        ), true);
-    if (!configured) {
+    const dropoffStop = taxi.dropoffLaneStop;
+    const passengerRoute = dropoffStop
+      ? this.resolveSnappPassengerRoute(taxi, booking, dropoffStop)
+      : null;
+    if (!traffic || !dropoffStop || !passengerRoute) {
+      this.log.warn(
+        `Snapp ride route installation rejected booking=${booking.id} vehicle=${entry.vehicleId} ` +
+          `reason=${!dropoffStop ? 'invalid-dropoff-lane-stop' : 'incomplete-or-displaced-route'}`,
+      );
       this.failSnappBooking('Snapp destination route became unavailable');
       return;
     }
+
+    // Keep the provider explicitly on the drop-off while the driver target is
+    // installed. The taxi is still PASSENGER_BOARDING here, so taxiTarget()
+    // would otherwise expose the stale pickup for one simulation tick.
+    taxi.playerRequestPosition = null;
+    taxi.pickupPosition = null;
+    taxi.pickupLaneStop = null;
+    taxi.recoveryAttempts = 0;
+    taxi.nextRecoveryAt = 0;
+    const configured = traffic.configureDriverAtLaneStop(
+      taxi.vehicle,
+      () => taxi.dropoffPosition,
+      dropoffStop,
+      TAXI_STOP_RANGE,
+      false,
+      passengerRoute,
+    );
+    if (!configured) {
+      this.log.warn(
+        `Snapp ride route installation rejected booking=${booking.id} vehicle=${entry.vehicleId} ` +
+          'reason=traffic-route-configuration-failed',
+      );
+      this.failSnappBooking('Snapp destination route became unavailable');
+      return;
+    }
+    traffic.setDriverStopped(taxi.vehicle, false);
     this.setTaxiState(taxi, 'IN_SERVICE');
     booking.state = 'RIDING';
     booking.error = null;
+    this.logSnappRideDiagnostics(taxi, booking);
     this.bus.emit(EventKeys.SnappRideStarted, {
       bookingId: booking.id,
       vehicleId: taxi.vehicle.id,
     });
+  }
+
+  /**
+   * Install the paid quote's complete route when possible. If the taxi was
+   * displaced while boarding, rebuild from its actual directed lane to the
+   * same exact stop; never accept TrafficNetwork's partial ambient route.
+   */
+  private resolveSnappPassengerRoute(
+    taxi: TaxiRuntime,
+    booking: SnappBookingSnapshot,
+    target: TrafficLaneStopTarget,
+  ): readonly string[] | null {
+    const traffic = this.traffic;
+    const driver = traffic?.driverFor(taxi.vehicle);
+    const debug = driver?.debug;
+    const currentLaneId = debug?.laneId ?? null;
+    if (!traffic || !debug || !currentLaneId) return null;
+    const quoted = booking.quote?.route.laneIds ?? [];
+    const quotedRoute = this.sliceAndValidateSnappRoute(
+      quoted,
+      currentLaneId,
+      target.laneId,
+      debug.laneDistance,
+      target.laneDistance,
+    );
+    if (quotedRoute) return quotedRoute;
+
+    const rebuilt = traffic.routePreviewFromLaneToLaneStop(
+      { x: taxi.vehicle.sprite.x, y: taxi.vehicle.sprite.y },
+      currentLaneId,
+      debug.laneDistance,
+      target,
+    );
+    const rebuiltRoute = rebuilt
+      ? this.sliceAndValidateSnappRoute(
+          rebuilt.laneIds,
+          currentLaneId,
+          target.laneId,
+          debug.laneDistance,
+          target.laneDistance,
+        )
+      : null;
+    if (!rebuiltRoute) {
+      this.log.warn(
+        `Snapp passenger route rebuild failed booking=${booking.id} vehicle=${taxi.vehicle.id} ` +
+          `currentLane=${currentLaneId} targetLane=${target.laneId}`,
+      );
+    }
+    return rebuiltRoute;
+  }
+
+  /** Reinstall a paid passenger route after TrafficDriver's bounded recovery. */
+  private recoverSnappPassengerRoute(taxi: TaxiRuntime, reason: string): boolean {
+    const traffic = this.traffic;
+    const booking = this.snappBookingValue;
+    const target = taxi.dropoffLaneStop;
+    if (!traffic || !booking || booking.id !== taxi.snappBookingId || !target) return false;
+    const route = this.resolveSnappPassengerRoute(taxi, booking, target);
+    if (!route) return false;
+    traffic.resumeServiceDriver(taxi.vehicle);
+    const configured = traffic.configureDriverAtLaneStop(
+      taxi.vehicle,
+      () => taxi.dropoffPosition,
+      target,
+      TAXI_STOP_RANGE,
+      false,
+      route,
+    );
+    if (!configured) return false;
+    taxi.recoveryAttempts = 0;
+    taxi.nextRecoveryAt = 0;
+    traffic.setDriverStopped(taxi.vehicle, false);
+    this.log.warn(
+      `Snapp passenger route recovered booking=${booking.id} vehicle=${taxi.vehicle.id} ` +
+        `reason=${reason} routeLanes=${route.length}`,
+    );
+    return true;
+  }
+
+  /** Reinstall an exact pickup route if recovery escalates before boarding. */
+  private recoverSnappPickupRoute(taxi: TaxiRuntime, reason: string): boolean {
+    const traffic = this.traffic;
+    const target = taxi.pickupLaneStop;
+    const driver = traffic?.driverFor(taxi.vehicle);
+    const debug = driver?.debug;
+    if (!traffic || !target || !debug?.laneId || !driver) return false;
+    const route = traffic.routePreviewFromLaneToLaneStop(
+      { x: taxi.vehicle.sprite.x, y: taxi.vehicle.sprite.y },
+      debug.laneId,
+      debug.laneDistance,
+      target,
+    );
+    if (!route || route.laneIds.length === 0) return false;
+    traffic.resumeServiceDriver(taxi.vehicle);
+    const configured = traffic.configureDriverAtLaneStop(
+      taxi.vehicle,
+      () => taxi.pickupPosition,
+      target,
+      TAXI_STOP_RANGE,
+      false,
+      route.laneIds,
+    );
+    if (!configured) return false;
+    taxi.recoveryAttempts = 0;
+    taxi.nextRecoveryAt = 0;
+    traffic.setDriverStopped(taxi.vehicle, false);
+    this.log.warn(
+      `Snapp pickup route recovered booking=${taxi.snappBookingId ?? 'unknown'} vehicle=${taxi.vehicle.id} ` +
+        `reason=${reason} routeLanes=${route.laneIds.length}`,
+    );
+    return true;
+  }
+
+  private sliceAndValidateSnappRoute(
+    laneIds: readonly string[],
+    currentLaneId: string,
+    targetLaneId: string,
+    currentLaneDistance: number,
+    targetLaneDistance: number,
+  ): readonly string[] | null {
+    const network = this.traffic?.roadNetwork;
+    if (!network || laneIds.length === 0) return null;
+    const currentIndex = laneIds.indexOf(currentLaneId);
+    if (currentIndex < 0) return null;
+    const route = laneIds.slice(currentIndex);
+    if (route.length === 0 || route[route.length - 1] !== targetLaneId) return null;
+    for (let index = 0; index < route.length; index += 1) {
+      const lane = network.lane(route[index] ?? '');
+      if (!lane) return null;
+      const nextId = route[index + 1];
+      if (nextId !== undefined && !lane.connectionIds.includes(nextId)) return null;
+    }
+    if (
+      route.length === 1 &&
+      targetLaneId === currentLaneId &&
+      targetLaneDistance < currentLaneDistance - SNAPP_CONFIG.pickupCandidateDistanceEpsilonPx
+    ) {
+      return null;
+    }
+    const finalLane = network.lane(targetLaneId);
+    return finalLane?.kind === 'travel' ? route : null;
+  }
+
+  private logSnappRideDiagnostics(taxi: TaxiRuntime, booking: SnappBookingSnapshot): void {
+    const debug = this.traffic?.driverFor(taxi.vehicle)?.debug;
+    if (!debug) return;
+    const target = taxi.dropoffLaneStop;
+    this.log.debug(
+      `Snapp ride route booking=${booking.id} vehicle=${taxi.vehicle.id} ` +
+        `taxiState=${taxi.state} bookingState=${booking.state} ` +
+        `currentLane=${debug.laneId ?? 'none'} currentDistance=${debug.laneDistance.toFixed(1)} ` +
+        `dropoffLane=${target?.laneId ?? 'none'} dropoffDistance=${target?.laneDistance.toFixed(1) ?? 'n/a'} ` +
+        `route=${debug.route.join('>')} routeIndex=${debug.routeIndex} ` +
+        `planned=${debug.plannedRouteActive} destination=${debug.destination?.position.x.toFixed(1) ?? 'n/a'},${debug.destination?.position.y.toFixed(1) ?? 'n/a'} ` +
+        `destinationDistance=${debug.destinationLaneDistance?.toFixed(1) ?? 'n/a'} arrived=${this.traffic?.driverFor(taxi.vehicle)?.arrived ?? false} ` +
+        `driverState=${debug.state} externallyStopped=${debug.externallyStopped} speed=${debug.currentSpeed.toFixed(1)} ` +
+        `desired=${debug.desiredSpeed.toFixed(1)} recovery=${debug.recovery.phase}/${debug.recovery.reason ?? 'none'} ` +
+        `reservation=${debug.reservationId ?? 'none'} routeTail=${debug.routeTailKind ?? 'none'}/${debug.routeTailHasOutgoing ? 'outgoing' : 'dead-end'} ` +
+        `trafficAuthority=${debug.trafficAuthority}`,
+    );
   }
 
   private resolveActualSnappBoardingApproach(taxi: TaxiRuntime): SnappBoardingApproach {
@@ -3269,7 +3504,9 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
         ? this.resolveExactTaxiRoadTarget(taxi, booking.dropoffPosition, false)
         : this.resolveTaxiRoadTarget(taxi, destinationPosition, false);
       if (!pickup || !dropoff) continue;
-      const route = this.traffic?.routePreview(pickup.position, dropoff.position);
+      const route = dropoff.laneStop
+        ? this.traffic?.routePreviewToLaneStop(pickup.position, dropoff.laneStop)
+        : this.traffic?.routePreview(pickup.position, dropoff.position);
       if (!route || route.laneIds.length === 0) continue;
       const routeDistance = pickup.route.distancePx;
       if (

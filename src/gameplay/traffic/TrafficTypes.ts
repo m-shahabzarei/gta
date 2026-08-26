@@ -217,7 +217,11 @@ export interface TrafficDriverDebug {
   readonly targetLaneId: string | null;
   readonly destination: TrafficDestination | null;
   readonly laneDistance: number;
+  readonly routeIndex: number;
+  readonly plannedRouteActive: boolean;
+  readonly externallyStopped: boolean;
   readonly distanceToDestination: number | null;
+  readonly destinationLaneDistance: number | null;
   readonly currentSpeed: number;
   readonly desiredSpeed: number;
   readonly steeringAngle: number;
@@ -226,7 +230,10 @@ export interface TrafficDriverDebug {
   readonly collisionPrediction: PredictedObstacle | null;
   readonly recovery: RecoveryStatus;
   readonly reservationId: string | null;
+  readonly trafficAuthority: boolean;
   readonly route: readonly string[];
+  readonly routeTailKind: TrafficLane['kind'] | null;
+  readonly routeTailHasOutgoing: boolean;
   readonly predictedPath: readonly Vector2[];
 }
 

@@ -235,11 +235,33 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     const network = this.network;
     if (!network) return null;
     const start = network.nearestLane(from, undefined, true);
+    return start
+      ? this.routePreviewFromLaneToLaneStop(from, start.id, network.projectPoint(from, start).distance, target)
+      : null;
+  }
+
+  /**
+   * Exact-stop preview using a caller-provided directed lane pose. This is
+   * used after a passenger boards, where the driver's actual lane is more
+   * authoritative than a nearest-lane spatial query at an intersection.
+   */
+  public routePreviewFromLaneToLaneStop(
+    from: Vector2,
+    startLaneId: string,
+    startLaneDistance: number,
+    target: TrafficLaneStopTarget,
+  ): TrafficRoutePreview | null {
+    const network = this.network;
+    if (!network) return null;
     const goal = network.lane(target.laneId);
+    const start = network.lane(startLaneId);
+    // Recovery can legitimately observe the vehicle on a connector between
+    // two travel lanes. The authored route still starts at that exact lane;
+    // only the final curb target must be a travel lane.
     if (!start || !goal || goal.kind !== 'travel') return null;
     let route = network.findCompleteRoute(start.id, goal.id);
     if (!route || route.length === 0) return null;
-    const startDistance = network.projectPoint(from, start).distance;
+    const clampedStartDistance = Phaser.Math.Clamp(startLaneDistance, 0, start.spline.length);
     const goalDistance = Phaser.Math.Clamp(target.laneDistance, 0, goal.spline.length);
 
     // A zero-edge start->goal route is not drivable when the exact curb arc is
@@ -249,7 +271,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     // the stored pickup anchor.
     if (
       start.id === goal.id &&
-      goalDistance < startDistance - EXACT_LANE_STOP_BEHIND_EPSILON_PX
+      goalDistance < clampedStartDistance - EXACT_LANE_STOP_BEHIND_EPSILON_PX
     ) {
       let cycle: readonly TrafficLane[] | null = null;
       let cycleDistance = Infinity;
@@ -257,7 +279,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
         const returnRoute = network.findCompleteRoute(connectionId, goal.id);
         if (!returnRoute || returnRoute.length === 0) continue;
         const candidate = [start, ...returnRoute];
-        let candidateDistance = Math.max(0, start.spline.length - startDistance);
+        let candidateDistance = Math.max(0, start.spline.length - clampedStartDistance);
         for (let index = 1; index < candidate.length; index += 1) {
           const lane = candidate[index];
           if (!lane) continue;
@@ -275,12 +297,12 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     }
     let distancePx = 0;
     if (route.length === 1) {
-      distancePx = Math.max(0, goalDistance - startDistance);
+      distancePx = Math.max(0, goalDistance - clampedStartDistance);
     } else {
       for (let index = 0; index < route.length; index += 1) {
         const lane = route[index];
         if (!lane) continue;
-        if (index === 0) distancePx += Math.max(0, lane.spline.length - startDistance);
+        if (index === 0) distancePx += Math.max(0, lane.spline.length - clampedStartDistance);
         else if (index === route.length - 1) distancePx += goalDistance;
         else distancePx += lane.spline.length;
       }
@@ -402,6 +424,12 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     for (const driver of this.drivers.values()) {
       if (snappOnly(driver)) driver.render(interpolation);
     }
+    // Process only the assigned Snapp driver's bounded despawn/recovery work
+    // during the phone tick. Leaving this queue untouched until the phone
+    // closes can otherwise turn a legitimate recovery request into a visible
+    // frozen taxi on the next normal frame, while processing the full queue
+    // here would advance unrelated transit services behind the modal.
+    this.processPendingDespawns((vehicle) => typeof vehicle.sprite.getData('snappBookingId') === 'string');
     void time;
   }
 
@@ -445,10 +473,33 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
   ): boolean {
     const driver = this.ensureDriver(vehicle, targetProvider, stopRange);
     if (!driver) return false;
+    if (!this.validatePlannedLaneRoute(driver.debug.laneId, target.laneId, plannedLaneIds)) {
+      return false;
+    }
     driver.configure(targetProvider, stopRange);
     if (!driver.configureLaneStopTarget(target)) return false;
     if (!driver.configurePlannedRoute(plannedLaneIds)) return false;
     driver.setStopped(stopped);
+    return true;
+  }
+
+  /** Validate an authored route before mutating the driver's target or state. */
+  private validatePlannedLaneRoute(
+    currentLaneId: string | null,
+    targetLaneId: string,
+    plannedLaneIds: readonly string[] | null,
+  ): boolean {
+    if (plannedLaneIds === null) return true;
+    if (plannedLaneIds.length === 0 || currentLaneId === null || plannedLaneIds[0] !== currentLaneId) {
+      return false;
+    }
+    if (plannedLaneIds[plannedLaneIds.length - 1] !== targetLaneId) return false;
+    for (let index = 0; index < plannedLaneIds.length; index += 1) {
+      const lane = this.network?.lane(plannedLaneIds[index] ?? '');
+      if (!lane) return false;
+      const nextId = plannedLaneIds[index + 1];
+      if (nextId !== undefined && !lane.connectionIds.includes(nextId)) return false;
+    }
     return true;
   }
 
@@ -893,7 +944,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     }
   }
 
-  private processPendingDespawns(): void {
+  private processPendingDespawns(filter: ((vehicle: Vehicle) => boolean) | null = null): void {
     let processed = 0;
     for (const [vehicleId, reason] of this.pendingDespawns) {
       if (processed >= ENGINE_LIMITS.MAX_TRAFFIC_DESPAWNS_PER_FRAME) {
@@ -907,6 +958,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
         break;
       }
       const vehicle = this.vehicleSystem?.vehicles.find((candidate) => candidate.id === vehicleId);
+      if (filter && vehicle && !filter(vehicle)) continue;
       this.pendingDespawns.delete(vehicleId);
       if (!vehicle || vehicle.isPlayerDriven) continue;
       if (
@@ -914,8 +966,16 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
         vehicle.sprite.getData('persistentTransitService') === true
       ) {
         if (vehicle.sprite.getData('persistentTransitService') === true) {
-          this.pendingServiceRecoveries.set(vehicleId, reason ?? 'generic traffic recovery requested despawn');
-          this.drivers.get(vehicleId)?.holdForServiceRecovery();
+          const recoveryReason = reason ?? 'generic traffic recovery requested despawn';
+          this.pendingServiceRecoveries.set(vehicleId, recoveryReason);
+          const driver = this.drivers.get(vehicleId);
+          driver?.holdForServiceRecovery(recoveryReason);
+          if (typeof vehicle.sprite.getData('snappBookingId') === 'string') {
+            this.log.warn(
+              `Snapp traffic driver held for recovery booking=${String(vehicle.sprite.getData('snappBookingId'))} ` +
+                `vehicle=${vehicleId} reason=${recoveryReason}`,
+            );
+          }
         } else {
           this.drivers.get(vehicleId)?.forceReplan();
         }

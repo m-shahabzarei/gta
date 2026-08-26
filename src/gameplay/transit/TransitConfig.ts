@@ -33,6 +33,8 @@ export const SNAPP_CONFIG = {
   pickupStoppedSpeedPxPerSecond: 3.5,
   /** Pickup marker/route snapshots are refreshed at this cadence. */
   trackingUpdateMs: 200,
+  /** Bounded diagnostics window after passenger entry; no unbounded logging. */
+  postBoardingDiagnosticWindowMs: 5000,
 } as const;
 
 /** Shared curb-service tuning; deliberately small enough to reject adjacent lanes. */

@@ -137,6 +137,11 @@ export class VehicleMovementComponent extends Component {
     body.setVelocity(0, 0);
   }
 
+  /** True while the shared TrafficDriver owns this vehicle's pose. */
+  public get trafficControlled(): boolean {
+    return this.trafficAuthority;
+  }
+
   /**
    * Degrade (or restore) the tires. The factor caps the vehicle's top speed,
    * so a spiked car limps rather than stops.

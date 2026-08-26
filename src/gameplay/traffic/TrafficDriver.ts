@@ -292,7 +292,13 @@ export class TrafficDriver {
       targetLaneId: this.laneChange?.toLane.id ?? this.nextLane()?.id ?? null,
       destination: this.destinationValue,
       laneDistance: this.laneDistance,
+      routeIndex: this.routeIndex,
+      plannedRouteActive: this.plannedRouteActive,
+      externallyStopped: this.externallyStopped,
       distanceToDestination: this.distanceToExplicitDestination(),
+      destinationLaneDistance: this.destinationValue && this.currentLane()
+        ? this.destinationLaneDistance(this.destinationValue, this.currentLane() as TrafficLane)
+        : null,
       currentSpeed: this.speedValue,
       desiredSpeed: this.desiredSpeedValue,
       steeringAngle: this.steeringAngleValue,
@@ -301,7 +307,10 @@ export class TrafficDriver {
       collisionPrediction: this.collisionPredictionValue,
       recovery: this.recoveryStatus(),
       reservationId: this.reservationId,
+      trafficAuthority: this.vehicle.movement.trafficControlled,
       route: this.route.map((lane) => lane.id),
+      routeTailKind: this.route[this.route.length - 1]?.kind ?? null,
+      routeTailHasOutgoing: (this.route[this.route.length - 1]?.connectionIds.length ?? 0) > 0,
       predictedPath: this.predictedPathValue,
     };
   }
@@ -418,7 +427,7 @@ export class TrafficDriver {
    * owns the next action (recalculate, alternate approach, then bounded skip)
    * because deleting or blindly resetting a scheduled bus loses route state.
    */
-  public holdForServiceRecovery(): void {
+  public holdForServiceRecovery(reason: string | null = null): void {
     this.externallyStopped = true;
     this.arrivedValue = false;
     this.speedValue = 0;
@@ -426,7 +435,10 @@ export class TrafficDriver {
     this.accelerationValue = 0;
     this.recoveryAttempt = 0;
     this.recoveryPhase = 'none';
-    this.recoveryReason = null;
+    // Preserve the escalation reason while the service owner is deciding
+    // whether it can reinstall an authored route. Clearing this here made a
+    // persistent taxi look like an unexplained external stop in diagnostics.
+    this.recoveryReason = reason;
     this.recoveryPhaseSeconds = 0;
     this.recoveryTotalSeconds = 0;
     this.blockedSeconds = 0;
@@ -765,6 +777,28 @@ export class TrafficDriver {
         position: endPose.point,
         purpose: 'ambient',
       };
+    }
+    // A stale exact-stop route can leave the target arc behind the vehicle on
+    // the same directed lane. Treating that as a zero-distance trip makes the
+    // destination speed limit clamp to zero forever. Install a complete legal
+    // cycle through the road graph and use the final occurrence of the lane as
+    // the actual destination instead.
+    if (
+      this.destinationValue.purpose !== 'ambient' &&
+      this.destinationValue.laneId === current.id &&
+      this.destinationValue.laneDistance !== undefined &&
+      this.destinationValue.laneDistance < this.laneDistance - EXPLICIT_DESTINATION_DISTANCE_EPSILON
+    ) {
+      const loop = this.buildDestinationLoop(current, this.destinationValue.laneId);
+      if (!loop) return false;
+      this.route = loop;
+      this.routeIndex = 0;
+      this.routeRequiresContinuation = false;
+      this.plannedRouteActive = true;
+      this.strategicDirty = false;
+      this.nextStrategicUpdateAt = 0;
+      this.arrivedValue = false;
+      return true;
     }
     if (this.plannedRouteActive) {
       const finalLane = this.route[this.route.length - 1];
@@ -1805,6 +1839,11 @@ export class TrafficDriver {
     if (!destination || destination.purpose === 'ambient') return Infinity;
     const distance = this.distanceToExplicitDestination(lane);
     if (distance === null) return Infinity;
+    // Negative distance means the current route is stale or malformed. Do not
+    // turn that diagnostic condition into a permanent zero-speed vehicle; the
+    // next route refresh will either install the loop above or enter bounded
+    // traffic recovery.
+    if (distance < -this.destinationArrivalWindow()) return Infinity;
     const remaining = distance - this.destinationArrivalWindow();
     return Math.sqrt(Math.max(0, 2 * this.personality.comfortableBraking * remaining));
   }
@@ -1814,19 +1853,23 @@ export class TrafficDriver {
     const destination = this.destinationValue;
     const current = startLane;
     if (!destination || destination.purpose === 'ambient' || !current) return null;
-    const targetDistance = this.destinationLaneDistance(destination, current);
-    if (destination.laneId === current.id) return targetDistance - this.laneDistance;
+    const destinationIndex = this.destinationRouteIndex();
+    if (destinationIndex < this.routeIndex) return null;
+    const targetLane = this.route[destinationIndex] ?? null;
+    if (!targetLane || targetLane.id !== destination.laneId) return null;
+    if (destinationIndex === this.routeIndex) {
+      return this.destinationLaneDistance(destination, current) - this.laneDistance;
+    }
 
     let distance = Math.max(0, current.spline.length - this.laneDistance);
-    for (let index = this.routeIndex + 1; index < this.route.length; index += 1) {
+    for (let index = this.routeIndex + 1; index <= destinationIndex; index += 1) {
       const lane = this.route[index];
       if (!lane) continue;
-      if (lane.id === destination.laneId) {
-        return distance + this.destinationLaneDistance(destination, lane);
-      }
-      distance += lane.spline.length;
+      distance += index === destinationIndex
+        ? this.destinationLaneDistance(destination, lane)
+        : lane.spline.length;
     }
-    return null;
+    return distance;
   }
 
   private destinationLaneDistance(destination: TrafficDestination, lane: TrafficLane): number {
@@ -1844,7 +1887,12 @@ export class TrafficDriver {
   /** Clamp a coarse or virtual update at a valid curb target instead of allowing it to pass the stop. */
   private stopAtExplicitDestinationIfCrossed(lane: TrafficLane, requestedDistance: number): boolean {
     const destination = this.destinationValue;
-    if (!destination || destination.purpose === 'ambient' || destination.laneId !== lane.id) {
+    if (
+      !destination ||
+      destination.purpose === 'ambient' ||
+      destination.laneId !== lane.id ||
+      this.destinationRouteIndex() !== this.routeIndex
+    ) {
       return false;
     }
     const targetDistance = this.destinationLaneDistance(destination, lane);
@@ -1900,7 +1948,8 @@ export class TrafficDriver {
       !destination ||
       destination.purpose === 'ambient' ||
       !lane ||
-      destination.laneId !== lane.id
+      destination.laneId !== lane.id ||
+      this.destinationRouteIndex() !== this.routeIndex
     ) {
       return false;
     }
@@ -1925,6 +1974,44 @@ export class TrafficDriver {
 
   private currentLane(): TrafficLane | null {
     return this.route[this.routeIndex] ?? null;
+  }
+
+  /** The final occurrence of the exact destination lane in a looped route. */
+  private destinationRouteIndex(): number {
+    const destination = this.destinationValue;
+    if (!destination) return -1;
+    for (let index = this.route.length - 1; index >= this.routeIndex; index -= 1) {
+      if (this.route[index]?.id === destination.laneId) return index;
+    }
+    return -1;
+  }
+
+  /** Build the shortest complete directed cycle back to an exact lane stop. */
+  private buildDestinationLoop(start: TrafficLane, targetLaneId: string): TrafficLane[] | null {
+    const destination = this.destinationValue;
+    if (!destination || destination.purpose === 'ambient') return null;
+    let selected: TrafficLane[] | null = null;
+    let selectedDistance = Infinity;
+    for (const connectionId of start.connectionIds) {
+      const returnRoute = this.context.network.findCompleteRoute(connectionId, targetLaneId);
+      if (!returnRoute || returnRoute.length === 0 || returnRoute[returnRoute.length - 1]?.id !== targetLaneId) {
+        continue;
+      }
+      const candidate = [start, ...returnRoute];
+      let distance = Math.max(0, start.spline.length - this.laneDistance);
+      for (let index = 1; index < candidate.length; index += 1) {
+        const lane = candidate[index];
+        if (!lane) continue;
+        distance += index === candidate.length - 1
+          ? this.destinationLaneDistance(destination, lane)
+          : lane.spline.length;
+      }
+      if (distance < selectedDistance) {
+        selected = candidate;
+        selectedDistance = distance;
+      }
+    }
+    return selected;
   }
 
   private nextLane(): TrafficLane | null {

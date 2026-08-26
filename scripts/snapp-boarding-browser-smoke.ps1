@@ -1,7 +1,10 @@
 param(
   [string]$Url = 'http://127.0.0.1:5173',
   [ValidateSet('phone', 'interact', 'enter-vehicle')]
-  [string]$BoardingPath = 'phone'
+  [string]$BoardingPath = 'phone',
+  [ValidateSet('first', 'far', 'behind')]
+  [string]$DestinationMode = 'first',
+  [switch]$TrackRide
 )
 
 $ErrorActionPreference = 'Stop'
@@ -156,6 +159,8 @@ try {
     boarding: {},
   };
   const boardingPath = '__BOARDING_PATH__';
+  const destinationMode = '__DESTINATION_MODE__';
+  const trackRide = __TRACK_RIDE__;
   if (!transit || !traffic || !world || !occupants || !playerController || !player) {
     result.errors.push('required managers unavailable');
     return result;
@@ -234,9 +239,25 @@ try {
   );
 
   let quote = null;
-  for (const destination of transit.snappDestinations(booking.cityId)) {
-    quote = transit.previewSnappDestination(destination);
-    if (quote) break;
+  if (destinationMode === 'behind') {
+    const pickupLane = traffic.roadNetwork?.lane?.(booking.pickupStop.laneId) ?? null;
+    const behindDistance = pickupLane
+      ? Math.max(32, booking.pickupStop.laneDistance - 80)
+      : booking.pickupStop.laneDistance;
+    const behindPoint = pickupLane
+      ? traffic.roadNetwork.pointAt(pickupLane, behindDistance).point
+      : booking.pickupStop.position;
+    quote = transit.previewSnappMapPoint(behindPoint, 'Behind current lane');
+  } else {
+    const destinations = transit.snappDestinations(booking.cityId);
+    for (const destination of destinations) {
+      const candidate = transit.previewSnappDestination(destination);
+      if (!candidate) continue;
+      if (!quote || destinationMode === 'far' && candidate.route.distancePx > quote.route.distancePx) {
+        quote = candidate;
+      }
+      if (destinationMode === 'first') break;
+    }
   }
   if (!quote) {
     result.errors.push(`quote failed: ${transit.snappError ?? transit.snappBooking?.error ?? 'unknown'}`);
@@ -271,6 +292,9 @@ try {
     result.errors.push('assigned taxi entity is missing');
     return result;
   }
+  result.dispatch.quoteRoute = transit.snappBooking?.quote?.route ?? null;
+  result.dispatch.quoteDropoff = transit.snappBooking?.dropoffPosition ?? null;
+  result.dispatch.destinationMode = destinationMode;
 
   const arrivalDeadline = performance.now() + 100000;
   while (performance.now() < arrivalDeadline) {
@@ -349,10 +373,62 @@ try {
   result.boarding.passengerVehicleId = playerController.currentVehicle?.id ?? null;
   result.boarding.passengerSeat = playerController.currentPassengerSeat ?? null;
   result.boarding.driverControl = playerController.playerIsDriving;
+  if (trackRide) {
+    result.ride = { samples: [] };
+    const rideDeadline = performance.now() + 7000;
+    while (performance.now() < rideDeadline) {
+      const currentBooking = transit.snappBooking;
+      const currentDriver = traffic.driverFor(taxi.vehicle);
+      const currentDebug = currentDriver?.debug ?? null;
+      result.ride.samples.push({
+        tMs: Math.round(7000 - (rideDeadline - performance.now())),
+        bookingState: currentBooking?.state ?? null,
+        taxiState: taxi.state,
+        laneId: currentDebug?.laneId ?? null,
+        laneDistance: currentDebug ? Math.round(currentDebug.laneDistance * 10) / 10 : null,
+        destination: currentDebug?.destination ?? null,
+        route: currentDebug?.route ?? [],
+        routeIndex: currentDebug?.routeIndex ?? null,
+        plannedRouteActive: currentDebug?.plannedRouteActive ?? null,
+        externallyStopped: currentDebug?.externallyStopped ?? null,
+        arrived: currentDriver?.arrived ?? null,
+        driverState: currentDebug?.state ?? null,
+        currentSpeed: currentDebug?.currentSpeed ?? null,
+        desiredSpeed: currentDebug?.desiredSpeed ?? null,
+        recovery: currentDebug?.recovery ?? null,
+        reservationId: currentDebug?.reservationId ?? null,
+        trafficAuthority: currentDebug?.trafficAuthority ?? null,
+        position: { x: Math.round(taxi.vehicle.sprite.x), y: Math.round(taxi.vehicle.sprite.y) },
+      });
+      await pause(250);
+    }
+    const rideSamples = result.ride.samples;
+    const firstPosition = rideSamples[0]?.position ?? null;
+    const lastPosition = rideSamples[rideSamples.length - 1]?.position ?? null;
+    const travelledPx = firstPosition && lastPosition
+      ? Math.hypot(lastPosition.x - firstPosition.x, lastPosition.y - firstPosition.y)
+      : 0;
+    result.ride.travelledPx = Math.round(travelledPx * 10) / 10;
+    result.ride.hasPositiveSpeed = rideSamples.some(sample =>
+      sample.bookingState === 'RIDING' && (sample.currentSpeed ?? 0) > 2
+    );
+    result.ride.progressed = travelledPx > 12 || rideSamples.some((sample, index) =>
+      index > 0 && Math.abs((sample.laneDistance ?? 0) - (rideSamples[index - 1]?.laneDistance ?? 0)) > 12
+    );
+    result.ride.stationaryUnarrivedTail = rideSamples.length >= 4 && rideSamples.slice(-4).every(sample =>
+      sample.bookingState === 'RIDING' &&
+      sample.taxiState === 'IN_SERVICE' &&
+      sample.arrived === false &&
+      (sample.currentSpeed ?? 0) < 1 &&
+      sample.externallyStopped === true
+    );
+  }
   return result;
 })()
 '@
   $runtimeExpression = $runtimeExpression.Replace('__BOARDING_PATH__', $BoardingPath)
+  $runtimeExpression = $runtimeExpression.Replace('__DESTINATION_MODE__', $DestinationMode)
+  $runtimeExpression = $runtimeExpression.Replace('__TRACK_RIDE__', $TrackRide.IsPresent.ToString().ToLowerInvariant())
   $result = Evaluate-Cdp $socket $runtimeExpression
 
   $farFailureCorrect =
@@ -394,6 +470,9 @@ try {
   }
   if (-not $farFailureCorrect -or -not $boardingCorrect) {
     throw "Snapp transactional boarding check failed: $($result | ConvertTo-Json -Depth 10 -Compress)"
+  }
+  if ($TrackRide.IsPresent -and (-not $result.ride.hasPositiveSpeed -or -not $result.ride.progressed -or $result.ride.stationaryUnarrivedTail)) {
+    throw "Snapp passenger route did not progress: $($result | ConvertTo-Json -Depth 10 -Compress)"
   }
   $result | ConvertTo-Json -Depth 10
 } finally {
