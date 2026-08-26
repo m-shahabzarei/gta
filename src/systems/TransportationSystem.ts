@@ -698,18 +698,35 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
   /** Board a waiting Snapp taxi through the existing player/occupant transition. */
   public requestSnappBoarding(vehicleId: number): boolean {
     const booking = this.snappBookingValue;
-    if (!booking || booking.assignedVehicleId !== vehicleId || booking.state !== 'DRIVER_ARRIVED') return false;
+    if (!booking || booking.assignedVehicleId !== vehicleId || booking.state !== 'DRIVER_ARRIVED') {
+      return this.rejectSnappBoarding(t('phoneSnappDriverNotReady'));
+    }
+    if (this.player?.playerInVehicle) {
+      return this.rejectSnappBoarding(t('phoneSnappExitVehicleFirst'));
+    }
     const playerPosition = this.player?.playerPosition;
     const taxi = this.taxis.get(vehicleId);
+    if (!taxi || taxi.snappBookingId !== booking.id || !this.taxiCanBoard(taxi)) {
+      return this.rejectSnappBoarding(t('phoneSnappDriverNotReady'));
+    }
     if (
       !playerPosition ||
-      !taxi ||
-      taxi.snappBookingId !== booking.id ||
       this.distanceSq(playerPosition, taxi.vehicle.sprite) > TAXI_INTERACTION_RANGE * TAXI_INTERACTION_RANGE
     ) {
-      return false;
+      return this.rejectSnappBoarding(t('phoneSnappMoveCloser'));
     }
-    return this.requestTaxiBoarding(vehicleId);
+    if (!this.requestTaxiBoarding(vehicleId)) {
+      return this.rejectSnappBoarding(t('phoneSnappBoardingBlocked'));
+    }
+    this.snappSelectionErrorValue = null;
+    return true;
+  }
+
+  /** Keep failed interaction feedback visible without changing the paid booking. */
+  private rejectSnappBoarding(message: string): false {
+    this.snappSelectionErrorValue = message;
+    this.bus.emit(EventKeys.UIToast, { message, durationMs: 2400 });
+    return false;
   }
 
   /** Select a map destination and produce a lane-route-based quote without charging the player. */
@@ -814,6 +831,10 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
       // A passenger cannot hail, enter, or hijack another service vehicle.
       return null;
     }
+    // A player driving another vehicle must exit it first. Returning a Snapp
+    // boarding prompt here was misleading because passenger boarding correctly
+    // rejects an existing driver seat and PlayerController routes F to exit.
+    if (this.player?.playerInVehicle) return null;
     const snappBooking = this.snappBookingValue;
     if (snappBooking?.state === 'DRIVER_ARRIVED' && snappBooking.assignedVehicleId !== null) {
       const snappTaxi = this.taxis.get(snappBooking.assignedVehicleId) ?? null;
@@ -2221,7 +2242,11 @@ export class TransportationSystem extends BaseSceneManager implements ISerializa
     return (
       taxi.state === 'WAITING_FOR_PASSENGER' &&
       this.taxiHasDriverAndPassengerSeat(taxi) &&
-      this.taxiIsAtPickup(taxi)
+      // Exact lane/heading arrival is authoritative when APPROACHING_PICKUP
+      // transitions into WAITING_FOR_PASSENGER. Do not re-read the traffic
+      // driver's transient `arrived` flag afterwards: a route refresh can clear
+      // it even though the booked vehicle is still stopped at the validated curb.
+      this.isVehicleStoppedAt(taxi.vehicle, taxi.pickupPosition, TAXI_PICKUP_ARRIVAL_RANGE, false)
     );
   }
 

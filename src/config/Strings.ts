@@ -89,6 +89,10 @@ export type StringKey =
   | 'phoneSnappPickupWait'
   | 'phoneSnappNoShow'
   | 'phoneSnappEnterSnapp'
+  | 'phoneSnappMoveCloser'
+  | 'phoneSnappExitVehicleFirst'
+  | 'phoneSnappDriverNotReady'
+  | 'phoneSnappBoardingBlocked'
   | 'phoneSnappExpandMap'
   | 'phoneSnappPortraitMap'
   | 'phoneNoApps'
@@ -182,6 +186,10 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappPickupWait: 'Driver waiting',
     phoneSnappNoShow: 'Your driver left because the 2-minute pickup window expired.',
     phoneSnappEnterSnapp: 'ENTER SNAPP  E',
+    phoneSnappMoveCloser: 'Move closer to your assigned Snapp vehicle.',
+    phoneSnappExitVehicleFirst: 'Exit your current vehicle before boarding Snapp.',
+    phoneSnappDriverNotReady: 'Your assigned Snapp vehicle is not ready for boarding yet.',
+    phoneSnappBoardingBlocked: 'The passenger door is blocked. Move beside the rear door and try again.',
     phoneSnappExpandMap: 'Open landscape map',
     phoneSnappPortraitMap: 'Return to portrait Phone',
     phoneNoApps: 'NO APPS AVAILABLE',
@@ -271,6 +279,10 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappPickupWait: 'Conductor esperando',
     phoneSnappNoShow: 'Tu conductor se fue porque venció la ventana de recogida de 2 minutos.',
     phoneSnappEnterSnapp: 'SUBIR A SNAPP  E',
+    phoneSnappMoveCloser: 'Acércate a tu vehículo Snapp asignado.',
+    phoneSnappExitVehicleFirst: 'Sal de tu vehículo actual antes de subir a Snapp.',
+    phoneSnappDriverNotReady: 'Tu vehículo Snapp aún no está listo para subir.',
+    phoneSnappBoardingBlocked: 'La puerta trasera está bloqueada. Ponte junto a ella e inténtalo de nuevo.',
     phoneSnappExpandMap: 'Abrir mapa apaisado',
     phoneSnappPortraitMap: 'Volver al teléfono vertical',
     phoneNoApps: 'NO HAY APPS DISPONIBLES',
@@ -360,6 +372,10 @@ export const STRINGS: Readonly<Record<Language, Table>> = {
     phoneSnappPickupWait: 'Conducteur en attente',
     phoneSnappNoShow: 'Votre conducteur est parti après la fenêtre de prise en charge de 2 minutes.',
     phoneSnappEnterSnapp: 'MONTER DANS SNAPP  E',
+    phoneSnappMoveCloser: 'Rapprochez-vous du véhicule Snapp qui vous est attribué.',
+    phoneSnappExitVehicleFirst: 'Quittez votre véhicule actuel avant de monter dans Snapp.',
+    phoneSnappDriverNotReady: 'Votre véhicule Snapp n’est pas encore prêt pour l’embarquement.',
+    phoneSnappBoardingBlocked: 'La porte arrière est bloquée. Placez-vous près de la porte et réessayez.',
     phoneSnappExpandMap: 'Ouvrir la carte paysage',
     phoneSnappPortraitMap: 'Revenir au téléphone portrait',
     phoneNoApps: 'AUCUNE APP DISPONIBLE',

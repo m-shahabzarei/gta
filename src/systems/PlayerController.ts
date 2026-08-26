@@ -33,6 +33,7 @@ import { getWorldQuery, type IPlayerRef, type MapData, type VehicleSeat } from '
 import type { VehicleOccupantSystem } from '@/systems/VehicleOccupantSystem';
 import type { PedestrianSystem } from '@/systems/PedestrianSystem';
 import type { TrafficSystem } from '@/systems/TrafficSystem';
+import type { TransportationSystem } from '@/systems/TransportationSystem';
 import type { WantedSystem } from '@/systems/WantedSystem';
 import type { VehicleSystem } from '@/systems/VehicleSystem';
 
@@ -477,11 +478,23 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
    * @param player The on-foot player attempting entry.
    */
   private tryEnterVehicle(player: Player): void {
+    const pos = player.position;
+    const transit = ServiceLocator.tryResolve<TransportationSystem>(ServiceKeys.Transportation);
+    const transitInteraction = transit?.interactionAt(pos);
+    if (
+      transitInteraction?.kind === 'enter-taxi' ||
+      transitInteraction?.kind === 'board-bus'
+    ) {
+      // F/Enter is the semantic vehicle-entry action. Route it through the same
+      // authoritative transit interaction as E so Snapp always targets the
+      // assigned booking vehicle rather than whichever vehicle is merely nearest.
+      this.bus.emit(EventKeys.PlayerInteract, { x: pos.x, y: pos.y });
+      return;
+    }
     const registry = this.resolveVehicles();
     if (!registry) {
       return;
     }
-    const pos = player.position;
     const vehicle = registry.nearestVehicle(pos.x, pos.y, VEHICLE.ENTER_RANGE);
     if (
       !vehicle ||

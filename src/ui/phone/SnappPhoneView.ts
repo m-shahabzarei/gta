@@ -351,7 +351,7 @@ export class SnappPhoneView extends UIComponent {
       const board = expanded
         ? this.addButtonAt(t('phoneSnappBoard'), this.screenWidth * 0.84, this.screenHeight - 34, () => {
           if (booking?.assignedVehicleId === null || booking?.assignedVehicleId === undefined || !this.transportation?.requestSnappBoarding(booking.assignedVehicleId)) {
-            this.errorMessage = t('phoneSnappPickupHint');
+            this.errorMessage = this.transportation?.snappError ?? t('phoneSnappPickupHint');
             this.render();
           } else {
             this.errorMessage = null;
@@ -360,7 +360,7 @@ export class SnappPhoneView extends UIComponent {
         }, TURQUOISE)
         : this.addButton(t('phoneSnappBoard'), actionY, () => {
         if (booking?.assignedVehicleId === null || booking?.assignedVehicleId === undefined || !this.transportation?.requestSnappBoarding(booking.assignedVehicleId)) {
-          this.errorMessage = t('phoneSnappPickupHint');
+          this.errorMessage = this.transportation?.snappError ?? t('phoneSnappPickupHint');
           this.render();
         } else {
           this.errorMessage = null;
