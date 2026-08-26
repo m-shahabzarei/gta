@@ -8,6 +8,7 @@ param(
   [double]$SimulatedSecondsPerTick = 3,
   [ValidateRange(1000, 65000)]
   [int]$DebugPort = 9333,
+  [string]$OutputPath = '.traffic-stress/browser-stress.json',
   [switch]$DisableGpu
 )
 
@@ -19,6 +20,26 @@ $profile = Join-Path $env:TEMP "pixel-city-stress-$PID"
 $process = $null
 $socket = $null
 $targetTicks = [int][Math]::Ceiling(($SimulatedMinutes * 60) / $SimulatedSecondsPerTick)
+$phase = 'not-started'
+$status = 'not-started'
+$samples = New-Object System.Collections.Generic.List[object]
+
+function Save-StressTelemetry(
+  [string]$FinalStatus,
+  [string]$ErrorMessage = $null
+) {
+  $resolvedOutput = [IO.Path]::GetFullPath($OutputPath)
+  $outputDirectory = Split-Path -Parent $resolvedOutput
+  if ($outputDirectory) { New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null }
+  $payload = @{
+    status = $FinalStatus
+    phase = $phase
+    error = $ErrorMessage
+    targetSimulatedMinutes = $SimulatedMinutes
+    samples = $samples.ToArray()
+  }
+  Set-Content -LiteralPath $resolvedOutput -Value ($payload | ConvertTo-Json -Depth 30) -Encoding UTF8
+}
 
 function Receive-Cdp(
   [System.Net.WebSockets.ClientWebSocket]$Socket,
@@ -79,6 +100,7 @@ function Evaluate-Cdp(
 }
 
 try {
+  $phase = 'chrome-startup'
   New-Item -ItemType Directory -Path $profile | Out-Null
   $args = @(
     '--headless=new',
@@ -103,6 +125,7 @@ try {
   $target = $targets | Where-Object { $_.type -eq 'page' } | Select-Object -First 1
   if (-not $target) { throw 'Chrome DevTools target did not start.' }
 
+  $phase = 'cdp-connect'
   $socket = [System.Net.WebSockets.ClientWebSocket]::new()
   $socket.ConnectAsync(
     [Uri]$target.webSocketDebuggerUrl,
@@ -127,6 +150,7 @@ console.error = (...args) => {
 '@
   } | Out-Null
 
+  $phase = 'navigate'
   Invoke-Cdp $socket 'Page.navigate' @{ url = $Url } | Out-Null
   Start-Sleep -Seconds 4
   Invoke-Cdp $socket 'Input.dispatchMouseEvent' @{
@@ -152,6 +176,7 @@ console.error = (...args) => {
 })()
 '@ | Out-Null
 
+  $phase = 'wait-game-ready'
   $ready = $false
   for ($attempt = 0; $attempt -lt 30 -and -not $ready; $attempt++) {
     Start-Sleep -Seconds 1
@@ -166,6 +191,7 @@ console.error = (...args) => {
   }
   if (-not $ready) { throw 'Game scene did not become ready.' }
 
+  $phase = 'stress-setup'
   Evaluate-Cdp $socket @'
 (() => {
   const managers = window.game.registry.managers;
@@ -227,7 +253,7 @@ console.error = (...args) => {
 })()
 '@ | Out-Null
 
-  $samples = New-Object System.Collections.Generic.List[object]
+  $phase = 'sampling'
   for ($second = 0; $second -lt $DurationSeconds; $second++) {
     Start-Sleep -Seconds 1
     try {
@@ -296,7 +322,10 @@ console.error = (...args) => {
       if (($sample.tick -as [int]) -ge $targetTicks) { break }
     } catch {
       $tail = $samples.ToArray() | Select-Object -Last 5
+      $status = 'infrastructure-timeout'
+      Save-StressTelemetry $status $_.Exception.Message
       Write-Output (@{
+        status = $status
         frozen = $true
         freezeAtSecond = $second
         error = $_.Exception.Message
@@ -306,6 +335,7 @@ console.error = (...args) => {
     }
   }
 
+  $phase = 'finalize'
   $final = Evaluate-Cdp $socket @'
 (() => {
   clearInterval(window.__stressInterval);
@@ -318,7 +348,9 @@ console.error = (...args) => {
 '@ 5000
   $tail = $samples.ToArray() | Select-Object -Last 5
   $simulatedMinutesCompleted = [Math]::Round((($final.tick -as [double]) * $SimulatedSecondsPerTick) / 60, 2)
+  $status = 'passed'
   Write-Output (@{
+    status = $status
     frozen = $false
     targetSimulatedMinutes = $SimulatedMinutes
     simulatedMinutesCompleted = $simulatedMinutesCompleted
@@ -327,13 +359,30 @@ console.error = (...args) => {
   } | ConvertTo-Json -Depth 20)
 
   if (($final.tick -as [int]) -lt $targetTicks) {
+    $status = 'gameplay-failure'
+    Save-StressTelemetry $status "Stress did not reach target simulated time: $simulatedMinutesCompleted of $SimulatedMinutes minutes."
     throw "Stress did not reach target simulated time: $simulatedMinutesCompleted of $SimulatedMinutes minutes."
   }
 
   $unexpectedErrors = @($final.errors | Where-Object { $_ -notlike '*pointer lock*' })
   if ($unexpectedErrors.Count -gt 0) {
+    $status = 'gameplay-failure'
+    Save-StressTelemetry $status "Stress errors: $($unexpectedErrors -join '; ')"
     throw "Stress errors: $($unexpectedErrors -join '; ')"
   }
+  $phase = 'complete'
+  Save-StressTelemetry $status $null
+} catch {
+  if ($status -eq 'not-started') {
+    $message = $_.Exception.Message
+    $status = if ($message -match 'ReceiveAsync|WebSocket|CDP|timeout|operation was canceled|operation has been canceled|target did not start|did not become ready') {
+      'infrastructure-timeout'
+    } else {
+      'infrastructure-failure'
+    }
+    Save-StressTelemetry $status $message
+  }
+  throw
 } finally {
   if ($socket) { $socket.Dispose() }
   if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }

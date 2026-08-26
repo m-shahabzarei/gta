@@ -21,6 +21,12 @@ import {
   TrafficPerceptionIndex,
   TrafficUpdateScheduler,
   TrafficValidator,
+  TrafficTelemetryCollector,
+  type TrafficOwnershipClass,
+  type TrafficLifecycleEvent,
+  type TrafficReplaySample,
+  type TrafficSpawnRejectReason,
+  type TrafficTelemetrySnapshot,
   type TemporaryTrafficObstacle,
   type TrafficDebugSnapshot,
   type TrafficLane,
@@ -43,6 +49,7 @@ interface IWorldRef extends IWorldQuery {
   readonly map: MapData;
   trafficDensityAt?(x: number, y: number): number;
   cityAt?(x: number, y: number): { id: string } | null;
+  districtAt?(x: number, y: number): string;
 }
 
 interface TrafficLightSprite {
@@ -108,7 +115,12 @@ const TRAFFIC_KINDS: readonly VehicleKind[] = [
 export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
   public readonly key = ServiceKeys.Traffic;
 
-  private readonly rng = new Random();
+  private readonly rng = new Random(0x9e3779b9);
+  private readonly telemetry = new TrafficTelemetryCollector({
+    scenarioId: 'runtime',
+    worldSeed: 1337,
+    simulationSeed: 0x9e3779b9,
+  });
   private readonly trafficCars = new Set<Vehicle>();
   private readonly drivers = new Map<number, TrafficDriver>();
   private readonly blockedDriverIds = new Set<number>();
@@ -165,6 +177,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
   private intercityIndex = 0;
   private accumulatorMs = 0;
   private simulationClockMs = 0;
+  private fixedStepCount = 0;
   private virtualElapsedMs = 0;
   private nextVirtualTrafficId = 1;
   private cityAlertUrgency = 0;
@@ -175,6 +188,43 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
 
   public get trafficStats(): Readonly<TrafficRuntimeStats> {
     return this.statsValue;
+  }
+
+  public trafficTelemetrySnapshot(): TrafficTelemetrySnapshot {
+    return this.telemetry.snapshot();
+  }
+
+  /** Additive lifecycle hook for VehicleSystem and other owners. */
+  public recordExternalLifecycle(
+    kind: TrafficLifecycleEvent['kind'],
+    vehicleId: number | null,
+    reason: string | null = null,
+    ownershipClass: TrafficOwnershipClass = 'unknown',
+    state: TrafficLifecycleEvent['state'] = null,
+  ): void {
+    this.telemetry.recordLifecycle({
+      kind,
+      atMs: this.simulationClockMs,
+      vehicleId,
+      driverId: vehicleId,
+      reason,
+      ownershipClass,
+      state,
+      metadataLost: [],
+    });
+  }
+
+  /** Called before a generic VehicleSystem removal to detect lifecycle races. */
+  public noteVehicleSystemRemoval(vehicleId: number): void {
+    const vehicle = Array.from(this.trafficCars).find((candidate) => candidate.id === vehicleId);
+    if (!vehicle) return;
+    this.recordExternalLifecycle(
+      'orphan-detected',
+      vehicleId,
+      'vehicle-system-before-traffic-prune',
+      this.ownershipClassFor(vehicle),
+      this.drivers.get(vehicleId)?.state ?? null,
+    );
   }
 
   public get validationReport(): TrafficValidationReport {
@@ -325,6 +375,8 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
   protected override onAttach(scene: Phaser.Scene): void {
     this.resolveServices();
     this.ensureRuntime();
+    this.telemetry.reset();
+    this.fixedStepCount = 0;
     this.simulationClockMs = scene.time.now;
     this.refreshLightSprites(scene);
     this.debugOverlay = new TrafficDebugOverlay(scene, this);
@@ -364,15 +416,19 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     this.intercityIndex = 0;
     this.accumulatorMs = 0;
     this.simulationClockMs = 0;
+    this.fixedStepCount = 0;
     this.virtualElapsedMs = 0;
     this.nextVirtualTrafficId = 1;
     this.cityAlertUrgency = 0;
+    this.telemetry.reset();
     this.resetStats();
   }
 
   public update(time: number, delta: number): void {
     const scene = this.scene;
     if (!scene) return;
+    const realFrameStartedAt = performance.now();
+    this.telemetry.beginFrame(this.simulationClockMs, delta, realFrameStartedAt);
     this.resolveServices();
     this.ensureRuntime();
     this.pruneExpiredObstacles(time);
@@ -384,6 +440,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     let steps = 0;
     while (this.accumulatorMs >= FIXED_STEP_MS && steps < MAX_STEPS_PER_FRAME) {
       this.simulationClockMs += FIXED_STEP_MS;
+      this.fixedStepCount += 1;
       this.simulateFixedStep(this.simulationClockMs, FIXED_STEP_MS / 1000);
       this.accumulatorMs -= FIXED_STEP_MS;
       steps += 1;
@@ -396,14 +453,17 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     this.validator?.update(time, delta, this.drivers.values());
     this.refreshLightSprites(scene);
     this.refreshLightTints();
-    this.collectRuntimeStats(delta);
+    this.collectRuntimeStats(performance.now() - realFrameStartedAt);
     this.debugOverlay?.update(delta);
+    this.telemetry.endFrame(performance.now());
   }
 
   /** Advance only assigned Snapp traffic while the Phone modal is open. */
   public updateWhilePhoneOpen(time: number, delta: number): void {
     const scene = this.scene;
     if (!scene) return;
+    const realFrameStartedAt = performance.now();
+    this.telemetry.beginFrame(this.simulationClockMs, delta, realFrameStartedAt);
     this.resolveServices();
     this.ensureRuntime();
     this.accumulatorMs += Math.min(delta, FIXED_STEP_MS * MAX_STEPS_PER_FRAME);
@@ -416,6 +476,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     let steps = 0;
     while (this.accumulatorMs >= FIXED_STEP_MS && steps < MAX_STEPS_PER_FRAME) {
       this.simulationClockMs += FIXED_STEP_MS;
+      this.fixedStepCount += 1;
       this.simulateFixedStep(this.simulationClockMs, FIXED_STEP_MS / 1000, snappOnly);
       this.accumulatorMs -= FIXED_STEP_MS;
       steps += 1;
@@ -430,6 +491,8 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     // frozen taxi on the next normal frame, while processing the full queue
     // here would advance unrelated transit services behind the modal.
     this.processPendingDespawns((vehicle) => typeof vehicle.sprite.getData('snappBookingId') === 'string');
+    this.collectRuntimeStats(performance.now() - realFrameStartedAt);
+    this.telemetry.endFrame(performance.now());
     void time;
   }
 
@@ -534,7 +597,11 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
   }
 
   public releaseDriver(vehicleId: number): void {
-    this.drivers.get(vehicleId)?.destroy();
+    const driver = this.drivers.get(vehicleId);
+    if (driver) {
+      this.telemetry.closeVehicleStops(vehicleId, this.simulationClockMs, driver.state);
+      driver.destroy();
+    }
     this.drivers.delete(vehicleId);
     this.blockedDriverIds.delete(vehicleId);
     this.pendingDespawns.delete(vehicleId);
@@ -561,14 +628,29 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
   ): Vehicle | null {
     const network = this.network;
     const vehicles = this.vehicleSystem;
-    if (!network || !vehicles) return null;
+    if (!network || !vehicles) {
+      this.recordExternalLifecycle('spawn-rejected', null, 'invalid-lane', 'service', null);
+      return null;
+    }
     const nearest = network.nearestLane(desiredPosition, undefined, true);
-    if (!nearest) return null;
+    if (!nearest) {
+      this.recordExternalLifecycle('spawn-rejected', null, 'invalid-lane', 'service', null);
+      return null;
+    }
     const projection = network.projectPoint(desiredPosition, nearest);
     const distance = clampSpawnDistance(nearest, projection.distance);
     const pose = sampleSpline(nearest.spline, distance);
     const spawn: SpawnPose = { lane: nearest, distance, point: pose.point, heading: pose.heading };
-    if (!this.isSpawnClear(spawn, null)) return null;
+    if (!this.isSpawnClear(spawn, null)) {
+      this.recordExternalLifecycle(
+        'spawn-rejected',
+        null,
+        this.spawnRejectionReason(spawn, null),
+        'service',
+        null,
+      );
+      return null;
+    }
     return this.spawnServiceVehicleAtPose(kind, spawn, targetProvider, stopRange);
   }
 
@@ -582,11 +664,23 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     const network = this.network;
     if (!network) return null;
     const lane = network.lane(target.laneId);
-    if (!lane || lane.kind !== 'travel') return null;
+    if (!lane || lane.kind !== 'travel') {
+      this.recordExternalLifecycle('spawn-rejected', null, 'invalid-lane', 'service', null);
+      return null;
+    }
     const distance = clampSpawnDistance(lane, target.laneDistance);
     const pose = sampleSpline(lane.spline, distance);
     const spawn: SpawnPose = { lane, distance, point: pose.point, heading: pose.heading };
-    if (!this.isSpawnClear(spawn, null)) return null;
+    if (!this.isSpawnClear(spawn, null)) {
+      this.recordExternalLifecycle(
+        'spawn-rejected',
+        null,
+        this.spawnRejectionReason(spawn, null),
+        'service',
+        null,
+      );
+      return null;
+    }
     return this.spawnServiceVehicleAtPose(kind, spawn, targetProvider, stopRange);
   }
 
@@ -598,7 +692,10 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     stopRange = 56,
   ): Vehicle | null {
     const spawn = this.findSafeAmbientSpawn(center);
-    if (!spawn) return null;
+    if (!spawn) {
+      this.recordExternalLifecycle('spawn-rejected', null, 'unknown', 'service', null);
+      return null;
+    }
     return this.spawnServiceVehicleAtPose(kind, spawn, targetProvider, stopRange);
   }
 
@@ -609,7 +706,10 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     stopRange: number,
   ): Vehicle | null {
     const vehicles = this.vehicleSystem;
-    if (!vehicles) return null;
+    if (!vehicles) {
+      this.recordExternalLifecycle('spawn-rejected', null, 'capacity-limit', 'service', null);
+      return null;
+    }
     const tint = this.rng.pick(VEHICLES[kind].tints);
     const vehicle = vehicles.spawnVehicle(
       kind,
@@ -627,6 +727,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       spawn.distance,
     );
     if (!driver) {
+      this.recordExternalLifecycle('spawn-rejected', vehicle.id, 'capacity-limit', 'service', null);
       vehicles.removeVehicle(vehicle);
       return null;
     }
@@ -634,6 +735,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     ai.setStopped(false);
     driver?.render(1);
     this.trafficCars.add(vehicle);
+    this.recordExternalLifecycle('spawn-accepted', vehicle.id, null, this.ownershipClassFor(vehicle), driver.state);
     return vehicle;
   }
 
@@ -691,7 +793,29 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     this.scheduler.schedule(now, deltaSeconds, player, this.drivers.values(), (work) => {
       work.driver.fixedUpdate(now, work.deltaSeconds, this.perception, work.detail);
     }, filter ? (driver) => filter(driver) : isSnappDriver);
+    this.telemetry.recordScheduler(this.scheduler.telemetry);
+    for (const driver of this.drivers.values()) this.recordDriverTelemetry(driver, now);
     intersections.resolve(now);
+    for (const junction of intersections.telemetrySnapshot()) {
+      this.telemetry.recordJunction({
+        ...junction,
+        signalVisualLogicalDivergence: this.signalDivergenceFor(junction.junctionId),
+      });
+    }
+  }
+
+  private signalDivergenceFor(intersectionId: number): number {
+    const intersections = this.intersections;
+    if (!intersections) return 0;
+    let divergence = 0;
+    for (const light of this.lights) {
+      if (light.intersectionId !== intersectionId) continue;
+      const expectedColor = intersections.signalColor(intersectionId, light.northSouth);
+      const expectedTint =
+        expectedColor === 'green' ? LIGHT_GREEN : expectedColor === 'yellow' ? LIGHT_YELLOW : LIGHT_RED;
+      if (light.sprite.tintTopLeft !== expectedTint) divergence += 1;
+    }
+    return divergence;
   }
 
   private resolveServices(): void {
@@ -835,12 +959,14 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     );
     const driver = this.ensureDriver(car, targetProvider, 56, spawn.lane, spawn.distance);
     if (!driver) {
+      this.recordExternalLifecycle('spawn-rejected', null, 'capacity-limit', 'ambient', null);
       this.vehicleSystem.removeVehicle(car);
       return;
     }
     this.ensureTrafficAi(car, targetProvider, 56).setStopped(false);
     car.sprite.setData('intercityService', destination !== null);
     this.trafficCars.add(car);
+    this.recordExternalLifecycle('spawn-accepted', car.id, null, this.ownershipClassFor(car), driver.state);
   }
 
   private findSafeAmbientSpawn(player: Vector2): SpawnPose | null {
@@ -862,6 +988,13 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       const spawn: SpawnPose = { lane, distance, point: pose.point, heading: pose.heading };
       if (!this.isSpawnClear(spawn, player)) {
         this.statsValue.safeSpawnRejects += 1;
+        this.recordExternalLifecycle(
+          'spawn-rejected',
+          null,
+          this.spawnRejectionReason(spawn, player),
+          'ambient',
+          null,
+        );
         continue;
       }
       return spawn;
@@ -917,11 +1050,66 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     return !occupied;
   }
 
+  private spawnRejectionReason(spawn: SpawnPose, ambientPlayer: Vector2 | null): TrafficSpawnRejectReason {
+    const network = this.network;
+    const world = this.world;
+    if (!network || !world || spawn.lane.kind !== 'travel') return 'invalid-lane';
+    if (spawn.distance < 38) return 'stop-line-proximity';
+    if (spawn.lane.spline.length - spawn.distance < SPAWN_FRONT_CLEARANCE) return 'front-clearance';
+    if (
+      Math.abs(wrapAngle(sampleSpline(spawn.lane.spline, spawn.distance).heading - spawn.heading)) >
+      0.015
+    ) return 'wrong-heading';
+    if (ambientPlayer) {
+      const dx = spawn.point.x - ambientPlayer.x;
+      const dy = spawn.point.y - ambientPlayer.y;
+      if (dx * dx + dy * dy < AMBIENT_SPAWN_MIN_DISTANCE ** 2) return 'player-distance';
+    }
+    for (const lookAhead of [0, 24, 58, 96]) {
+      const point = sampleSpline(spawn.lane.spline, spawn.distance + lookAhead).point;
+      if (!world.isDrivableAtWorld(point.x, point.y) || world.isSolidAtWorld(point.x, point.y)) {
+        return 'solid-geometry';
+      }
+    }
+    for (const driver of this.drivers.values()) {
+      const snapshot = driver.snapshot();
+      if (!snapshot || snapshot.laneId !== spawn.lane.id) continue;
+      const relative = snapshot.laneDistance - spawn.distance;
+      if (relative > -SPAWN_REAR_CLEARANCE && relative < SPAWN_FRONT_CLEARANCE) {
+        return relative < 0 ? 'rear-clearance' : 'front-clearance';
+      }
+    }
+    for (const vehicle of this.vehicleSystem?.vehicles ?? []) {
+      if (!vehicle.sprite.active || vehicle.isDestroyed) continue;
+      const dx = vehicle.sprite.x - spawn.point.x;
+      const dy = vehicle.sprite.y - spawn.point.y;
+      if (dx * dx + dy * dy < 68 * 68) return 'vehicle-overlap';
+    }
+    let occupied = false;
+    this.entityManager?.forEachNearby(
+      spawn.point.x,
+      spawn.point.y,
+      62,
+      () => {
+        occupied = true;
+      },
+      EntityCategory.Npc,
+    );
+    return occupied ? 'npc-overlap' : 'unknown';
+  }
+
   private pruneTraffic(player: Vector2 | null): void {
     const maxSq = DESPAWN_DISTANCE * DESPAWN_DISTANCE;
     for (const car of Array.from(this.trafficCars)) {
       if (car.isDestroyed || !car.sprite.active) {
         this.trafficCars.delete(car);
+        this.recordExternalLifecycle(
+          'despawn',
+          car.id,
+          car.isDestroyed ? 'destruction' : 'inactive',
+          this.ownershipClassFor(car),
+          this.drivers.get(car.id)?.state ?? null,
+        );
         this.releaseDriver(car.id);
         continue;
       }
@@ -939,6 +1127,13 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       }
       if (distanceSq <= maxSq) continue;
       this.trafficCars.delete(car);
+      this.recordExternalLifecycle(
+        'despawn',
+        car.id,
+        'distance',
+        this.ownershipClassFor(car),
+        this.drivers.get(car.id)?.state ?? null,
+      );
       this.releaseDriver(car.id);
       this.vehicleSystem?.removeVehicle(car);
     }
@@ -965,6 +1160,13 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
         vehicle.sprite.getData('policeResponseActive') === true ||
         vehicle.sprite.getData('persistentTransitService') === true
       ) {
+        this.recordExternalLifecycle(
+          'protected-despawn-rejected',
+          vehicle.id,
+          reason,
+          this.ownershipClassFor(vehicle),
+          this.drivers.get(vehicleId)?.state ?? null,
+        );
         if (vehicle.sprite.getData('persistentTransitService') === true) {
           const recoveryReason = reason ?? 'generic traffic recovery requested despawn';
           this.pendingServiceRecoveries.set(vehicleId, recoveryReason);
@@ -982,6 +1184,13 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
         continue;
       }
       this.trafficCars.delete(vehicle);
+      this.recordExternalLifecycle(
+        'despawn',
+        vehicle.id,
+        reason,
+        this.ownershipClassFor(vehicle),
+        this.drivers.get(vehicleId)?.state ?? null,
+      );
       this.releaseDriver(vehicleId);
       this.vehicleSystem?.removeVehicle(vehicle);
       processed += 1;
@@ -1007,6 +1216,13 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
         `vehicle:${vehicle.id}`,
       );
       this.trafficCars.delete(vehicle);
+      this.recordExternalLifecycle(
+        'despawn',
+        vehicle.id,
+        'retired-overflow-virtual-traffic',
+        this.ownershipClassFor(vehicle),
+        driver.state,
+      );
       this.releaseDriver(vehicle.id);
       this.vehicleSystem?.removeVehicle(vehicle);
       return true;
@@ -1020,6 +1236,25 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       lane,
       distance: snapshot.laneDistance,
       speed: snapshot.speed,
+    });
+    this.recordLifecycleEvent({
+      kind: 'virtualize',
+      atMs: this.simulationClockMs,
+      vehicleId: vehicle.id,
+      driverId: driver.id,
+      reason: null,
+      ownershipClass: this.ownershipClassFor(vehicle),
+      state: driver.state,
+      metadataLost: [
+        'vehicle-id-as-original-key',
+        'route',
+        'route-progress',
+        'driver-profile',
+        'current-intention',
+        'signal-context',
+        'reservation-context',
+        'ownership-flags',
+      ],
     });
     this.nextVirtualTrafficId += 1;
     this.trafficCars.delete(vehicle);
@@ -1039,6 +1274,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     const materializeSq = VIRTUAL_MATERIALIZE_DISTANCE * VIRTUAL_MATERIALIZE_DISTANCE;
     for (const record of this.virtualTraffic.values()) {
       if (!this.advanceVirtualTraffic(record, deltaSeconds)) {
+        this.recordExternalLifecycle('virtual-retire', null, 'invalid-virtual-record', 'unknown', null);
         this.virtualTraffic.delete(record.id);
         continue;
       }
@@ -1047,7 +1283,10 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       const dy = pose.point.y - player.y;
       const distanceSq = dx * dx + dy * dy;
       if (distanceSq <= materializeSq) this.virtualMaterializeQueue.push(record);
-      else if (distanceSq > retireSq) this.virtualTraffic.delete(record.id);
+      else if (distanceSq > retireSq) {
+        this.recordExternalLifecycle('virtual-retire', null, 'outside-virtual-range', 'unknown', null);
+        this.virtualTraffic.delete(record.id);
+      }
     }
     if (this.virtualMaterializeQueue.length > ENGINE_LIMITS.MAX_VIRTUAL_MATERIALIZE_PER_FRAME) {
       EngineDiagnostics.recordLimitExceeded(
@@ -1157,6 +1396,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       record.distance,
     );
     if (!driver) {
+      this.recordExternalLifecycle('materialize-rejected', vehicle.id, 'capacity-limit', 'unknown', null);
       vehicles.removeVehicle(vehicle);
       return;
     }
@@ -1164,6 +1404,100 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     driver?.restoreVirtualSpeed(record.speed);
     driver?.render(1);
     this.trafficCars.add(vehicle);
+    this.recordExternalLifecycle('materialize-accepted', vehicle.id, null, this.ownershipClassFor(vehicle), driver.state);
+  }
+
+  private recordLifecycleEvent(event: TrafficLifecycleEvent): void {
+    this.telemetry.recordLifecycle(event);
+  }
+
+  private recordDriverTelemetry(driver: TrafficDriver, now: number): void {
+    const snapshot = driver.snapshot();
+    if (!snapshot) {
+      this.telemetry.closeVehicleStops(driver.id, now, driver.state);
+      return;
+    }
+    const debug = driver.debug;
+    const lane = debug.laneId ? this.network?.lane(debug.laneId) : null;
+    const tier = this.scheduler.tierFor(driver.id) ?? 'virtual';
+    const lastUpdateAt = this.scheduler.lastUpdateAt(driver.id);
+    const updateAgeMs = lastUpdateAt === null ? 'unknown' : Math.max(0, now - lastUpdateAt);
+    const city = this.world?.cityAt?.(snapshot.position.x, snapshot.position.y)?.id ?? 'unknown';
+    const district = this.world?.districtAt?.(snapshot.position.x, snapshot.position.y) ?? 'unknown';
+    const vehicle = this.vehicleSystem?.vehicles.find((candidate) => candidate.id === driver.id) ?? null;
+    const ownershipClass = this.ownershipClassFor(vehicle);
+    const queuePosition =
+      driver.telemetryQueuePosition !== 'unknown'
+        ? driver.telemetryQueuePosition
+        : this.intersections?.queuePosition(driver.id) ?? 'unknown';
+    const stopReason = driver.telemetryStopReason(now);
+    const blocker = debug.collisionPrediction;
+    const routeProgress = lane
+      ? debug.routeIndex + debug.laneDistance / Math.max(1, lane.spline.length)
+      : 'unknown';
+    const sample: TrafficReplaySample = {
+      fixedStep: this.fixedStepCount,
+      simulationClockMs: now,
+      city,
+      district,
+      vehicleId: driver.id,
+      driverId: driver.id,
+      laneId: debug.laneId ?? 'unknown',
+      laneDistance: Number.isFinite(debug.laneDistance) ? debug.laneDistance : 'unknown',
+      routeProgress,
+      position: { x: snapshot.position.x, y: snapshot.position.y },
+      heading: snapshot.heading,
+      speed: debug.currentSpeed,
+      desiredSpeed: debug.desiredSpeed,
+      simulationTier: tier,
+      state: debug.state,
+      intention: debug.intention,
+      stopReason,
+      blockerId: blocker?.entityId ?? null,
+      blockerType: blocker?.kind ?? null,
+      reservationId: debug.reservationId,
+      queuePosition,
+      recoveryPhase: debug.recovery.phase,
+      lastUpdateTimestamp: lastUpdateAt ?? 'unknown',
+      updateAgeMs,
+      ownershipClass,
+    };
+    this.telemetry.recordReplaySample(sample);
+    this.telemetry.observeStop({
+      nowMs: now,
+      vehicleId: driver.id,
+      driverId: driver.id,
+      stopped: snapshot.speed < 1.2,
+      laneId: debug.laneId ?? 'unknown',
+      intersectionId: driver.telemetryIntersectionId(),
+      reason: stopReason,
+      blockerId: blocker?.entityId ?? null,
+      blockerType: blocker?.kind ?? null,
+      desiredSpeed: debug.desiredSpeed,
+      actualSpeed: debug.currentSpeed,
+      simulationTier: tier,
+      schedulerLastUpdateAgeMs: updateAgeMs,
+      reservationState: debug.reservationId ? 'active' : 'none',
+      downstreamClear: driver.telemetryDownstreamClear,
+      beforeState: driver.previousState,
+      state: debug.state,
+    });
+  }
+
+  private ownershipClassFor(vehicle: Vehicle | null): TrafficOwnershipClass {
+    if (!vehicle) return 'unknown';
+    if (vehicle.isPlayerDriven) return 'player';
+    if (vehicle.sprite.getData('parked') === true) return 'parked';
+    if (vehicle.sprite.getData('persistentTransitService') === true) return 'transit';
+    if (vehicle.sprite.getData('policeResponseActive') === true) return 'pursuit';
+    if (vehicle.def.isEmergency) return 'emergency';
+    if (
+      vehicle.sprite.getData('snappBookingId') !== undefined ||
+      vehicle.sprite.getData('serviceParking') === true
+    ) {
+      return 'service';
+    }
+    return 'ambient';
   }
 
   private refreshLightSprites(scene: Phaser.Scene): void {
@@ -1295,7 +1629,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     }
   }
 
-  private collectRuntimeStats(frameDelta: number): void {
+  private collectRuntimeStats(realFrameTimeMs: number): void {
     const reservations = this.intersections?.stats;
     const scheduler = this.scheduler.stats;
     this.statsValue.activeDrivers = this.drivers.size;
@@ -1321,7 +1655,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     this.statsValue.averageAiUpdateHz = scheduler.averageUpdateHz;
     this.statsValue.schedulerLoad = scheduler.load;
     this.statsValue.schedulerDeferredUpdates = scheduler.deferredUpdates;
-    this.statsValue.frameTimeMs = frameDelta;
+    this.statsValue.frameTimeMs = Math.max(0, realFrameTimeMs);
   }
 
   private resetStats(): void {

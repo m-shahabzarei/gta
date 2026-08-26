@@ -23,6 +23,7 @@ import type {
   TrafficObstacleKind,
   TrafficPersonality,
 } from './TrafficTypes';
+import type { TrafficStopReason } from './TrafficTelemetry';
 
 export type TrafficSimulationDetail = 'full' | 'coarse' | 'frozen';
 
@@ -149,6 +150,7 @@ export class TrafficDriver {
   private targetProvider: (() => Vector2 | null) | null;
   private stopRange: number;
   private stateValue: TrafficDriverState = 'Spawning';
+  private previousStateValue: TrafficDriverState = 'Spawning';
   private intentionValue: TrafficIntention = 'Reach Destination';
   private route: TrafficLane[] = [];
   private routeIndex = 0;
@@ -197,6 +199,9 @@ export class TrafficDriver {
   private nextStrategicUpdateAt = 0;
   private highwayLaneChangeCooldown = 0;
   private highwayClearSeconds = 0;
+  private downstreamClearValue: boolean | 'unknown' = 'unknown';
+  private queuePositionValue: number | 'unknown' = 'unknown';
+  private intersectionStopReasonValue: TrafficStopReason | null = null;
 
   constructor(
     private readonly vehicle: Vehicle,
@@ -268,6 +273,84 @@ export class TrafficDriver {
 
   public get state(): TrafficDriverState {
     return this.stateValue;
+  }
+
+  public get previousState(): TrafficDriverState {
+    return this.previousStateValue;
+  }
+
+  public get telemetryDownstreamClear(): boolean | 'unknown' {
+    return this.downstreamClearValue;
+  }
+
+  public get telemetryQueuePosition(): number | 'unknown' {
+    return this.queuePositionValue;
+  }
+
+  public telemetryIntersectionId(): number | 'unknown' {
+    const lane = this.currentLane();
+    const next = this.nextLane();
+    return lane?.intersectionId ?? next?.intersectionId ?? 'unknown';
+  }
+
+  /** Classify the current stop from already-computed driver state only. */
+  public telemetryStopReason(now: number): TrafficStopReason | null {
+    const obstacle = this.collisionPredictionValue;
+    if (this.stateValue === 'Spawning') return null;
+    const stopped =
+      this.speedValue < 1.2 &&
+      (this.desiredSpeedValue <= 1.2 ||
+        this.stateValue === 'Stopping' ||
+        this.stateValue === 'Waiting' ||
+        this.stateValue === 'Yielding' ||
+        this.stateValue === 'Avoiding Obstacle' ||
+        this.stateValue === 'Recovering' ||
+        this.stateValue === 'Reversing' ||
+        (this.desiredSpeedValue > 14 && this.blockedSeconds > 8));
+    if (!stopped) return null;
+    if (this.recoveryPhase !== 'none' || this.stateValue === 'Recovering' || this.stateValue === 'Reversing') {
+      return 'recovery';
+    }
+    if (this.destinationValue?.purpose === 'parking') return 'parking';
+    if (this.destinationValue?.purpose === 'service' && this.vehicle.def.kind === 'bus') {
+      return 'bus-stop';
+    }
+    if (this.destinationValue?.purpose === 'service' && this.vehicle.def.kind === 'taxi') {
+      return 'taxi-stop';
+    }
+    if (this.stateValue === 'Yielding') {
+      const signal = this.telemetrySignalColor(now);
+      if (signal === 'yellow') return 'yellow-signal';
+      if (signal === 'red') return 'red-signal';
+      if (obstacle?.kind === 'traffic' || obstacle?.kind === 'stopped-traffic') {
+        return 'lead-vehicle';
+      }
+      if (this.queuePositionValue !== 'unknown' && this.queuePositionValue > 1) return 'queue';
+      return 'yield';
+    }
+    if (this.stateValue === 'Waiting') {
+      if (this.downstreamClearValue === false) return 'downstream-blocked';
+      if (obstacle?.kind === 'traffic' || obstacle?.kind === 'stopped-traffic') {
+        return 'lead-vehicle';
+      }
+      return 'queue';
+    }
+    if (this.stateValue === 'Avoiding Obstacle') {
+      if (obstacle?.kind === 'traffic' || obstacle?.kind === 'stopped-traffic') return 'lead-vehicle';
+      if (obstacle) return 'obstacle';
+      return 'collision-avoidance';
+    }
+    if (this.intersectionStopReasonValue) return this.intersectionStopReasonValue;
+    if (this.externallyStopped) return 'external-stop';
+    if (
+      this.speedValue < 1.2 &&
+      this.desiredSpeedValue > 14 &&
+      this.blockedSeconds > 8
+    ) {
+      return 'unexplained-stop';
+    }
+    if (obstacle) return 'collision-avoidance';
+    return this.desiredSpeedValue <= 1.2 ? 'external-stop' : null;
   }
 
   public get approachingIntersection(): TrafficApproach | null {
@@ -545,6 +628,10 @@ export class TrafficDriver {
     detail: TrafficSimulationDetail = 'full',
   ): void {
     this.resetUpdateMetrics();
+    this.previousStateValue = this.stateValue;
+    this.downstreamClearValue = 'unknown';
+    this.queuePositionValue = 'unknown';
+    this.intersectionStopReasonValue = null;
     if (this.vehicle.isDestroyed || this.vehicle.isPlayerDriven || !this.vehicle.sprite.active) {
       this.stateValue = 'Despawning';
       this.intentionValue = 'Despawn';
@@ -856,9 +943,13 @@ export class TrafficDriver {
     const approachClear = this.approachIsClear(lane, distanceToStopLine, perception);
     if (existing?.connectorLaneId === next.id && approachClear) {
       this.reservationId = existing.id;
+      this.queuePositionValue = 0;
+      this.downstreamClearValue = true;
+      this.intersectionStopReasonValue = null;
       return next.speedLimit;
     }
     const downstreamClear = this.downstreamIsClear(outgoing, perception);
+    this.downstreamClearValue = downstreamClear;
     const speed = Math.max(12, this.speedValue);
     const decision = this.context.intersections.request(now, {
       vehicleId: this.vehicle.id,
@@ -876,9 +967,22 @@ export class TrafficDriver {
     });
     if (decision.granted && decision.reservation) {
       this.reservationId = decision.reservation.id;
+      this.queuePositionValue = 0;
+      this.intersectionStopReasonValue = null;
       return next.speedLimit;
     }
+    this.queuePositionValue = decision.queuePosition;
     this.reservationId = null;
+    this.intersectionStopReasonValue =
+      decision.reason === 'signal'
+        ? this.telemetrySignalColor(now) === 'yellow'
+          ? 'yellow-signal'
+          : 'red-signal'
+        : decision.reason === 'exit-blocked'
+          ? 'downstream-blocked'
+          : decision.reason === 'queue' || decision.reason === 'approach-blocked'
+            ? 'queue'
+            : 'yield';
     this.stateValue = decision.reason === 'exit-blocked' ? 'Waiting' : 'Yielding';
     this.intentionValue = decision.reason === 'signal' ? 'Stop' : 'Yield';
     return Math.sqrt(Math.max(0, 2 * this.personality.comfortableBraking * distanceToStopLine));
@@ -914,6 +1018,18 @@ export class TrafficDriver {
       if (agent.laneDistance < DOWNSTREAM_CLEARANCE + agent.length) clear = false;
     });
     return clear;
+  }
+
+  private telemetrySignalColor(_now: number): 'green' | 'yellow' | 'red' | 'unknown' {
+    const lane = this.currentLane();
+    const next = this.nextLane();
+    const intersectionId = next?.intersectionId ?? lane?.intersectionId;
+    if (intersectionId === null || intersectionId === undefined) return 'unknown';
+    const incoming = lane;
+    if (!incoming) return 'unknown';
+    const heading = sampleSpline(incoming.spline, incoming.spline.length).heading;
+    const northSouth = Math.abs(Math.sin(heading)) >= Math.abs(Math.cos(heading));
+    return this.context.intersections.signalColor(intersectionId, northSouth);
   }
 
   private intelligentAcceleration(targetSpeed: number, obstacle: PredictedObstacle | null): number {

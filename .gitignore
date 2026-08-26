@@ -32,3 +32,5 @@ Thumbs.db
 # Vite / TS cache
 .vite/
 *.tsbuildinfo
+.traffic-stress/
+.traffic-stress*/

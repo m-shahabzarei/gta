@@ -6,6 +6,8 @@ import type { VehicleSystem } from '@/systems/VehicleSystem';
 import type { Random } from '@/utils';
 import type { TrafficNetwork } from './TrafficNetwork';
 import type { ParkingSpace } from './TrafficTypes';
+import { ServiceLocator } from '@/core/ServiceLocator';
+import { ServiceKeys } from '@/config/ServiceKeys';
 
 const TARGET_PARKED = 18;
 const STREAM_INTERVAL_MS = 520;
@@ -88,6 +90,7 @@ export class ParkedVehicleManager {
     vehicle.movement.setTrafficAuthority(true);
     this.records.set(vehicle.id, { vehicle, space });
     this.occupiedSpaceIds.add(space.id);
+    this.recordLifecycle('spawn-accepted', vehicle.id, 'parked', null);
   }
 
   /** A bay may never receive a vehicle wider/longer than its real footprint. */
@@ -152,7 +155,23 @@ export class ParkedVehicleManager {
     this.occupiedSpaceIds.delete(record.space.id);
     record.vehicle.sprite.data?.remove('parked');
     record.vehicle.sprite.data?.remove('parkingSpaceId');
-    if (removeVehicle) this.vehicles.removeVehicle(record.vehicle);
+    if (removeVehicle) {
+      this.recordLifecycle('despawn', record.vehicle.id, 'parked-prune', 'Parking');
+      this.vehicles.removeVehicle(record.vehicle);
+    }
+  }
+
+  private recordLifecycle(
+    kind: 'spawn-accepted' | 'despawn',
+    vehicleId: number,
+    reason: string,
+    state: 'Parking' | null,
+  ): void {
+    (
+      ServiceLocator.tryResolve(ServiceKeys.Traffic) as {
+        recordExternalLifecycle?(kind: 'spawn-accepted' | 'despawn', vehicleId: number, reason?: string | null, ownershipClass?: string, state?: 'Parking' | null): void;
+      } | null
+    )?.recordExternalLifecycle?.(kind, vehicleId, reason, 'parked', state);
   }
 
   private isLegalAndClear(space: ParkingSpace): boolean {

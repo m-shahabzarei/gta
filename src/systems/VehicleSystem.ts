@@ -112,7 +112,14 @@ export class VehicleSystem extends BaseSceneManager {
     const pooled = bucket?.pop();
     if (pooled) this.pooledVehicleCount -= 1;
     const vehicle = pooled ?? new Vehicle(this.scene as Phaser.Scene, x, y, def, tint);
-    if (pooled) vehicle.resetForReuse(x, y, heading, tint);
+    if (pooled) {
+      vehicle.resetForReuse(x, y, heading, tint);
+      (
+        ServiceLocator.tryResolve(ServiceKeys.Traffic) as {
+          recordExternalLifecycle?(kind: 'pool-reuse', vehicleId: number, reason?: string | null): void;
+        } | null
+      )?.recordExternalLifecycle?.('pool-reuse', vehicle.id, poolKey);
+    }
 
     // Textures face up (toward -Y) at rotation 0, so add a quarter turn.
     vehicle.sprite.setRotation(heading + Math.PI / 2);
@@ -197,6 +204,11 @@ export class VehicleSystem extends BaseSceneManager {
     this.wreckTimers.delete(vehicle.id);
     this.bus.emit(EventKeys.VehicleRemoved, { vehicleId: vehicle.id });
     this.resolveEntityManager()?.unregister(vehicle);
+    (
+      ServiceLocator.tryResolve(ServiceKeys.Traffic) as {
+        noteVehicleSystemRemoval?(vehicleId: number): void;
+      } | null
+    )?.noteVehicleSystemRemoval?.(vehicle.id);
     (
       ServiceLocator.tryResolve(ServiceKeys.Traffic) as {
         releaseDriver?(vehicleId: number): void;

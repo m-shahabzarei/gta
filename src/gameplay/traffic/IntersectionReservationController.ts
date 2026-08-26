@@ -1,5 +1,6 @@
 import { sampleSpline } from './SplineMath';
 import type { TrafficNetwork } from './TrafficNetwork';
+import type { TrafficJunctionTelemetry } from './TrafficTelemetry';
 
 export type TrafficSignalPhase =
   | 'north-south-green'
@@ -90,6 +91,10 @@ export class IntersectionReservationController {
   private nowValue = 0;
   private grantedValue = 0;
   private deniedValue = 0;
+  private readonly grantedByIntersection = new Map<number, number>();
+  private readonly deniedByIntersection = new Map<number, number>();
+  private readonly deniedReasonsByIntersection = new Map<number, Map<string, number>>();
+  private readonly timeoutByIntersection = new Map<number, number>();
 
   constructor(private readonly network: TrafficNetwork) {}
 
@@ -116,7 +121,13 @@ export class IntersectionReservationController {
   public beginFrame(now: number): void {
     this.nowValue = now;
     for (const [vehicleId, reservation] of this.reservationByVehicle) {
-      if (reservation.expiresAt < now) this.releaseVehicle(vehicleId);
+      if (reservation.expiresAt < now) {
+        this.timeoutByIntersection.set(
+          reservation.intersectionId,
+          (this.timeoutByIntersection.get(reservation.intersectionId) ?? 0) + 1,
+        );
+        this.releaseVehicle(vehicleId);
+      }
     }
     for (const [intersectionId, queue] of this.queuedByIntersection) {
       for (const [vehicleId, request] of queue) {
@@ -152,6 +163,13 @@ export class IntersectionReservationController {
         ? 'signal'
         : 'queue';
     this.deniedValue += 1;
+    this.deniedByIntersection.set(
+      request.intersectionId,
+      (this.deniedByIntersection.get(request.intersectionId) ?? 0) + 1,
+    );
+    const reasons = this.deniedReasonsByIntersection.get(request.intersectionId) ?? new Map<string, number>();
+    reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+    this.deniedReasonsByIntersection.set(request.intersectionId, reasons);
     return { granted: false, reservation: null, queuePosition, reason };
   }
 
@@ -189,6 +207,10 @@ export class IntersectionReservationController {
         this.reservationByVehicle.set(request.vehicleId, reservation);
         queue.delete(request.vehicleId);
         this.grantedValue += 1;
+        this.grantedByIntersection.set(
+          intersectionId,
+          (this.grantedByIntersection.get(intersectionId) ?? 0) + 1,
+        );
       }
       if (active.length > 0) this.reservationsByIntersection.set(intersectionId, active);
       if (queue.size === 0) this.queuedByIntersection.delete(intersectionId);
@@ -197,6 +219,60 @@ export class IntersectionReservationController {
 
   public hasReservation(vehicleId: number): IntersectionReservation | null {
     return this.reservationByVehicle.get(vehicleId) ?? null;
+  }
+
+  public queuePosition(vehicleId: number): number | 'unknown' {
+    for (const queue of this.queuedByIntersection.values()) {
+      const ordered = this.orderedQueue(queue);
+      const position = ordered.findIndex((request) => request.vehicleId === vehicleId);
+      if (position >= 0) return position + 1;
+    }
+    return this.reservationByVehicle.has(vehicleId) ? 0 : 'unknown';
+  }
+
+  /** Read-only junction telemetry; reservation decisions remain unchanged. */
+  public telemetrySnapshot(): readonly TrafficJunctionTelemetry[] {
+    const result: TrafficJunctionTelemetry[] = [];
+    for (const junction of this.network.junctions()) {
+      const queue = this.queuedByIntersection.get(junction.id);
+      const queueLengthByIncomingLane: Record<string, number> = {};
+      let oldestQueueAgeMs = 0;
+      if (queue) {
+        for (const request of queue.values()) {
+          queueLengthByIncomingLane[request.incomingLaneId] =
+            (queueLengthByIncomingLane[request.incomingLaneId] ?? 0) + 1;
+          oldestQueueAgeMs = Math.max(oldestQueueAgeMs, this.nowValue - request.queuedAt);
+        }
+      }
+      const active = this.reservationsByIntersection.get(junction.id) ?? [];
+      const denialReasons: Record<string, number> = {};
+      for (const [reason, count] of this.deniedReasonsByIntersection.get(junction.id) ?? []) {
+        denialReasons[reason] = count;
+      }
+      const phase = this.phaseFor(junction.id, this.nowValue);
+      const window = this.phaseWindow(junction.id, this.nowValue);
+      result.push({
+        junctionId: junction.id,
+        currentPhase: phase,
+        signalGroup: phase.includes('north-south') ? 'north-south' : phase.includes('east-west') ? 'east-west' : 'all-red',
+        phaseStartedAtMs: window.start,
+        phaseEndsAtMs: window.end,
+        queueLengthByIncomingLane,
+        oldestQueueAgeMs,
+        reservationsGranted: this.grantedByIntersection.get(junction.id) ?? 0,
+        reservationsDenied: this.deniedByIntersection.get(junction.id) ?? 0,
+        denialReasons,
+        reservationTimeouts: this.timeoutByIntersection.get(junction.id) ?? 0,
+        activeReservations: active.length,
+        connectorOccupancy: active.filter((reservation) => reservation.entered).length,
+        downstreamBlockedDurationMs: 'unknown' as const,
+        stopBoxOccupancy: active.length,
+        spillbackDepth: 'unknown' as const,
+        deadlockDurationMs: 'unknown' as const,
+        signalVisualLogicalDivergence: 0,
+      });
+    }
+    return result;
   }
 
   public markEntered(vehicleId: number): void {
@@ -239,6 +315,10 @@ export class IntersectionReservationController {
     this.nowValue = 0;
     this.grantedValue = 0;
     this.deniedValue = 0;
+    this.grantedByIntersection.clear();
+    this.deniedByIntersection.clear();
+    this.deniedReasonsByIntersection.clear();
+    this.timeoutByIntersection.clear();
   }
 
   private orderedQueue(queue: ReadonlyMap<number, QueuedRequest>): QueuedRequest[] {
@@ -295,5 +375,24 @@ export class IntersectionReservationController {
     elapsed -= EAST_WEST_GREEN_MS;
     if (elapsed < YELLOW_MS) return 'east-west-yellow';
     return 'all-red-to-north-south';
+  }
+
+  private phaseWindow(intersectionId: number, now: number): { start: number; end: number } {
+    const offset = Math.abs((intersectionId * 2654435761) % CYCLE_MS);
+    const cycleStart = Math.floor((now + offset) / CYCLE_MS) * CYCLE_MS - offset;
+    const elapsed = ((now + offset) % CYCLE_MS + CYCLE_MS) % CYCLE_MS;
+    const duration =
+      elapsed < NORTH_SOUTH_GREEN_MS
+        ? NORTH_SOUTH_GREEN_MS
+        : elapsed < NORTH_SOUTH_GREEN_MS + YELLOW_MS
+          ? YELLOW_MS
+          : elapsed < NORTH_SOUTH_GREEN_MS + YELLOW_MS + ALL_RED_MS
+            ? ALL_RED_MS
+            : elapsed < NORTH_SOUTH_GREEN_MS + YELLOW_MS + ALL_RED_MS + EAST_WEST_GREEN_MS
+              ? EAST_WEST_GREEN_MS
+              : elapsed < CYCLE_MS - ALL_RED_MS
+                ? YELLOW_MS
+                : ALL_RED_MS;
+    return { start: cycleStart + elapsed, end: cycleStart + elapsed + duration };
   }
 }

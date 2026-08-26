@@ -8,5 +8,6 @@ export * from './TrafficNetwork';
 export * from './TrafficPersonality';
 export * from './TrafficPerceptionIndex';
 export * from './TrafficTypes';
+export * from './TrafficTelemetry';
 export * from './TrafficUpdateScheduler';
 export * from './TrafficValidator';
