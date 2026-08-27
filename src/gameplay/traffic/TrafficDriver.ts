@@ -62,6 +62,7 @@ export interface TrafficDriverContext {
   requestDespawn(driver: TrafficDriver, reason: string): void;
   onEmergencyBrake?(): void;
   onRecovery?(): void;
+  onImpactRecoveryFailed?(durationSeconds: number): void;
   onBlocked?(blocked: boolean): void;
 }
 
@@ -202,6 +203,8 @@ export class TrafficDriver {
   private downstreamClearValue: boolean | 'unknown' = 'unknown';
   private queuePositionValue: number | 'unknown' = 'unknown';
   private intersectionStopReasonValue: TrafficStopReason | null = null;
+  private impactRejoinBlockedSeconds = 0;
+  private lastFixedNow = 0;
 
   constructor(
     private readonly vehicle: Vehicle,
@@ -272,7 +275,7 @@ export class TrafficDriver {
   }
 
   public get state(): TrafficDriverState {
-    return this.stateValue;
+    return this.effectiveImpactState();
   }
 
   public get previousState(): TrafficDriverState {
@@ -296,7 +299,8 @@ export class TrafficDriver {
   /** Classify the current stop from already-computed driver state only. */
   public telemetryStopReason(now: number): TrafficStopReason | null {
     const obstacle = this.collisionPredictionValue;
-    if (this.stateValue === 'Spawning') return null;
+    const effectiveState = this.effectiveImpactState();
+    if (effectiveState === 'Spawning') return null;
     const stopped =
       this.speedValue < 1.2 &&
       (this.desiredSpeedValue <= 1.2 ||
@@ -304,11 +308,21 @@ export class TrafficDriver {
         this.stateValue === 'Waiting' ||
         this.stateValue === 'Yielding' ||
         this.stateValue === 'Avoiding Obstacle' ||
+        effectiveState === 'ImpactResponse' ||
+        effectiveState === 'ImpactRecovering' ||
+        effectiveState === 'RejoiningLane' ||
         this.stateValue === 'Recovering' ||
         this.stateValue === 'Reversing' ||
         (this.desiredSpeedValue > 14 && this.blockedSeconds > 8));
     if (!stopped) return null;
-    if (this.recoveryPhase !== 'none' || this.stateValue === 'Recovering' || this.stateValue === 'Reversing') {
+    if (
+      effectiveState === 'ImpactResponse' ||
+      effectiveState === 'ImpactRecovering' ||
+      effectiveState === 'RejoiningLane' ||
+      this.recoveryPhase !== 'none' ||
+      this.stateValue === 'Recovering' ||
+      this.stateValue === 'Reversing'
+    ) {
       return 'recovery';
     }
     if (this.destinationValue?.purpose === 'parking') return 'parking';
@@ -366,10 +380,12 @@ export class TrafficDriver {
   }
 
   public get debug(): TrafficDriverDebug {
+    const dynamics = this.vehicle.movement.dynamics;
+    const impact = dynamics.debug;
     return {
       vehicleId: this.vehicle.id,
       personality: this.personality.name,
-      state: this.stateValue,
+      state: this.effectiveImpactState(),
       intention: this.intentionValue,
       laneId: this.currentLane()?.id ?? null,
       targetLaneId: this.laneChange?.toLane.id ?? this.nextLane()?.id ?? null,
@@ -395,6 +411,39 @@ export class TrafficDriver {
       routeTailKind: this.route[this.route.length - 1]?.kind ?? null,
       routeTailHasOutgoing: (this.route[this.route.length - 1]?.connectionIds.length ?? 0) > 0,
       predictedPath: this.predictedPathValue,
+      physics: {
+        targetVehicleId: impact.targetVehicleId,
+        mass: this.vehicle.def.physics.mass,
+        restitution: this.vehicle.def.physics.restitution,
+        friction: this.vehicle.def.physics.tireFriction,
+        previousVelocity: { ...impact.previousVelocity },
+        currentVelocity: {
+          x: dynamics.controlVelocity.x + dynamics.externalVelocity.x,
+          y: dynamics.controlVelocity.y + dynamics.externalVelocity.y,
+        },
+        relativeVelocity: { ...impact.relativeVelocity },
+        collisionNormal: { ...impact.collisionNormal },
+        impulseVector: { ...impact.impulseVector },
+        contactPoint: { ...impact.contactPoint },
+        impactEnergy: impact.impactEnergy,
+        damage: impact.damage,
+        angularVelocity: dynamics.angularVelocity,
+        collisionType: impact.collisionType,
+        impactState: dynamics.impactState,
+        physicalMode: dynamics.physicalMode,
+        laneOffset: { ...dynamics.impactOffset },
+        timeSinceImpactSeconds: Number.isFinite(dynamics.lastCollisionAt)
+          ? Math.max(0, this.lastFixedNow - dynamics.lastCollisionAt) / 1000
+          : null,
+        solverSource: impact.solverSource,
+        player: this.vehicle.isPlayerDriven,
+        traffic: this.vehicle.movement.trafficControlled,
+        parked: this.vehicle.sprite.getData('parked') === true,
+        emergency: this.vehicle.def.isEmergency,
+        missionOwned:
+          this.vehicle.sprite.getData('missionVehicle') === true ||
+          this.vehicle.sprite.getData('missionId') !== undefined,
+      },
     };
   }
 
@@ -411,16 +460,17 @@ export class TrafficDriver {
         length: Math.max(this.vehicle.def.width, this.vehicle.def.height),
         position: { x: this.currentPose.x, y: this.currentPose.y },
         heading: this.currentPose.heading,
-        state: this.stateValue,
+        state: this.effectiveImpactState(),
         emergency: this.vehicle.def.isEmergency,
       });
     snapshot.laneId = lane.id;
     snapshot.laneDistance = this.laneDistance;
     snapshot.speed = Math.max(0, this.speedValue);
-    snapshot.position.x = this.currentPose.x;
-    snapshot.position.y = this.currentPose.y;
-    snapshot.heading = this.currentPose.heading;
-    snapshot.state = this.stateValue;
+    // Perception follows the visible displaced body while lane progress remains route-owned.
+    snapshot.position.x = this.vehicle.sprite.x;
+    snapshot.position.y = this.vehicle.sprite.y;
+    snapshot.heading = this.vehicle.movement.collisionHeading;
+    snapshot.state = this.effectiveImpactState();
     return snapshot;
   }
 
@@ -627,6 +677,7 @@ export class TrafficDriver {
     perception: TrafficPerceptionFrame,
     detail: TrafficSimulationDetail = 'full',
   ): void {
+    this.lastFixedNow = now;
     this.resetUpdateMetrics();
     this.previousStateValue = this.stateValue;
     this.downstreamClearValue = 'unknown';
@@ -643,6 +694,31 @@ export class TrafficDriver {
     this.ageSeconds += deltaSeconds;
     this.replanCooldownSeconds = Math.max(0, this.replanCooldownSeconds - deltaSeconds);
     this.highwayLaneChangeCooldown = Math.max(0, this.highwayLaneChangeCooldown - deltaSeconds);
+
+    const dynamics = this.vehicle.movement.dynamics;
+    const impactState = dynamics.impactState;
+    if (impactState === 'ImpactResponse' || impactState === 'ImpactRecovering') {
+      this.updateImpactResponse(deltaSeconds);
+      return;
+    }
+    if (impactState === 'RejoiningLane') {
+      // A bounded service/lifecycle fallback may take ownership after the
+      // normal rejoin budget expires. It still decays the impact offset
+      // gradually; this flag only prevents a protected vehicle from being
+      // trapped in the timeout/despawn queue forever.
+      const rejoinSafe =
+        dynamics.impactRecoveryFailureReported || this.canSafelyRejoinImpact(perception);
+      this.vehicle.movement.setImpactRejoinAllowed(rejoinSafe);
+      if (!rejoinSafe) {
+        this.updateBlockedImpactRejoin(deltaSeconds, perception);
+        return;
+      }
+      this.impactRejoinBlockedSeconds = 0;
+      this.context.onBlocked?.(false);
+    } else {
+      this.vehicle.movement.setImpactRejoinAllowed(true);
+      this.impactRejoinBlockedSeconds = 0;
+    }
 
     if (this.ageSeconds < SPAWN_SETTLE_SECONDS) {
       this.stateValue = 'Spawning';
@@ -768,6 +844,118 @@ export class TrafficDriver {
       this.steeringAngleValue,
       this.accelerationValue < -10,
     );
+  }
+
+  /** Hold only lane progress while collision energy is active; route ownership is retained. */
+  private updateImpactResponse(deltaSeconds: number): void {
+    this.context.intersections.releaseVehicle(this.vehicle.id);
+    this.reservationId = null;
+    this.desiredSpeedValue = 0;
+    this.integrateSpeed(0, deltaSeconds);
+    this.currentPose = this.poseOnCurrentLane();
+    this.updateKinematicTelemetry(deltaSeconds);
+    this.context.onBlocked?.(false);
+  }
+
+  /** Validate the next gradual lane-offset reduction against world and nearby traffic. */
+  private canSafelyRejoinImpact(perception: TrafficPerceptionFrame): boolean {
+    const dynamics = this.vehicle.movement.dynamics;
+    const factor = 0.9;
+    const x = this.currentPose.x + dynamics.impactOffset.x * factor;
+    const y = this.currentPose.y + dynamics.impactOffset.y * factor;
+    const heading = this.currentPose.heading + dynamics.impactHeadingOffset * factor;
+    const forwardX = Math.cos(heading);
+    const forwardY = Math.sin(heading);
+    const rightX = -forwardY;
+    const rightY = forwardX;
+    const halfLength = this.vehicle.def.height * 0.5;
+    const halfWidth = this.vehicle.def.width * 0.5;
+    if (
+      !this.isImpactRejoinWorldSampleSafe(x, y) ||
+      !this.isImpactRejoinWorldSampleSafe(
+        x + forwardX * halfLength,
+        y + forwardY * halfLength,
+      ) ||
+      !this.isImpactRejoinWorldSampleSafe(
+        x - forwardX * halfLength,
+        y - forwardY * halfLength,
+      ) ||
+      !this.isImpactRejoinWorldSampleSafe(x + rightX * halfWidth, y + rightY * halfWidth) ||
+      !this.isImpactRejoinWorldSampleSafe(x - rightX * halfWidth, y - rightY * halfWidth)
+    ) {
+      return false;
+    }
+    let clear = true;
+    const queryRadius = Math.hypot(this.vehicle.def.width, this.vehicle.def.height) + 56;
+    perception.forEachNearbyAgent(x, y, queryRadius, (agent) => {
+      if (!clear || agent.vehicleId === this.vehicle.id) return;
+      const minimumGap = (this.vehicle.def.width + Math.min(agent.length, 56)) * 0.55;
+      const dx = agent.position.x - x;
+      const dy = agent.position.y - y;
+      if (dx * dx + dy * dy < minimumGap * minimumGap) clear = false;
+    });
+    return clear;
+  }
+
+  private isImpactRejoinWorldSampleSafe(x: number, y: number): boolean {
+    return (
+      !this.context.world.isSolidAtWorld(x, y) && this.context.world.isDrivableAtWorld(x, y)
+    );
+  }
+
+  /** Use the existing bounded legal recovery phases when a lane rejoin remains obstructed. */
+  private updateBlockedImpactRejoin(
+    deltaSeconds: number,
+    perception: TrafficPerceptionFrame,
+  ): void {
+    this.impactRejoinBlockedSeconds += deltaSeconds;
+    const dynamics = this.vehicle.movement.dynamics;
+    if (dynamics.recoveryDuration >= MAX_RECOVERY_SECONDS) {
+      if (!dynamics.impactRecoveryFailureReported) {
+        dynamics.impactRecoveryFailureReported = true;
+        this.context.onImpactRecoveryFailed?.(dynamics.recoveryDuration);
+        this.stateValue = 'Despawning';
+        this.intentionValue = 'Despawn';
+        this.context.requestDespawn(this, 'impact lane rejoin timeout');
+      }
+      // Keep the physical offset under the movement component's exponential
+      // rejoin instead of repeatedly requesting lifecycle removal. Protected
+      // transit/mission vehicles can now replan while their visible offset
+      // decays toward the route pose without a teleport.
+      this.vehicle.movement.setImpactRejoinAllowed(true);
+      this.context.onBlocked?.(false);
+      this.impactRejoinBlockedSeconds = 0;
+      return;
+    }
+    this.context.onBlocked?.(true);
+    this.desiredSpeedValue = 0;
+    this.integrateSpeed(0, deltaSeconds);
+    if (this.recoveryPhase === 'reverse') {
+      this.updateReverse(deltaSeconds, perception);
+    } else if (this.recoveryPhase !== 'none') {
+      this.updateRecoveryPhase(deltaSeconds, perception);
+    } else if (this.impactRejoinBlockedSeconds >= RECOVERY_TRIGGER_SECONDS) {
+      this.beginNextRecovery('impact lane rejoin blocked', perception);
+      this.impactRejoinBlockedSeconds = 0;
+    }
+    this.currentPose = this.poseOnCurrentLane();
+    this.updateKinematicTelemetry(deltaSeconds);
+  }
+
+  private effectiveImpactState(): TrafficDriverState {
+    if (this.vehicle.movement.physicalMode !== 'TrafficKinematicWithImpact') {
+      return this.stateValue;
+    }
+    switch (this.vehicle.movement.dynamics.impactState) {
+      case 'ImpactResponse':
+        return 'ImpactResponse';
+      case 'ImpactRecovering':
+        return 'ImpactRecovering';
+      case 'RejoiningLane':
+        return 'RejoiningLane';
+      default:
+        return this.stateValue;
+    }
   }
 
   public destroy(): void {

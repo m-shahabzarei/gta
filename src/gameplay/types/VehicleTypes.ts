@@ -29,6 +29,8 @@ export type VehicleKind =
 /** Engine families — drive the procedural engine audio and handling feel. */
 export type EngineKind = 'car' | 'sport' | 'heavy' | 'motorcycle' | 'none';
 
+import type { VehiclePhysicsDef } from '@/gameplay/vehicle/VehicleDynamicsTypes';
+
 /** A complete vehicle specification. */
 export interface VehicleDef {
   kind: VehicleKind;
@@ -54,4 +56,6 @@ export interface VehicleDef {
   engine: EngineKind;
   /** Two-wheeler flag: narrow body, rider visible, no roof lights. */
   twoWheeler: boolean;
+  /** Deterministic collision, grip, mass and impact tuning. */
+  physics: VehiclePhysicsDef;
 }

@@ -4,6 +4,7 @@ import type { Vehicle } from '@/entities/Vehicle';
 import type { MajorBuildingDefinition } from '@/gameplay/types';
 import type { VehicleSystem } from '@/systems/VehicleSystem';
 import type { Random } from '@/utils';
+import { VEHICLE_COLLISION } from '@/config/Constants';
 
 const STREAM_INTERVAL_MS = 560;
 const ACTIVATE_DISTANCE = 1120;
@@ -82,6 +83,7 @@ export class MajorBuildingServiceParking {
       vehicle.sprite.setData('serviceParking', true);
       vehicle.movement.stopImmediately();
       vehicle.movement.setTrafficAuthority(true);
+      vehicle.movement.setParkedDynamic(point.x, point.y, heading);
       spawned.push(vehicle);
     }
     if (spawned.length > 0) this.records.set(definition.id, spawned);
@@ -93,6 +95,10 @@ export class MajorBuildingServiceParking {
       const kept: Vehicle[] = [];
       for (const vehicle of vehicles) {
         if (vehicle.isPlayerDriven) {
+          this.release(vehicle, false);
+          continue;
+        }
+        if (vehicle.movement.impactOffsetMagnitude > VEHICLE_COLLISION.PARKED_RELEASE_OFFSET) {
           this.release(vehicle, false);
           continue;
         }
@@ -115,6 +121,7 @@ export class MajorBuildingServiceParking {
     vehicle.sprite.data?.remove('parked');
     vehicle.sprite.data?.remove('majorBuildingId');
     vehicle.sprite.data?.remove('serviceParking');
+    if (!removeVehicle) vehicle.movement.releaseParkedDynamic();
     if (removeVehicle) this.vehicles.removeVehicle(vehicle);
   }
 

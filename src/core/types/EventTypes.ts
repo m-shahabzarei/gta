@@ -15,6 +15,10 @@ import type { HudState } from './HudState';
 import type { Vector2 } from './Common';
 import type { GameSettings, WeatherMode } from '@/config/Settings';
 import type { VehicleKind } from '@/gameplay/types/VehicleTypes';
+import type {
+  VehicleCollisionSolverSource,
+  VehicleCollisionType,
+} from '@/gameplay/vehicle/VehicleDynamicsTypes';
 import type { WeaponId } from '@/gameplay/types/WeaponTypes';
 import type { PickupKind } from '@/gameplay/types/PickupTypes';
 import type { InteriorKind } from '@/gameplay/types/InteriorTypes';
@@ -178,7 +182,24 @@ export interface EventPayloadMap {
   [EventKeys.VehicleDestroyed]: { vehicleId: number; position: Vector2; byPlayer: boolean };
   [EventKeys.VehicleEntered]: { vehicleId: number; byPlayer: boolean };
   [EventKeys.VehicleExited]: { vehicleId: number; byPlayer: boolean };
-  [EventKeys.VehicleCollision]: { x: number; y: number; intensity: number; byPlayer: boolean };
+  [EventKeys.VehicleCollision]: {
+    x: number;
+    y: number;
+    intensity: number;
+    byPlayer: boolean;
+    vehicleId?: number;
+    otherVehicleId?: number;
+    relativeSpeed?: number;
+    impulse?: number;
+    impulseVector?: Vector2;
+    collisionNormal?: Vector2;
+    contactPoint?: Vector2;
+    damageToSelf?: number;
+    damageToOther?: number;
+    collisionType?: VehicleCollisionType;
+    playerResponsible?: boolean;
+    solverSource?: VehicleCollisionSolverSource;
+  };
   [EventKeys.TireSkidChanged]: { active: boolean };
   [EventKeys.HornSounded]: { kind: VehicleKind };
   [EventKeys.VehicleDoor]: { open: boolean; vehicleId?: number; seat?: string };

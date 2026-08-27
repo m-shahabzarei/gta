@@ -99,6 +99,21 @@ const LIGHT_GREEN = 0x4ade80;
 const LIGHT_YELLOW = 0xfacc15;
 const LIGHT_RED = 0xef4444;
 
+/** Ownership that generic traffic pruning/recovery is not allowed to retire. */
+function hasProtectedVehicleOwnership(vehicle: Vehicle): boolean {
+  const sprite = vehicle.sprite;
+  return (
+    vehicle.def.isEmergency ||
+    sprite.getData('policeResponseActive') === true ||
+    sprite.getData('persistentTransitService') === true ||
+    sprite.getData('missionVehicle') === true ||
+    sprite.getData('missionId') !== undefined ||
+    sprite.getData('missionOwnerId') !== undefined ||
+    typeof sprite.getData('snappBookingId') === 'string' ||
+    sprite.getData('intercityService') === true
+  );
+}
+
 const TRAFFIC_KINDS: readonly VehicleKind[] = [
   ...CIVILIAN_VEHICLE_KINDS,
   'taxi',
@@ -767,6 +782,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       stats: this.statsValue,
       validation: this.validationReport,
       selected: selected?.debug ?? null,
+      collisions: this.vehicleSystem?.collisionTelemetrySnapshot() ?? null,
     };
   }
 
@@ -896,6 +912,9 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
         },
         onRecovery: () => {
           this.statsValue.recoveries += 1;
+        },
+        onImpactRecoveryFailed: (durationSeconds) => {
+          this.vehicleSystem?.recordImpactRecovery(durationSeconds, true);
         },
         onBlocked: (blocked) => {
           if (blocked) this.blockedDriverIds.add(vehicle.id);
@@ -1114,10 +1133,15 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
         continue;
       }
       if (!player || car.isPlayerDriven) continue;
-      if (car.sprite.getData('policeResponseActive') === true) continue;
-      // Scheduled transit owns passenger/service state that cannot survive a
-      // generic visual retirement. It still receives the normal driver LOD.
-      if (car.sprite.getData('persistentTransitService') === true) continue;
+      // Dedicated emergency, mission, pursuit and transit owners decide when
+      // their vehicles may retire. An active impact also finishes its bounded
+      // physical recovery before ordinary virtualization resumes.
+      if (
+        hasProtectedVehicleOwnership(car) ||
+        car.movement.dynamics.impactState !== 'None'
+      ) {
+        continue;
+      }
       const dx = car.sprite.x - player.x;
       const dy = car.sprite.y - player.y;
       const distanceSq = dx * dx + dy * dy;
@@ -1156,10 +1180,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       if (filter && vehicle && !filter(vehicle)) continue;
       this.pendingDespawns.delete(vehicleId);
       if (!vehicle || vehicle.isPlayerDriven) continue;
-      if (
-        vehicle.sprite.getData('policeResponseActive') === true ||
-        vehicle.sprite.getData('persistentTransitService') === true
-      ) {
+      if (hasProtectedVehicleOwnership(vehicle)) {
         this.recordExternalLifecycle(
           'protected-despawn-rejected',
           vehicle.id,
@@ -1203,7 +1224,12 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
    * object until it returns to the activation ring.
    */
   private dematerializeTraffic(vehicle: Vehicle, driver: TrafficDriver): boolean {
-    if (vehicle.sprite.getData('policeResponseActive') === true) return false;
+    if (
+      hasProtectedVehicleOwnership(vehicle) ||
+      vehicle.movement.dynamics.impactState !== 'None'
+    ) {
+      return false;
+    }
     const snapshot = driver.snapshot();
     const lane = snapshot ? this.network?.lane(snapshot.laneId) : null;
     if (!snapshot || !lane || vehicle.isPlayerDriven || vehicle.isDestroyed) return false;
@@ -1645,7 +1671,9 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     this.statsValue.trafficCpuMs = scheduler.cpuMs;
     this.statsValue.navigationCpuMs = scheduler.navigationMs;
     this.statsValue.steeringCpuMs = scheduler.steeringMs;
-    this.statsValue.collisionCpuMs = scheduler.collisionMs;
+    this.statsValue.collisionCpuMs =
+      scheduler.collisionMs +
+      (this.vehicleSystem?.collisionTelemetrySnapshot().collisionCpuMs ?? 0);
     this.statsValue.simulatedVehicles = this.drivers.size;
     this.statsValue.virtualVehicles = this.virtualTraffic.size;
     this.statsValue.nearSimulationVehicles = scheduler.nearDrivers;

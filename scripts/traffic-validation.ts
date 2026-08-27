@@ -3,6 +3,8 @@ import { IntersectionReservationController } from '@/gameplay/traffic/Intersecti
 import { TrafficNetwork } from '@/gameplay/traffic/TrafficNetwork';
 import { projectOnSpline, sampleSpline, wrapAngle } from '@/gameplay/traffic/SplineMath';
 import type { TrafficLane } from '@/gameplay/traffic/TrafficTypes';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 interface HeadlessAgent {
   readonly id: number;
@@ -69,6 +71,7 @@ validateReservations();
 validateReservationQueueFairness();
 validateApproachQueueSafety();
 validateInterchangePolicy();
+validateImpactRecoveryArchitecture();
 const largeNetworkStartupMs = validateLargeNetworkStartupBudget();
 const simulated = simulateTenMinutes();
 
@@ -85,6 +88,62 @@ if (failures.length > 0) {
   console.log(
     '  direction, lane containment, spawn alignment, conflicts, downstream clearance, blocking, and recovery checks passed',
   );
+}
+
+function validateImpactRecoveryArchitecture(): void {
+  const driverSource = readFileSync(
+    join(process.cwd(), 'src', 'gameplay', 'traffic', 'TrafficDriver.ts'),
+    'utf8',
+  );
+  const movementSource = readFileSync(
+    join(process.cwd(), 'src', 'entities', 'components', 'VehicleMovementComponent.ts'),
+    'utf8',
+  );
+  const parkedSource = readFileSync(
+    join(process.cwd(), 'src', 'gameplay', 'traffic', 'ParkedVehicleManager.ts'),
+    'utf8',
+  );
+  const trafficSystemSource = readFileSync(
+    join(process.cwd(), 'src', 'systems', 'TrafficSystem.ts'),
+    'utf8',
+  );
+  const vehicleSystemSource = readFileSync(
+    join(process.cwd(), 'src', 'systems', 'VehicleSystem.ts'),
+    'utf8',
+  );
+  check(
+    driverSource.includes("case 'ImpactResponse'") &&
+      driverSource.includes("case 'ImpactRecovering'") &&
+      driverSource.includes("case 'RejoiningLane'"),
+    'traffic driver must expose all three physical impact recovery states',
+  );
+  check(
+    driverSource.includes('canSafelyRejoinImpact') &&
+      driverSource.includes('updateBlockedImpactRejoin'),
+    'traffic impact recovery must validate rejoin and use bounded legal fallback',
+  );
+  check(
+    driverSource.includes('this.isEngineeredHighwayLane(lane)'),
+    'impact work must preserve the highway reverse-recovery prohibition',
+  );
+  check(
+    movementSource.includes('dynamics.basePoseX + dynamics.impactOffset.x') &&
+      movementSource.includes('dynamics.baseHeading + dynamics.impactHeadingOffset'),
+    'traffic render pose must compose route authority with physical impact offset and yaw',
+  );
+  check(
+    parkedSource.includes('only bay ownership is released') &&
+      parkedSource.includes('this.release(vehicleId, false)'),
+    'pushed parked vehicles must leave the bay registry without immediate deletion',
+  );
+  for (const source of [trafficSystemSource, vehicleSystemSource]) {
+    check(
+      source.includes('hasProtectedVehicleOwnership') &&
+        source.includes("sprite.getData('missionVehicle')") &&
+        source.includes('vehicle.def.isEmergency'),
+      'generic vehicle lifecycle must preserve emergency and mission ownership',
+    );
+  }
 }
 
 function validateNetworkGeometry(): void {

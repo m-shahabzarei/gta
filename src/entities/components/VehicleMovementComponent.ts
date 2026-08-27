@@ -21,8 +21,14 @@
  */
 import Phaser from 'phaser';
 import { Component } from '@/entities/Component';
-import { VEHICLE } from '@/config/Constants';
+import { VEHICLE, VEHICLE_COLLISION } from '@/config/Constants';
 import type { VehicleDef } from '@/gameplay/types';
+import {
+  createVehicleDynamicsState,
+  resetVehicleDynamicsState,
+  type VehicleDynamicsState,
+  type VehiclePhysicalMode,
+} from '@/gameplay/vehicle/VehicleDynamicsTypes';
 
 /** Steering fraction above which hard cornering at speed produces a skid. */
 const SKID_STEER_THRESHOLD = 0.72;
@@ -63,6 +69,9 @@ export class VehicleMovementComponent extends Component {
 
   /** Traffic simulation owns the pose while enabled; the arcade integrator is bypassed. */
   private trafficAuthority = false;
+
+  /** Collision-owned velocity, yaw, offsets and pool generation. */
+  private readonly dynamicsState: VehicleDynamicsState = createVehicleDynamicsState();
 
   /** Tire condition in (0, 1]; spike strips lower it, capping top speed. */
   private tireFactor = 1;
@@ -113,6 +122,11 @@ export class VehicleMovementComponent extends Component {
     this.throttle = 0;
     this.steer = 0;
     this.braking = false;
+    this.dynamicsState.controlVelocity.x = 0;
+    this.dynamicsState.controlVelocity.y = 0;
+    this.dynamicsState.externalVelocity.x = 0;
+    this.dynamicsState.externalVelocity.y = 0;
+    this.dynamicsState.angularVelocity = 0;
     const body = this.entity.sprite.body as Phaser.Physics.Arcade.Body;
     body.setVelocity(0, 0);
   }
@@ -133,13 +147,76 @@ export class VehicleMovementComponent extends Component {
     this.steer = 0;
     this.braking = false;
     const body = this.entity.sprite.body as Phaser.Physics.Arcade.Body;
-    body.setImmovable(enabled);
     body.setVelocity(0, 0);
+    if (!enabled && this.isKinematicMode(this.dynamicsState.physicalMode)) {
+      this.releaseKinematicPose('ArcadeDynamic');
+    }
   }
 
   /** True while the shared TrafficDriver owns this vehicle's pose. */
   public get trafficControlled(): boolean {
     return this.trafficAuthority;
+  }
+
+  /** Authoritative mutable collision state; only VehicleCollisionRuntime writes impulses. */
+  public get dynamics(): VehicleDynamicsState {
+    return this.dynamicsState;
+  }
+
+  public get physicalMode(): VehiclePhysicalMode {
+    return this.dynamicsState.physicalMode;
+  }
+
+  /** Heading used by OBB collision geometry, including temporary impact yaw. */
+  public get collisionHeading(): number {
+    return Phaser.Math.Angle.Wrap(this.headingAngle + this.dynamicsState.impactHeadingOffset);
+  }
+
+  /** World-space magnitude of the route-relative impact displacement. */
+  public get impactOffsetMagnitude(): number {
+    return Math.hypot(this.dynamicsState.impactOffset.x, this.dynamicsState.impactOffset.y);
+  }
+
+  /** Explicitly choose physical integration ownership without changing route authority. */
+  public setPhysicalMode(mode: VehiclePhysicalMode): void {
+    this.dynamicsState.physicalMode = mode;
+    const body = this.entity.sprite.body as Phaser.Physics.Arcade.Body;
+    body.setImmovable(this.isKinematicMode(mode) || mode === 'Disabled');
+    if (this.isKinematicMode(mode) || mode === 'Disabled') body.setVelocity(0, 0);
+  }
+
+  /** Player control and Arcade world integration are enabled independently of traffic authority. */
+  public setPlayerDynamic(enabled: boolean): void {
+    if (enabled) {
+      this.releaseKinematicPose('PlayerDynamic');
+    } else if (this.dynamicsState.physicalMode === 'PlayerDynamic') {
+      this.setPhysicalMode('ArcadeDynamic');
+    }
+  }
+
+  /** Establish a fixed parking anchor while leaving the impact layer physically mobile. */
+  public setParkedDynamic(x: number, y: number, heading: number): void {
+    const dynamics = this.dynamicsState;
+    dynamics.basePoseX = x;
+    dynamics.basePoseY = y;
+    dynamics.baseHeading = Phaser.Math.Angle.Wrap(heading);
+    dynamics.hasBasePose = true;
+    this.headingAngle = dynamics.baseHeading;
+    this.setPhysicalMode('ParkedDynamic');
+    this.composeKinematicPose();
+  }
+
+  /** Convert the current composed parked pose into an ordinary Arcade-dynamic base. */
+  public releaseParkedDynamic(): void {
+    if (this.dynamicsState.physicalMode !== 'ParkedDynamic') return;
+    // A parked vehicle has no route owner. Once its bay is released, clear the
+    // kinematic authority as well as the parking anchor so the normal Arcade
+    // integrator can carry the remaining impact velocity forward.
+    this.setTrafficAuthority(false);
+  }
+
+  public setImpactRejoinAllowed(allowed: boolean): void {
+    this.dynamicsState.rejoinAllowed = allowed;
   }
 
   /**
@@ -200,7 +277,7 @@ export class VehicleMovementComponent extends Component {
   private lastBraking = false;
 
   /** Restore all integrator and control state for scene-local vehicle reuse. */
-  public reset(heading: number): void {
+  public reset(heading: number, incrementPoolGeneration = false): void {
     this.headingAngle = Phaser.Math.Angle.Wrap(heading);
     this.signedSpeed = 0;
     this.throttle = 0;
@@ -213,6 +290,11 @@ export class VehicleMovementComponent extends Component {
     this.skiddingFlag = false;
     this.pendingCrashSpeed = 0;
     this.lastBraking = false;
+    resetVehicleDynamicsState(
+      this.dynamicsState,
+      this.headingAngle,
+      incrementPoolGeneration,
+    );
     const body = this.entity.sprite.body as Phaser.Physics.Arcade.Body;
     body.setImmovable(false);
     body.setVelocity(0, 0);
@@ -238,9 +320,11 @@ export class VehicleMovementComponent extends Component {
     this.headingAngle = Phaser.Math.Angle.Wrap(heading);
     this.signedSpeed = speed;
     this.steeringAngleValue = 0;
+    this.dynamicsState.controlVelocity.x = Math.cos(this.headingAngle) * speed;
+    this.dynamicsState.controlVelocity.y = Math.sin(this.headingAngle) * speed;
     const body = this.entity.sprite.body as Phaser.Physics.Arcade.Body;
     body.setVelocity(0, 0);
-    this.entity.sprite.rotation = this.headingAngle + Math.PI / 2;
+    this.entity.sprite.rotation = this.collisionHeading + Math.PI / 2;
   }
 
   /** Synchronize a centrally simulated traffic pose into the render and collision body. */
@@ -259,13 +343,162 @@ export class VehicleMovementComponent extends Component {
     this.steeringAngleValue = steeringAngle;
     this.lastBraking = braking;
     this.skiddingFlag = false;
-    const sprite = this.entity.sprite;
-    sprite.setPosition(x, y);
-    sprite.rotation = this.headingAngle + Math.PI / 2;
-    const body = sprite.body as Phaser.Physics.Arcade.Body;
-    body.reset(x, y);
-    body.setImmovable(true);
-    body.setVelocity(0, 0);
+    const dynamics = this.dynamicsState;
+    dynamics.basePoseX = x;
+    dynamics.basePoseY = y;
+    dynamics.baseHeading = this.headingAngle;
+    dynamics.hasBasePose = true;
+    dynamics.controlVelocity.x = Math.cos(this.headingAngle) * speed;
+    dynamics.controlVelocity.y = Math.sin(this.headingAngle) * speed;
+    if (dynamics.physicalMode !== 'ParkedDynamic') {
+      this.setPhysicalMode('TrafficKinematicWithImpact');
+    }
+    this.composeKinematicPose();
+  }
+
+  /**
+   * Synchronize control speed with Arcade's post-world velocity. This removes
+   * only motion lost to solid world geometry; vehicle contacts never use Arcade.
+   */
+  public syncArcadeWorldVelocity(): void {
+    const dynamics = this.dynamicsState;
+    if (this.isKinematicMode(dynamics.physicalMode) || dynamics.physicalMode === 'Disabled') {
+      return;
+    }
+    const body = this.entity.sprite.body as Phaser.Physics.Arcade.Body;
+    const blocked = body.blocked.left || body.blocked.right || body.blocked.up || body.blocked.down;
+    if (blocked) {
+      const controlX = body.velocity.x - dynamics.externalVelocity.x;
+      const controlY = body.velocity.y - dynamics.externalVelocity.y;
+      this.signedSpeed = Phaser.Math.Clamp(
+        controlX * Math.cos(this.headingAngle) + controlY * Math.sin(this.headingAngle),
+        -Math.min(VEHICLE.REVERSE_SPEED, this.effectiveMaxSpeed),
+        this.effectiveMaxSpeed,
+      );
+      dynamics.controlVelocity.x = Math.cos(this.headingAngle) * this.signedSpeed;
+      dynamics.controlVelocity.y = Math.sin(this.headingAngle) * this.signedSpeed;
+    }
+  }
+
+  /** Store the solver's post-contact total velocity as collision-owned delta velocity. */
+  public setResolvedTotalVelocity(x: number, y: number, angularVelocity: number): void {
+    const dynamics = this.dynamicsState;
+    dynamics.externalVelocity.x = x - dynamics.controlVelocity.x;
+    dynamics.externalVelocity.y = y - dynamics.controlVelocity.y;
+    dynamics.angularVelocity = Phaser.Math.Clamp(
+      angularVelocity,
+      -this.def.physics.maximumAngularVelocity,
+      this.def.physics.maximumAngularVelocity,
+    );
+    if (!this.isKinematicMode(dynamics.physicalMode) && dynamics.physicalMode !== 'Disabled') {
+      const body = this.entity.sprite.body as Phaser.Physics.Arcade.Body;
+      body.setVelocity(x, y);
+    }
+  }
+
+  /** Enter the deterministic response state without changing control or route authority. */
+  public beginImpact(now: number, otherVehicleId: number, pairHandle: number): void {
+    const dynamics = this.dynamicsState;
+    dynamics.impactState = 'ImpactResponse';
+    dynamics.impactTimer = 0;
+    dynamics.recoveryTimer = 0;
+    dynamics.recoveryDuration = 0;
+    dynamics.impactRecoveryFailureReported = false;
+    dynamics.lastCollisionAt = now;
+    dynamics.lastContactVehicleId = otherVehicleId;
+    dynamics.lastPairHandle = pairHandle;
+    dynamics.pairCooldownUntil = now + VEHICLE_COLLISION.PAIR_COOLDOWN_MS;
+    dynamics.pendingCollisionEvent = true;
+  }
+
+  /**
+   * Advance collision-owned damping and yaw exactly once per physics step.
+   * Kinematic callers pass the world-clamped displacement for this same step.
+   */
+  public integrateImpactStep(
+    deltaSeconds: number,
+    appliedDisplacementX: number,
+    appliedDisplacementY: number,
+  ): void {
+    const dynamics = this.dynamicsState;
+    const dt = Math.max(0, Math.min(deltaSeconds, 0.05));
+    if (this.isKinematicMode(dynamics.physicalMode)) {
+      dynamics.impactOffset.x += appliedDisplacementX;
+      dynamics.impactOffset.y += appliedDisplacementY;
+    }
+    dynamics.impactHeadingOffset = Phaser.Math.Angle.Wrap(
+      dynamics.impactHeadingOffset + dynamics.angularVelocity * dt,
+    );
+    const heading = this.collisionHeading;
+    const rightX = -Math.sin(heading);
+    const rightY = Math.cos(heading);
+    const lateral =
+      dynamics.externalVelocity.x * rightX + dynamics.externalVelocity.y * rightY;
+    dynamics.lateralVelocity = lateral;
+    const rollingDamping = Math.exp(-this.def.physics.rollingResistance * dt);
+    dynamics.externalVelocity.x *= rollingDamping;
+    dynamics.externalVelocity.y *= rollingDamping;
+    const lateralDamping = 1 - Math.exp(-this.def.physics.lateralDamping * this.def.physics.lateralGrip * dt);
+    dynamics.externalVelocity.x -= rightX * lateral * lateralDamping;
+    dynamics.externalVelocity.y -= rightY * lateral * lateralDamping;
+    dynamics.angularVelocity *= Math.exp(-this.def.physics.angularDamping * dt);
+    dynamics.impactTimer += dt;
+    if (dynamics.impactState !== 'None') dynamics.recoveryDuration += dt;
+
+    const externalSpeed = Math.hypot(
+      dynamics.externalVelocity.x,
+      dynamics.externalVelocity.y,
+    );
+    if (
+      dynamics.impactState === 'ImpactResponse' &&
+      dynamics.impactTimer >= VEHICLE_COLLISION.IMPACT_RESPONSE_SECONDS
+    ) {
+      dynamics.impactState = 'ImpactRecovering';
+      dynamics.recoveryTimer = 0;
+    } else if (dynamics.impactState === 'ImpactRecovering') {
+      dynamics.recoveryTimer += dt;
+      if (
+        externalSpeed <= VEHICLE_COLLISION.IMPACT_SETTLE_SPEED &&
+        Math.abs(dynamics.angularVelocity) <= VEHICLE_COLLISION.IMPACT_SETTLE_ANGULAR_SPEED
+      ) {
+        if (dynamics.physicalMode === 'TrafficKinematicWithImpact') {
+          dynamics.impactState = 'RejoiningLane';
+        } else {
+          dynamics.impactState = 'None';
+        }
+      }
+    }
+
+    if (dynamics.impactState === 'RejoiningLane' && dynamics.rejoinAllowed) {
+      const positionFactor = Math.exp(-VEHICLE_COLLISION.LANE_REJOIN_RATE * dt);
+      const headingFactor = Math.exp(-VEHICLE_COLLISION.HEADING_REJOIN_RATE * dt);
+      dynamics.impactOffset.x *= positionFactor;
+      dynamics.impactOffset.y *= positionFactor;
+      dynamics.impactHeadingOffset *= headingFactor;
+      if (
+        Math.hypot(dynamics.impactOffset.x, dynamics.impactOffset.y) < 0.45 &&
+        Math.abs(dynamics.impactHeadingOffset) < 0.008
+      ) {
+        dynamics.impactOffset.x = 0;
+        dynamics.impactOffset.y = 0;
+        dynamics.impactHeadingOffset = 0;
+        dynamics.externalVelocity.x = 0;
+        dynamics.externalVelocity.y = 0;
+        dynamics.angularVelocity = 0;
+        dynamics.impactState = 'None';
+        dynamics.impactRecoveryFailureReported = false;
+      }
+    } else if (
+      dynamics.impactState === 'None' &&
+      dynamics.physicalMode !== 'ParkedDynamic'
+    ) {
+      dynamics.impactHeadingOffset *= Math.exp(-VEHICLE_COLLISION.HEADING_REJOIN_RATE * dt);
+      if (Math.abs(dynamics.impactHeadingOffset) < 0.001) dynamics.impactHeadingOffset = 0;
+    }
+
+    if (this.isKinematicMode(dynamics.physicalMode)) {
+      this.composeKinematicPose();
+    }
   }
 
   /**
@@ -285,7 +518,7 @@ export class VehicleMovementComponent extends Component {
       return;
     }
 
-    this.detectCrash(body);
+    this.detectWorldCrash(body);
 
     const throttleInput = this.controlsEnabled ? this.throttle : 0;
     const steerInput = this.controlsEnabled ? this.steer : 0;
@@ -338,13 +571,16 @@ export class VehicleMovementComponent extends Component {
       (Math.abs(steerInput) >= SKID_STEER_THRESHOLD && speedRatio >= SKID_SPEED_RATIO) ||
       (this.braking && speedRatio >= BRAKE_SKID_SPEED_RATIO);
 
+    const dynamics = this.dynamicsState;
+    dynamics.controlVelocity.x = Math.cos(this.headingAngle) * this.signedSpeed;
+    dynamics.controlVelocity.y = Math.sin(this.headingAngle) * this.signedSpeed;
     body.setVelocity(
-      Math.cos(this.headingAngle) * this.signedSpeed,
-      Math.sin(this.headingAngle) * this.signedSpeed,
+      dynamics.controlVelocity.x + dynamics.externalVelocity.x,
+      dynamics.controlVelocity.y + dynamics.externalVelocity.y,
     );
 
     // Textures face up (toward -Y) at rotation 0, so add a quarter turn.
-    this.entity.sprite.rotation = this.headingAngle + Math.PI / 2;
+    this.entity.sprite.rotation = this.collisionHeading + Math.PI / 2;
 
     // Brake lights: an explicit brake, or throttle opposing forward motion.
     this.lastBraking = this.braking || (throttleInput < 0 && this.signedSpeed > 12);
@@ -359,8 +595,11 @@ export class VehicleMovementComponent extends Component {
    * a blocked/touching edge means the car slammed into something.
    * @param body The vehicle's Arcade body (post-physics state).
    */
-  private detectCrash(body: Phaser.Physics.Arcade.Body): void {
-    const expected = Math.abs(this.signedSpeed);
+  private detectWorldCrash(body: Phaser.Physics.Arcade.Body): void {
+    const expected = Math.hypot(
+      this.dynamicsState.controlVelocity.x + this.dynamicsState.externalVelocity.x,
+      this.dynamicsState.controlVelocity.y + this.dynamicsState.externalVelocity.y,
+    );
     if (expected < VEHICLE.CRASH_MIN_SPEED) {
       return;
     }
@@ -374,9 +613,65 @@ export class VehicleMovementComponent extends Component {
     const lost = expected - actual;
     if (lost >= VEHICLE.CRASH_MIN_SPEED) {
       this.pendingCrashSpeed = lost;
-      // Absorb the impact: rebound slightly instead of grinding at full power.
-      this.signedSpeed *= -0.18;
     }
+  }
+
+  /** Apply bounded positional correction without clearing dynamic Arcade velocity. */
+  public translateDynamic(dx: number, dy: number): void {
+    if (dx === 0 && dy === 0) return;
+    const body = this.entity.sprite.body as Phaser.Physics.Arcade.Body;
+    this.entity.sprite.x += dx;
+    this.entity.sprite.y += dy;
+    body.position.x += dx;
+    body.position.y += dy;
+    body.prev.x += dx;
+    body.prev.y += dy;
+  }
+
+  /** Apply route-relative correction to a kinematic impact layer. */
+  public translateImpactOffset(dx: number, dy: number): void {
+    if (!this.isKinematicMode(this.dynamicsState.physicalMode) || (dx === 0 && dy === 0)) {
+      return;
+    }
+    this.dynamicsState.impactOffset.x += dx;
+    this.dynamicsState.impactOffset.y += dy;
+    this.composeKinematicPose();
+  }
+
+  private composeKinematicPose(): void {
+    const dynamics = this.dynamicsState;
+    if (!dynamics.hasBasePose) return;
+    const x = dynamics.basePoseX + dynamics.impactOffset.x;
+    const y = dynamics.basePoseY + dynamics.impactOffset.y;
+    const sprite = this.entity.sprite;
+    sprite.setPosition(x, y);
+    sprite.rotation = dynamics.baseHeading + dynamics.impactHeadingOffset + Math.PI / 2;
+    const body = sprite.body as Phaser.Physics.Arcade.Body;
+    body.reset(x, y);
+    body.setImmovable(true);
+    body.setVelocity(0, 0);
+  }
+
+  private releaseKinematicPose(nextMode: VehiclePhysicalMode): void {
+    const dynamics = this.dynamicsState;
+    this.headingAngle = this.collisionHeading;
+    dynamics.basePoseX = this.entity.sprite.x;
+    dynamics.basePoseY = this.entity.sprite.y;
+    dynamics.baseHeading = this.headingAngle;
+    dynamics.hasBasePose = false;
+    dynamics.impactOffset.x = 0;
+    dynamics.impactOffset.y = 0;
+    dynamics.impactHeadingOffset = 0;
+    this.setPhysicalMode(nextMode);
+    const body = this.entity.sprite.body as Phaser.Physics.Arcade.Body;
+    body.setVelocity(
+      dynamics.controlVelocity.x + dynamics.externalVelocity.x,
+      dynamics.controlVelocity.y + dynamics.externalVelocity.y,
+    );
+  }
+
+  private isKinematicMode(mode: VehiclePhysicalMode): boolean {
+    return mode === 'TrafficKinematicWithImpact' || mode === 'ParkedDynamic';
   }
 
   /**

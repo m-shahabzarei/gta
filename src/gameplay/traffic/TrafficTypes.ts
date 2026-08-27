@@ -5,6 +5,12 @@ import type {
   RoadClass,
   VehicleKind,
 } from '@/gameplay/types';
+import type {
+  VehicleCollisionSolverSource,
+  VehicleCollisionType,
+  VehicleImpactState,
+  VehiclePhysicalMode,
+} from '@/gameplay/vehicle/VehicleDynamicsTypes';
 
 export type TrafficDriverState =
   | 'Spawning'
@@ -17,6 +23,9 @@ export type TrafficDriverState =
   | 'Waiting'
   | 'Yielding'
   | 'Avoiding Obstacle'
+  | 'ImpactResponse'
+  | 'ImpactRecovering'
+  | 'RejoiningLane'
   | 'Reversing'
   | 'Recovering'
   | 'Parking'
@@ -235,6 +244,34 @@ export interface TrafficDriverDebug {
   readonly routeTailKind: TrafficLane['kind'] | null;
   readonly routeTailHasOutgoing: boolean;
   readonly predictedPath: readonly Vector2[];
+  readonly physics: TrafficVehiclePhysicsDebug;
+}
+
+export interface TrafficVehiclePhysicsDebug {
+  readonly targetVehicleId: number | null;
+  readonly mass: number;
+  readonly restitution: number;
+  readonly friction: number;
+  readonly previousVelocity: Vector2;
+  readonly currentVelocity: Vector2;
+  readonly relativeVelocity: Vector2;
+  readonly collisionNormal: Vector2;
+  readonly impulseVector: Vector2;
+  readonly contactPoint: Vector2;
+  readonly impactEnergy: number;
+  readonly damage: number;
+  readonly angularVelocity: number;
+  readonly collisionType: VehicleCollisionType | null;
+  readonly impactState: VehicleImpactState;
+  readonly physicalMode: VehiclePhysicalMode;
+  readonly laneOffset: Vector2;
+  readonly timeSinceImpactSeconds: number | null;
+  readonly solverSource: VehicleCollisionSolverSource | null;
+  readonly player: boolean;
+  readonly traffic: boolean;
+  readonly parked: boolean;
+  readonly emergency: boolean;
+  readonly missionOwned: boolean;
 }
 
 export interface TrafficRuntimeStats {

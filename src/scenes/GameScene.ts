@@ -46,12 +46,18 @@ export class GameScene extends Phaser.Scene {
   /** Tile-layer colliders recreated whenever WorldManager streams a new chunk set. */
   private readonly worldColliders: Phaser.Physics.Arcade.Collider[] = [];
 
+  /** Fixed group interactions removed before scene-owned groups are detached. */
+  private readonly interactionColliders: Phaser.Physics.Arcade.Collider[] = [];
+
   constructor() {
     super({ key: SceneKeys.Game });
   }
 
   /** Build the world, attach systems, wire physics and start the flow. */
   public create(): void {
+    // Register first so colliders are destroyed before BaseSceneManager shutdown
+    // listeners tear down the groups referenced by those colliders.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.onShutdown, this);
     this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     clearMapState();
 
@@ -65,7 +71,6 @@ export class GameScene extends Phaser.Scene {
     this.wireLifecycleEvents();
     this.registerHotkeys();
 
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.onShutdown, this);
   }
 
   /**
@@ -153,9 +158,9 @@ export class GameScene extends Phaser.Scene {
     // colliders when WorldManager changes the active chunk window.
     this.rebuildWorldColliders(world, combat, vehicles, peds, wanted, cityLife, player);
 
-    // Vehicles shove one another.
-    p.collider(vehicleGroup, vehicleGroup);
-    p.collider(vehicleGroup, barrierGroup);
+    // Vehicle pairs are resolved exactly once by VehicleSystem's swept-OBB runtime.
+    // Arcade remains authoritative only for vehicle/world and vehicle/barrier contacts.
+    this.interactionColliders.push(p.collider(vehicleGroup, barrierGroup));
 
     // Bullets damage anyone hostile (including ambient life and the chopper).
     const onHit: Pair = (b, target) =>
@@ -163,12 +168,14 @@ export class GameScene extends Phaser.Scene {
         b as unknown as Phaser.GameObjects.GameObject,
         target as unknown as Phaser.GameObjects.GameObject,
       );
-    p.overlap(bulletGroup, pedGroup, onHit);
-    p.overlap(bulletGroup, policeGroup, onHit);
-    p.overlap(bulletGroup, lifeGroup, onHit);
-    p.overlap(bulletGroup, vehicleGroup, onHit);
-    p.overlap(bulletGroup, airGroup, onHit);
-    if (playerSprite) p.overlap(bulletGroup, playerSprite, onHit);
+    this.interactionColliders.push(
+      p.overlap(bulletGroup, pedGroup, onHit),
+      p.overlap(bulletGroup, policeGroup, onHit),
+      p.overlap(bulletGroup, lifeGroup, onHit),
+      p.overlap(bulletGroup, vehicleGroup, onHit),
+      p.overlap(bulletGroup, airGroup, onHit),
+    );
+    if (playerSprite) this.interactionColliders.push(p.overlap(bulletGroup, playerSprite, onHit));
 
     // Fast vehicles run people down (vehicle is always the first argument).
     const onRunOver: Pair = (veh, victim) =>
@@ -176,14 +183,18 @@ export class GameScene extends Phaser.Scene {
         veh as unknown as Phaser.GameObjects.GameObject,
         victim as unknown as Phaser.GameObjects.GameObject,
       );
-    p.overlap(vehicleGroup, pedGroup, onRunOver);
-    p.overlap(vehicleGroup, policeGroup, onRunOver);
-    p.overlap(vehicleGroup, lifeGroup, onRunOver);
-    if (playerSprite) p.overlap(vehicleGroup, playerSprite, onRunOver);
+    this.interactionColliders.push(
+      p.overlap(vehicleGroup, pedGroup, onRunOver),
+      p.overlap(vehicleGroup, policeGroup, onRunOver),
+      p.overlap(vehicleGroup, lifeGroup, onRunOver),
+    );
+    if (playerSprite) this.interactionColliders.push(p.overlap(vehicleGroup, playerSprite, onRunOver));
 
     // Spike strips shred the tires of any vehicle that rolls over them.
-    p.overlap(vehicleGroup, spikeGroup, ((veh) =>
-      wanted.handleSpikeHit(veh as unknown as Phaser.GameObjects.GameObject)) as Pair);
+    this.interactionColliders.push(
+      p.overlap(vehicleGroup, spikeGroup, ((veh) =>
+        wanted.handleSpikeHit(veh as unknown as Phaser.GameObjects.GameObject)) as Pair),
+    );
   }
 
   /** Recreate only the colliders that target streamed terrain chunks. */
@@ -234,6 +245,11 @@ export class GameScene extends Phaser.Scene {
   private clearWorldColliders(): void {
     for (const collider of this.worldColliders) collider.destroy();
     this.worldColliders.length = 0;
+  }
+
+  private clearInteractionColliders(): void {
+    for (const collider of this.interactionColliders) collider.destroy();
+    this.interactionColliders.length = 0;
   }
 
   /** Begin the looping city music, best-effort (no-op without audio). */
@@ -338,8 +354,9 @@ export class GameScene extends Phaser.Scene {
 
   /** Detach bus subscriptions when the scene shuts down. */
   private onShutdown(): void {
+    this.clearInteractionColliders();
+    this.clearWorldColliders();
     for (const unsub of this.unsubs) unsub();
     this.unsubs.length = 0;
-    this.clearWorldColliders();
   }
 }

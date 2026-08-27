@@ -21,6 +21,7 @@
     "validate:transit": "node scripts/run-transit-validation.mjs",
     "validate:police": "node scripts/run-police-validation.mjs",
     "validate:gameplay": "node scripts/run-gameplay-systems-validation.mjs",
+    "validate:vehicle-collisions": "node scripts/run-vehicle-collision-validation.mjs",
     "validate:highways": "node scripts/run-highway-validation.mjs",
     "validate:architecture": "node scripts/run-architecture-validation.mjs",
     "validate:major-buildings": "node scripts/run-major-buildings-validation.mjs",

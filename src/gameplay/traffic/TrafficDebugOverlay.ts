@@ -6,6 +6,7 @@ import type {
   TrafficRuntimeStats,
   TrafficValidationReport,
 } from './TrafficTypes';
+import type { VehicleCollisionTelemetrySnapshot } from '@/gameplay/vehicle';
 
 export interface TrafficDebugSnapshot {
   readonly phase: string;
@@ -16,6 +17,7 @@ export interface TrafficDebugSnapshot {
   readonly stats: TrafficRuntimeStats;
   readonly validation: TrafficValidationReport;
   readonly selected: TrafficDriverDebug | null;
+  readonly collisions: VehicleCollisionTelemetrySnapshot | null;
 }
 
 export interface TrafficDebugSource {
@@ -106,6 +108,8 @@ export class TrafficDebugOverlay {
     const stats = snapshot.stats;
     const collision = selected?.collisionPrediction ?? null;
     const recovery = selected?.recovery;
+    const physics = selected?.physics;
+    const collisions = snapshot.collisions;
     this.element.textContent = [
       'TRAFFIC SIMULATION',
       `SIGNAL ${snapshot.phase}`,
@@ -122,6 +126,12 @@ export class TrafficDebugOverlay {
       `RESERVE  +${stats.reservationsGranted}  -${stats.reservationsDenied}   E-BRAKE ${stats.emergencyBrakes}`,
       `ROUTES   H ${stats.routeCacheHits}  M ${stats.routeCacheMisses}   SPAWN REJECT ${stats.safeSpawnRejects}`,
       `VALIDATE ${snapshot.validation.passed ? 'PASS' : `FAIL ${snapshot.validation.failures.length}`}`,
+      collisions
+        ? `IMPACTS  ${collisions.totalVehicleCollisions}  P95 ${fixed(collisions.p95RelativeSpeed)} px/s  J95 ${fixed(collisions.p95Impulse)}  CPU ${fixed(collisions.collisionCpuMs)} ms`
+        : '',
+      collisions
+        ? `CONTACTS N ${collisions.contactsByLod.near} M ${collisions.contactsByLod.medium}  CLAMP ${collisions.worldClampedImpacts}  DUP ${collisions.duplicatePairSuppressions}  COOL ${collisions.collisionCooldownSuppressions}`
+        : '',
       '',
       selected
         ? `VEHICLE ${selected.vehicleId}  ${selected.personality.toUpperCase()}`
@@ -147,6 +157,24 @@ export class TrafficDebugOverlay {
       selected ? `RESERVE  ${selected.reservationId ?? 'none'}` : '',
       selected
         ? `PATH     ${selected.predictedPath.length} samples  ${selected.route.length} lanes`
+        : '',
+      physics
+        ? `PHYSICS  ${physics.physicalMode}  M ${fixed(physics.mass)}  E ${fixed(physics.restitution)}  MU ${fixed(physics.friction)}`
+        : '',
+      physics
+        ? `IMPACT   ${physics.impactState}  ${physics.collisionType ?? 'none'}  TARGET ${physics.targetVehicleId ?? 'none'}  SOURCE ${physics.solverSource ?? 'none'}`
+        : '',
+      physics
+        ? `VELOCITY ${vector(physics.previousVelocity)} -> ${vector(physics.currentVelocity)}  REL ${vector(physics.relativeVelocity)}`
+        : '',
+      physics
+        ? `NORMAL   ${vector(physics.collisionNormal)}  IMPULSE ${vector(physics.impulseVector)}  YAW ${fixed(physics.angularVelocity)}`
+        : '',
+      physics
+        ? `CONTACT  ${vector(physics.contactPoint)}  ENERGY ${fixed(physics.impactEnergy)}  DAMAGE ${fixed(physics.damage)}`
+        : '',
+      physics
+        ? `OFFSET   ${vector(physics.laneOffset)}  SINCE ${physics.timeSinceImpactSeconds === null ? 'never' : `${physics.timeSinceImpactSeconds.toFixed(1)}s`}  OWNER ${ownership(physics)}`
         : '',
     ]
       .filter((line) => line !== '')
@@ -187,11 +215,34 @@ export class TrafficDebugOverlay {
         collision.position.y + 8,
       );
     }
+    const physics = selected?.physics;
+    if (physics?.solverSource) {
+      graphics.lineStyle(2, 0x38bdf8, 1);
+      graphics.strokeCircle(physics.contactPoint.x, physics.contactPoint.y, 7);
+      graphics.lineBetween(
+        physics.contactPoint.x,
+        physics.contactPoint.y,
+        physics.contactPoint.x + physics.collisionNormal.x * 34,
+        physics.contactPoint.y + physics.collisionNormal.y * 34,
+      );
+    }
   }
 }
 
 function fixed(value: number): string {
   return value.toFixed(1).padStart(6);
+}
+
+function vector(value: { readonly x: number; readonly y: number }): string {
+  return `${fixed(value.x)},${fixed(value.y)}`;
+}
+
+function ownership(physics: TrafficDriverDebug['physics']): string {
+  if (physics.player) return 'player';
+  if (physics.missionOwned) return 'mission';
+  if (physics.parked) return 'parked';
+  if (physics.emergency) return 'emergency';
+  return physics.traffic ? 'traffic' : 'dynamic';
 }
 
 function formatTtc(value: number | null): string {

@@ -14,8 +14,8 @@ const STREAM_INTERVAL_MS = 520;
 const MIN_PLAYER_DISTANCE = 380;
 const MAX_PLAYER_DISTANCE = 1080;
 const DESPAWN_DISTANCE = 1480;
-/** Any displacement beyond sub-pixel physics rounding invalidates a static bay. */
-const MAX_PARKED_POSITION_DRIFT = 1;
+/** A real impact may displace a parked car; beyond this offset the bay is released. */
+const MAX_PARKED_POSITION_DRIFT = 3;
 
 interface ParkedRecord {
   readonly vehicle: Vehicle;
@@ -88,6 +88,7 @@ export class ParkedVehicleManager {
     vehicle.sprite.setData('parkingSpaceId', space.id);
     vehicle.movement.stopImmediately();
     vehicle.movement.setTrafficAuthority(true);
+    vehicle.movement.setParkedDynamic(space.position.x, space.position.y, space.heading);
     this.records.set(vehicle.id, { vehicle, space });
     this.occupiedSpaceIds.add(space.id);
     this.recordLifecycle('spawn-accepted', vehicle.id, 'parked', null);
@@ -121,18 +122,22 @@ export class ParkedVehicleManager {
       }
       const dx = player ? vehicle.sprite.x - player.x : 0;
       const dy = player ? vehicle.sprite.y - player.y : 0;
-      if (
-        !vehicle.sprite.active ||
-        vehicle.isDestroyed ||
-        !this.isAtLegalParkingPose(record) ||
-        (player && dx * dx + dy * dy > maxSq)
-      ) {
-        this.release(vehicleId, vehicle.sprite.active && !vehicle.isDestroyed);
+      if (!vehicle.sprite.active || vehicle.isDestroyed) {
+        this.release(vehicleId, false);
+        continue;
+      }
+      if (!this.isAtLegalParkingPose(record)) {
+        // The vehicle remains a live world entity; only bay ownership is released.
+        this.release(vehicleId, false);
+        continue;
+      }
+      if (player && dx * dx + dy * dy > maxSq) {
+        this.release(vehicleId, true);
       }
     }
   }
 
-  /** A parked vehicle is a static curb prop, never a movable traffic obstacle. */
+  /** A parked vehicle keeps bay ownership only while its impact offset remains in the bay. */
   private isAtLegalParkingPose(record: ParkedRecord): boolean {
     const { vehicle, space } = record;
     const dx = vehicle.sprite.x - space.position.x;
@@ -142,7 +147,7 @@ export class ParkedVehicleManager {
     }
     return this.network.vehicleFootprintHasTravelClearance(
       vehicle.position,
-      vehicle.movement.heading,
+      vehicle.movement.collisionHeading,
       vehicle.def.width,
       vehicle.def.height,
     );
@@ -155,6 +160,7 @@ export class ParkedVehicleManager {
     this.occupiedSpaceIds.delete(record.space.id);
     record.vehicle.sprite.data?.remove('parked');
     record.vehicle.sprite.data?.remove('parkingSpaceId');
+    if (!removeVehicle) record.vehicle.movement.releaseParkedDynamic();
     if (removeVehicle) {
       this.recordLifecycle('despawn', record.vehicle.id, 'parked-prune', 'Parking');
       this.vehicles.removeVehicle(record.vehicle);

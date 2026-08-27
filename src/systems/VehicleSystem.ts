@@ -22,6 +22,10 @@ import { getPlayerRef, type VehicleKind } from '@/gameplay/types';
 import { EntityCategory, type EntityManager } from '@/systems/EntityManager';
 import type { TrafficAIComponent } from '@/entities/components';
 import { EventKeys } from '@/config/EventKeys';
+import {
+  VehicleCollisionRuntime,
+  type VehicleCollisionTelemetrySnapshot,
+} from '@/gameplay/vehicle';
 
 /** Delay (ms) after a vehicle explodes before its wreck is removed. */
 const WRECK_REMOVE_DELAY_MS = 5000;
@@ -34,6 +38,21 @@ const DESPAWN_RADIUS_SQ = DESPAWN_RADIUS * DESPAWN_RADIUS;
 const MAX_VEHICLE_REMOVALS_PER_FRAME = 6;
 const VEHICLE_POOL_LIMIT = 160;
 
+/** Ownership that may only be retired by its dedicated gameplay system. */
+function hasProtectedVehicleOwnership(vehicle: Vehicle): boolean {
+  const sprite = vehicle.sprite;
+  return (
+    vehicle.def.isEmergency ||
+    sprite.getData('policeResponseActive') === true ||
+    sprite.getData('persistentTransitService') === true ||
+    sprite.getData('missionVehicle') === true ||
+    sprite.getData('missionId') !== undefined ||
+    sprite.getData('missionOwnerId') !== undefined ||
+    typeof sprite.getData('snappBookingId') === 'string' ||
+    sprite.getData('intercityService') === true
+  );
+}
+
 export type VehiclePoolClass = 'standard' | 'traffic';
 export type PersistentTransitServiceKind = 'bus' | 'taxi';
 
@@ -43,6 +62,7 @@ export class VehicleSystem extends BaseSceneManager {
 
   /** Live registry of every vehicle this system owns. */
   private readonly registry: Vehicle[] = [];
+  private readonly collisionRuntime = new VehicleCollisionRuntime(() => this.registry);
   private readonly vehiclePool = new Map<string, Vehicle[]>();
   private pooledVehicleCount = 0;
 
@@ -65,6 +85,15 @@ export class VehicleSystem extends BaseSceneManager {
   /** Iterate live registry without allocating a snapshot. */
   public forEachVehicle(visitor: (vehicle: Vehicle) => void): void {
     for (const vehicle of this.registry) visitor(vehicle);
+  }
+
+  /** Read-only custom collision telemetry for traffic aggregation and debug tools. */
+  public collisionTelemetrySnapshot(): VehicleCollisionTelemetrySnapshot {
+    return this.collisionRuntime.snapshot();
+  }
+
+  public recordImpactRecovery(durationSeconds: number, failed: boolean): void {
+    this.collisionRuntime.recordRecovery(durationSeconds, failed);
   }
 
   /**
@@ -199,6 +228,7 @@ export class VehicleSystem extends BaseSceneManager {
     if (index === -1) {
       return;
     }
+    this.collisionRuntime.forgetVehicle(vehicle);
     const last = this.registry.pop();
     if (last && index < this.registry.length) this.registry[index] = last;
     this.wreckTimers.delete(vehicle.id);
@@ -225,6 +255,8 @@ export class VehicleSystem extends BaseSceneManager {
    * @param delta Frame delta in ms.
    */
   public update(time: number, delta: number): void {
+    // This is the pre-Arcade pose capture. Resolution occurs only at WORLD_STEP.
+    this.collisionRuntime.capturePreviousPoses();
     const playerPos = getPlayerRef()?.playerPosition ?? null;
 
     const stale: Vehicle[] = [];
@@ -243,7 +275,12 @@ export class VehicleSystem extends BaseSceneManager {
       // Scheduled buses and taxis own route, passenger, and paid-trip state.
       // TrafficSystem already applies its regular distance-based driver LOD;
       // generic vehicle cleanup must not erase that service state.
-      if (vehicle.sprite.getData('persistentTransitService') === true) continue;
+      if (
+        hasProtectedVehicleOwnership(vehicle) ||
+        vehicle.movement.dynamics.impactState !== 'None'
+      ) {
+        continue;
+      }
 
       if (playerPos && !vehicle.isPlayerDriven) {
         const dx = vehicle.sprite.x - playerPos.x;
@@ -267,10 +304,12 @@ export class VehicleSystem extends BaseSceneManager {
    */
   protected override onAttach(scene: Phaser.Scene): void {
     this.vehicleGroup = scene.physics.add.group();
+    this.collisionRuntime.attach(scene);
   }
 
   /** Destroy every registered vehicle and clear scene-scoped state. */
   protected override onDetach(_scene: Phaser.Scene): void {
+    this.collisionRuntime.detach();
     for (const vehicle of this.registry) {
       this.resolveEntityManager()?.unregister(vehicle);
       vehicle.destroy();

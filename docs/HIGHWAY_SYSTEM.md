@@ -120,6 +120,16 @@ Drivers:
 - never use reverse recovery on any highway-owned component;
 - spawn from a cached lane pose with forward clearance and overlap checks.
 
+Vehicle impacts do not change that authority. The shared `VehicleCollisionRuntime`
+temporarily adds external velocity, lateral motion and bounded yaw to a highway
+vehicle, while `TrafficDriver` preserves the directed lane, route destination and
+intersection state. Rejoining is gradual and world-validated; if the displaced
+vehicle cannot safely return to its lane, the existing legal lane-change/replan
+recovery path is used. Timeout escalation is one-shot, so protected service
+vehicles continue bounded offset decay instead of re-entering a despawn loop.
+The highway reverse-recovery prohibition remains active
+through every impact state.
+
 The at-grade city node uses the same reservation and priority system as a normal
 city intersection. No special interchange behavior remains.
 
@@ -141,6 +151,9 @@ Near/medium art levels are streamed independently of the tilemap. Traffic and
 NPCs retain the existing near/medium/far/dormant simulation tiers, physics sleep,
 sprite culling and pooling. Guard rails use one sparse hidden tile mask with
 openings at service connectors; all other highway decoration has no collider.
+Full vehicle-pair narrow phase is limited to near/medium bodies through a bounded
+uniform-grid broadphase. Active impact recovery remains alive until energy settles
+so traffic cannot freeze when the player drives away.
 
 ## Rejection gates
 

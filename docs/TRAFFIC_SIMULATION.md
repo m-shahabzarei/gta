@@ -14,6 +14,14 @@ The runtime is split into eight responsibilities:
 - `ParkedVehicleManager`: legal curb-space ownership and parked-vehicle streaming.
 - `TrafficValidator`: runtime invariant monitoring.
 - `TrafficDebugOverlay`: developer-only F7 telemetry and predicted-path rendering.
+- `VehicleCollisionRuntime`: scene-scoped physical authority for vehicle pairs.
+
+Traffic authority and physical mobility are intentionally separate. `TrafficDriver`
+owns route, lane progress, destination and intersection reservations. The collision
+runtime owns external velocity, impact offset and temporary yaw. A traffic vehicle
+can therefore remain route-controlled while receiving a bounded impulse. Parked
+vehicles use the same impact layer against a parking anchor and release their bay
+when displaced.
 
 `VehicleMovementComponent` remains the player vehicle integrator. Autonomous traffic gives it an authoritative interpolated pose, so entity update cadence and Arcade Physics cannot produce a second, competing traffic motion model.
 
@@ -50,6 +58,34 @@ The layers are independent:
 
 Each fixed step builds one persistent traffic spatial index. Drivers stream nearby candidates and lane-local followers from that index, so collision prediction is bounded by local density rather than total city population. Only vehicles inside the intersection approach distance submit reservation requests.
 
+## Vehicle collision timing and recovery
+
+`VehicleSystem` captures previous poses before the manager tick. Phaser Arcade
+performs the single world/tile integration, then emits `WORLD_STEP`; exactly one
+`VehicleCollisionRuntime.step()` runs there. It builds a reusable uniform grid,
+sorts generation-qualified pairs, performs swept OBB/SAT contact generation and
+resolves each pair at most once per fixed step. The Arcade vehicle self-collider is
+disabled, so the custom solver cannot be followed by an Arcade stop or a second
+damage event. Arcade remains active for world layers, bounds, barriers and
+pedestrian run-over overlaps.
+
+The solver uses `vB - vA`, an A-to-B normal, angular contact velocity, a bounded
+normal impulse, Coulomb friction, off-centre torque, angular damping and limited
+Baumgarte correction. Impact damage uses reduced-mass energy and a per-pair
+cooldown. Near and medium bodies receive full OBB response; far traffic retains
+only its lane trajectory and virtual traffic has no sprite/body.
+
+Traffic impact states are `ImpactResponse`, `ImpactRecovering` and
+`RejoiningLane`. During the first two states route progress is held while impact
+energy decays. Rejoin composes `routePose + impactOffset` and
+`routeHeading + impactHeadingOffset`, validates the world and nearby traffic, and
+then eases the offset back to zero. A blocked rejoin enters the existing legal
+recovery/replan path. A protected service vehicle records a single timeout and
+continues the same bounded offset decay/replan instead of re-enqueuing despawn
+every fixed step; highway-owned traffic never uses reverse recovery. Active
+impact bodies stay in the collision runtime even after leaving the ordinary
+medium-radius LOD ring, preventing a frozen displaced vehicle.
+
 Drivers cannot enter a connector without a reservation. A request is ineligible until its outgoing lane has enough space to clear the intersection.
 
 ## Streaming
@@ -75,6 +111,6 @@ Recovery escalates through wait, safe reverse, legal lane change, route recalcul
 
 ## Validation
 
-Run `npm run validate:traffic`. The deterministic suite simulates ten minutes and fails on wrong direction, lane departure, invalid spawn orientation, conflicting reservations, missing downstream capacity, intersection blocking, unexplained stops, or recovery timeout.
+Run `npm run validate:traffic`. The deterministic suite simulates ten minutes and fails on wrong direction, lane departure, invalid spawn orientation, conflicting reservations, missing downstream capacity, intersection blocking, unexplained stops, or recovery timeout. Run `node scripts/run-vehicle-collision-validation.mjs` for deterministic OBB, swept-contact, impulse, friction, torque, cooldown, chain, world-safety, damage and pool-reset scenarios.
 
-In a development build, press F7 for live state, lane, target lane, destination, speeds, steering, lane/heading error, predicted path, collision prediction, recovery, queue/reservation, and validation status. The overlay also reports traffic CPU, navigation CPU, steering CPU, collision CPU, simulated/virtual counts, average AI update frequency, scheduler load/deferred work, and frame time.
+In a development build, press F7 for live state, lane, target lane, destination, speeds, steering, lane/heading error, predicted path, collision prediction, recovery, queue/reservation, and validation status. The overlay also reports traffic CPU, navigation CPU, steering CPU, collision CPU, simulated/virtual counts, average AI update frequency, scheduler load/deferred work, and frame time. A selected vehicle additionally shows mass, current/previous velocity, relative velocity, collision normal, impulse, contact point, impact energy, damage, angular velocity, impact state, lane offset, solver source, ownership class and time since impact.

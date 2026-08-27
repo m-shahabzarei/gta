@@ -138,7 +138,7 @@ export class GameAudioSystem extends BaseManager {
     this.subscribe(EventKeys.WantedChanged, (p) => this.setSiren(p.level));
     this.subscribe(EventKeys.TireSkidChanged, (p) => this.setSkid(p.active));
     this.subscribe(EventKeys.VehicleCollision, (p) => {
-      if (this.canHear(p.x, p.y)) this.playCrash(p.intensity);
+      if (this.canHear(p.x, p.y)) this.playCrash(p.intensity, p.collisionType);
     });
     this.subscribe(EventKeys.HornSounded, (p) => this.playHorn(p.kind));
     this.subscribe(EventKeys.VehicleDoor, (p) => this.playDoor(p.open));
@@ -659,13 +659,16 @@ export class GameAudioSystem extends BaseManager {
   // ── Vehicle cues ─────────────────────────────────────────────────────────────
 
   /** Metallic crash: filtered noise + low thud, intensity-scaled. */
-  private playCrash(intensity: number): void {
+  private playCrash(
+    intensity: number,
+    collisionType: 'rear-end' | 'head-on' | 'side' | 'glancing' | 'world' = 'world',
+  ): void {
     if (!this.ctx) return;
     const g = clamp(intensity, 0.15, 1);
     this.playNoiseBurst({
       durationMs: 180,
       filterType: 'bandpass',
-      frequency: 2200,
+      frequency: collisionType === 'glancing' ? 2900 : collisionType === 'head-on' ? 1750 : 2200,
       q: 1.2,
       gain: 0.4 * g,
     });
@@ -678,7 +681,7 @@ export class GameAudioSystem extends BaseManager {
     });
     this.playTone({
       type: 'sine',
-      frequency: 140,
+      frequency: collisionType === 'head-on' ? 105 : collisionType === 'glancing' ? 175 : 140,
       endFrequency: 60,
       durationMs: 200,
       gain: 0.3 * g,

@@ -146,6 +146,11 @@ export class Vehicle extends Entity implements IDamageable {
     return this.currentDriverId;
   }
 
+  /** Spawn generation qualifies collision pair identity across pool reuse. */
+  public get poolGeneration(): number {
+    return this.movementComp.dynamics.poolGeneration;
+  }
+
   /**
    * Apply a hit. Ignored once destroyed. Emits a damage event, updates the
    * damage frame, and on the transition to zero health triggers {@link explode}.
@@ -208,6 +213,7 @@ export class Vehicle extends Entity implements IDamageable {
     this.playerDriven = driven;
     this.sprite.setData('playerDriven', driven);
     if (driven) this.movementComp.setTrafficAuthority(false);
+    this.movementComp.setPlayerDynamic(driven);
     this.movementComp.setControlsEnabled(driven && !this.destroyed);
   }
 
@@ -236,13 +242,10 @@ export class Vehicle extends Entity implements IDamageable {
       .clearTint();
     if (tint !== undefined) sprite.setTint(tint);
     if (sprite.texture.has(FRAME_OK)) sprite.setFrame(FRAME_OK);
-    sprite.data?.remove('parked');
-    sprite.data?.remove('parkingSpaceId');
-    sprite.data?.remove('intercityService');
-    sprite.data?.remove('stolenByPlayer');
+    this.clearLifecycleMetadata();
     sprite.setData('playerDriven', false);
     this.health.reset();
-    this.movementComp.reset(heading);
+    this.movementComp.reset(heading, true);
     this.lights.reset();
     this.effects.reset();
     const body = sprite.body as Phaser.Physics.Arcade.Body;
@@ -252,8 +255,10 @@ export class Vehicle extends Entity implements IDamageable {
 
   public deactivateForPool(): void {
     this.movementComp.reset(this.movementComp.heading);
+    this.movementComp.setPhysicalMode('Disabled');
     this.lights.reset();
     this.effects.reset();
+    this.clearLifecycleMetadata();
     const body = this.sprite.body as Phaser.Physics.Arcade.Body;
     body.enable = false;
     this.sprite.setActive(false).setVisible(false);
@@ -272,6 +277,11 @@ export class Vehicle extends Entity implements IDamageable {
         y: this.sprite.y,
         intensity: Math.min(1, impact / 500),
         byPlayer: this.playerDriven,
+        vehicleId: this.id,
+        relativeSpeed: impact,
+        collisionType: 'world',
+        playerResponsible: this.playerDriven,
+        solverSource: 'arcade-world',
       });
       if (damage > 0) {
         this.applyDamage({
@@ -317,6 +327,7 @@ export class Vehicle extends Entity implements IDamageable {
     }
     this.sprite.setTint(0x333333);
     this.movementComp.setControlsEnabled(false);
+    this.movementComp.setPhysicalMode('Disabled');
 
     getCombatService()?.spawnExplosion(
       this.sprite.x,
@@ -331,5 +342,33 @@ export class Vehicle extends Entity implements IDamageable {
       position: { x: this.sprite.x, y: this.sprite.y },
       byPlayer: isPlayerResponsible(info),
     });
+  }
+
+  /** Clear every ownership key that may outlive an entity when its sprite is pooled. */
+  private clearLifecycleMetadata(): void {
+    const data = this.sprite.data;
+    if (!data) return;
+    for (const key of [
+      'parked',
+      'parkingSpaceId',
+      'majorBuildingId',
+      'serviceParking',
+      'persistentTransitService',
+      'transitServiceKind',
+      'transitRouteId',
+      'intercityService',
+      'policeResponseActive',
+      'snappBookingId',
+      'serviceLivery',
+      'stolenByPlayer',
+      'missionId',
+      'missionVehicle',
+      'missionOwnerId',
+      'bookingId',
+      'physicalOwnerId',
+      'poolClass',
+    ]) {
+      data.remove(key);
+    }
   }
 }

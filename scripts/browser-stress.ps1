@@ -9,7 +9,10 @@ param(
   [ValidateRange(1000, 65000)]
   [int]$DebugPort = 9333,
   [string]$OutputPath = '.traffic-stress/browser-stress.json',
-  [switch]$DisableGpu
+  [switch]$DisableGpu,
+  [switch]$Headed,
+  [switch]$StaticPlayer,
+  [switch]$RequireFullDuration
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,6 +26,18 @@ $targetTicks = [int][Math]::Ceiling(($SimulatedMinutes * 60) / $SimulatedSeconds
 $phase = 'not-started'
 $status = 'not-started'
 $samples = New-Object System.Collections.Generic.List[object]
+$summary = $null
+$wallClock = [Diagnostics.Stopwatch]::StartNew()
+
+function Get-PercentileValue(
+  [object[]]$Values,
+  [double]$Percentile
+) {
+  $numeric = @($Values | Where-Object { $_ -ne $null } | ForEach-Object { [double]$_ } | Sort-Object)
+  if ($numeric.Count -eq 0) { return 0 }
+  $index = [Math]::Min($numeric.Count - 1, [Math]::Max(0, [Math]::Ceiling($numeric.Count * $Percentile) - 1))
+  return $numeric[$index]
+}
 
 function Save-StressTelemetry(
   [string]$FinalStatus,
@@ -36,6 +51,11 @@ function Save-StressTelemetry(
     phase = $phase
     error = $ErrorMessage
     targetSimulatedMinutes = $SimulatedMinutes
+    requestedWallClockSeconds = $DurationSeconds
+    staticPlayer = [bool]$StaticPlayer
+    headed = [bool]$Headed
+    requireFullDuration = [bool]$RequireFullDuration
+    summary = $summary
     samples = $samples.ToArray()
   }
   Set-Content -LiteralPath $resolvedOutput -Value ($payload | ConvertTo-Json -Depth 30) -Encoding UTF8
@@ -103,13 +123,18 @@ try {
   $phase = 'chrome-startup'
   New-Item -ItemType Directory -Path $profile | Out-Null
   $args = @(
-    '--headless=new',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-features=CalculateNativeWinOcclusion',
+    '--no-first-run',
     '--hide-scrollbars',
     "--remote-debugging-port=$DebugPort",
     "--user-data-dir=$profile",
     '--window-size=1280,720',
     'about:blank'
   )
+  if (-not $Headed) { $args = @('--headless=new') + $args }
   if ($DisableGpu) { $args = @('--disable-gpu') + $args }
   $process = Start-Process -FilePath $chrome -ArgumentList $args -WindowStyle Hidden -PassThru
 
@@ -152,46 +177,73 @@ console.error = (...args) => {
 
   $phase = 'navigate'
   Invoke-Cdp $socket 'Page.navigate' @{ url = $Url } | Out-Null
-  Start-Sleep -Seconds 4
-  Invoke-Cdp $socket 'Input.dispatchMouseEvent' @{
-    type = 'mousePressed'
-    x = 640
-    y = 432
-    button = 'left'
-    clickCount = 1
-  } | Out-Null
-  Invoke-Cdp $socket 'Input.dispatchMouseEvent' @{
-    type = 'mouseReleased'
-    x = 640
-    y = 432
-    button = 'left'
-    clickCount = 1
-  } | Out-Null
-  Start-Sleep -Seconds 1
+  $phase = 'wait-menu-ready'
+  $menuReady = $false
+  $startupProbe = $null
+  for ($attempt = 0; $attempt -lt 60 -and -not $menuReady; $attempt++) {
+    Start-Sleep -Seconds 1
+    try {
+      $startupProbe = Evaluate-Cdp $socket @'
+(() => {
+  const game = window.game;
+  const scenes = game?.phaser?.scene?.getScenes(true)?.map(scene => scene.scene.key) ?? [];
+  return {
+    ready: scenes.includes('MainMenuScene'),
+    href: window.location.href,
+    gameType: typeof game,
+    gameKeys: game ? Object.keys(game) : [],
+    phaserBooted: game?.phaser?.isBooted ?? null,
+    loopRunning: game?.phaser?.loop?.running ?? null,
+    registeredScenes: game?.phaser?.scene?.scenes?.map(scene => scene.scene.key) ?? [],
+    managerCount: game?.registry?.managers?.length ?? null,
+    visibility: document.visibilityState,
+    diagnostics: typeof window.__engineDiagnostics === 'function' ? window.__engineDiagnostics() : null,
+    scenes,
+    canvasCount: document.querySelectorAll('canvas').length,
+    errors: (window.__stressErrors || []).slice(-8),
+  };
+})()
+'@ 30000
+      $menuReady = $startupProbe.ready -eq $true
+    } catch {
+      $menuReady = $false
+    }
+  }
+  if (-not $menuReady) {
+    throw "Main menu did not become ready. Probe: $($startupProbe | ConvertTo-Json -Depth 10 -Compress)"
+  }
+
+  $phase = 'start-new-game'
   Evaluate-Cdp $socket @'
 (() => {
   const active = window.game?.phaser?.scene?.getScenes(true)?.map(scene => scene.scene.key) ?? [];
   if (active.includes('MainMenuScene')) window.game.phaser.scene.getScene('MainMenuScene').onNewGame();
   return active;
 })()
-'@ | Out-Null
+'@ 30000 | Out-Null
 
   $phase = 'wait-game-ready'
   $ready = $false
-  for ($attempt = 0; $attempt -lt 30 -and -not $ready; $attempt++) {
+  for ($attempt = 0; $attempt -lt 60 -and -not $ready; $attempt++) {
     Start-Sleep -Seconds 1
-    $ready = Evaluate-Cdp $socket @'
+    try {
+      $ready = Evaluate-Cdp $socket @'
 (() => {
   const game = window.game;
   const scenes = game?.phaser?.scene?.getScenes(true)?.map(scene => scene.scene.key) ?? [];
   const managers = game?.registry?.managers ?? [];
   return scenes.includes('GameScene') && managers.some(manager => manager.key === 'TrafficSystem');
 })()
-'@
+'@ 30000
+    } catch {
+      $ready = $false
+    }
   }
   if (-not $ready) { throw 'Game scene did not become ready.' }
 
   $phase = 'stress-setup'
+  $staticPlayerLiteral = if ($StaticPlayer) { 'true' } else { 'false' }
+  Evaluate-Cdp $socket "window.__stressStaticPlayer = $staticPlayerLiteral; true" | Out-Null
   Evaluate-Cdp $socket @'
 (() => {
   const managers = window.game.registry.managers;
@@ -219,7 +271,7 @@ console.error = (...args) => {
       }
       const point = window.__stressRoutePoint || world.map.playerStart;
       const player = playerCtrl?.player;
-      if (player?.sprite) {
+      if (!window.__stressStaticPlayer && player?.sprite) {
         player.sprite.setPosition(point.x, point.y);
         player.sprite.body?.reset?.(point.x, point.y);
       }
@@ -251,7 +303,7 @@ console.error = (...args) => {
   }, 100);
   return true;
 })()
-'@ | Out-Null
+'@ 30000 | Out-Null
 
   $phase = 'sampling'
   for ($second = 0; $second -lt $DurationSeconds; $second++) {
@@ -276,6 +328,7 @@ console.error = (...args) => {
     traffic: trafficSnapshot ? {
       phase: trafficSnapshot.phase,
       stats: trafficSnapshot.stats,
+      collisions: trafficSnapshot.collisions || null,
       validationPassed: trafficSnapshot.validation?.passed === true,
       validationFailures: trafficSnapshot.validation?.failures?.length || 0,
       selected: trafficSnapshot.selected ? {
@@ -319,7 +372,7 @@ console.error = (...args) => {
       $samples.Add($sample) | Out-Null
       $unexpectedSampleErrors = @($sample.errors | Where-Object { $_ -notlike '*pointer lock*' })
       if ($unexpectedSampleErrors.Count -gt 0) { break }
-      if (($sample.tick -as [int]) -ge $targetTicks) { break }
+      if (-not $RequireFullDuration -and ($sample.tick -as [int]) -ge $targetTicks) { break }
     } catch {
       $tail = $samples.ToArray() | Select-Object -Last 5
       $status = 'infrastructure-timeout'
@@ -339,21 +392,51 @@ console.error = (...args) => {
   $final = Evaluate-Cdp $socket @'
 (() => {
   clearInterval(window.__stressInterval);
+  const managers = window.game?.registry?.managers ?? [];
+  const traffic = managers.find(manager => manager.key === 'TrafficSystem');
+  const trafficSnapshot = traffic?.trafficDebugSnapshot?.() || null;
   return {
     errors: window.__stressErrors || [],
     tick: window.__stressTick || 0,
     frame: window.game?.phaser?.loop?.frame || 0,
+    traffic: trafficSnapshot ? {
+      stats: trafficSnapshot.stats,
+      collisions: trafficSnapshot.collisions || null,
+      validationPassed: trafficSnapshot.validation?.passed === true,
+      validationFailures: trafficSnapshot.validation?.failures || [],
+    } : null,
   };
 })()
 '@ 5000
   $tail = $samples.ToArray() | Select-Object -Last 5
   $simulatedMinutesCompleted = [Math]::Round((($final.tick -as [double]) * $SimulatedSecondsPerTick) / 60, 2)
+  $fpsValues = @($samples | ForEach-Object { $_.profiler.fps })
+  $frameValues = @($samples | ForEach-Object { $_.profiler.frameMs })
+  $collisionCpuValues = @($samples | ForEach-Object { $_.traffic.collisions.collisionCpuMs })
+  $blockedValues = @($samples | ForEach-Object { $_.traffic.stats.blockedDrivers })
+  $summary = @{
+    wallClockSeconds = [Math]::Round($wallClock.Elapsed.TotalSeconds, 2)
+    sampleCount = $samples.Count
+    averageFps = if ($fpsValues.Count -gt 0) { [Math]::Round(($fpsValues | Measure-Object -Average).Average, 2) } else { 0 }
+    minimumFps = if ($fpsValues.Count -gt 0) { [Math]::Round(($fpsValues | Measure-Object -Minimum).Minimum, 2) } else { 0 }
+    averageFrameMs = if ($frameValues.Count -gt 0) { [Math]::Round(($frameValues | Measure-Object -Average).Average, 3) } else { 0 }
+    p95FrameMs = [Math]::Round((Get-PercentileValue $frameValues 0.95), 3)
+    maximumFrameMs = if ($frameValues.Count -gt 0) { [Math]::Round(($frameValues | Measure-Object -Maximum).Maximum, 3) } else { 0 }
+    p95CollisionCpuMs = [Math]::Round((Get-PercentileValue $collisionCpuValues 0.95), 3)
+    maximumObservedCollisionCpuMs = if ($collisionCpuValues.Count -gt 0) { [Math]::Round(($collisionCpuValues | Measure-Object -Maximum).Maximum, 3) } else { 0 }
+    maximumBlockedDrivers = if ($blockedValues.Count -gt 0) { ($blockedValues | Measure-Object -Maximum).Maximum } else { 0 }
+    finalCollisionTelemetry = $final.traffic.collisions
+    finalTrafficStats = $final.traffic.stats
+    validationPassed = $final.traffic.validationPassed
+    validationFailureCount = @($final.traffic.validationFailures).Count
+  }
   $status = 'passed'
   Write-Output (@{
     status = $status
     frozen = $false
     targetSimulatedMinutes = $SimulatedMinutes
     simulatedMinutesCompleted = $simulatedMinutesCompleted
+    summary = $summary
     final = $final
     samples = $tail
   } | ConvertTo-Json -Depth 20)

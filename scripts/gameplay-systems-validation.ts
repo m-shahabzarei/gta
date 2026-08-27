@@ -24,6 +24,8 @@ import {
   resolveCirclePositionOnGrid,
   type SolidTileGrid,
 } from '@/gameplay/world/SafePedestrianPlacement';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const failures: string[] = [];
 let assertions = 0;
@@ -120,6 +122,54 @@ function validateWeaponDropLifecycle(): void {
 }
 
 function validateArchitectureCollisionPolicy(): void {
+  const gameSceneSource = readFileSync(
+    join(process.cwd(), 'src', 'scenes', 'GameScene.ts'),
+    'utf8',
+  );
+  const movementSource = readFileSync(
+    join(process.cwd(), 'src', 'entities', 'components', 'VehicleMovementComponent.ts'),
+    'utf8',
+  );
+  const runtimeSource = readFileSync(
+    join(process.cwd(), 'src', 'gameplay', 'vehicle', 'VehicleCollisionRuntime.ts'),
+    'utf8',
+  );
+  check(
+    !gameSceneSource.includes('p.collider(vehicleGroup, vehicleGroup)'),
+    'Arcade vehicle self-collision must remain disabled when the custom solver is active',
+  );
+  check(
+    gameSceneSource.includes('interactionColliders.push') &&
+      gameSceneSource.includes('this.clearInteractionColliders();'),
+    'scene group colliders must be destroyed before their pooled groups detach',
+  );
+  check(
+    runtimeSource.includes('Phaser.Physics.Arcade.Events.WORLD_STEP'),
+    'vehicle collision runtime must execute from the authoritative Arcade WORLD_STEP boundary',
+  );
+  check(
+    runtimeSource.includes('pair.stepStamp === this.stepStamp'),
+    'vehicle pair resolution must retain a per-step duplicate stamp',
+  );
+  check(
+    runtimeSource.includes('computeSweptObbContact'),
+    'vehicle pair narrow phase must use swept oriented geometry',
+  );
+  check(
+    runtimeSource.includes("const impactActive = vehicle.movement.dynamics.impactState !== 'None'") &&
+      runtimeSource.includes('!impactActive'),
+    'active collision recovery must remain inside the physical runtime beyond ordinary LOD range',
+  );
+  check(
+    !movementSource.includes('this.signedSpeed *= -0.18'),
+    'legacy fixed reverse crash response must not coexist with impulse resolution',
+  );
+  const trafficAuthorityBody =
+    movementSource.match(/public setTrafficAuthority[\s\S]*?public get trafficControlled/)?.[0] ?? '';
+  check(
+    !trafficAuthorityBody.includes('setImmovable(enabled)'),
+    'traffic authority must not directly define physical immovability',
+  );
   check(
     !SOLID_TILE_TYPES.includes(TileType.InteriorDoor),
     'pedestrian doors must remain open on the shared collision layer',
