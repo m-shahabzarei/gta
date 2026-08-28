@@ -248,15 +248,16 @@ function runScenario(config: ScenarioConfig): Record<string, unknown> {
   for (const agent of agents) telemetry.closeVehicleStops(agent.id, simulationClockMs, 'Following Lane');
   const snapshot = telemetry.snapshot();
   const controllerData = snapshot.junctions;
-  const values = (items: readonly number[]): { average: number | 'unknown'; median: number | 'unknown'; p95: number | 'unknown' } => {
-    if (items.length === 0) return { average: 'unknown', median: 'unknown', p95: 'unknown' };
+  const values = (items: readonly number[]): { average: number | 'unknown'; median: number | 'unknown'; p95: number | 'unknown'; p99: number | 'unknown' } => {
+    if (items.length === 0) return { average: 'unknown', median: 'unknown', p95: 'unknown', p99: 'unknown' };
     const sorted = items.slice().sort((a, b) => a - b);
     const at = (p: number): number => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1))] ?? 0;
-    return { average: items.reduce((sum, value) => sum + value, 0) / items.length, median: at(0.5), p95: at(0.95) };
+    return { average: items.reduce((sum, value) => sum + value, 0) / items.length, median: at(0.5), p95: at(0.95), p99: at(0.99) };
   };
   const speedStats = values(speeds);
   const stopStats = values(stopDurations);
   const delayStats = values(intersectionDelays);
+  const frameStats = values(snapshot.frames.map((frame) => frame.realWallClockMs));
   const throughput = agents.reduce((sum, agent) => sum + agent.crossings, 0);
   const reservationTimeouts = controllerData.reduce((sum, item) => sum + item.reservationTimeouts, 0);
   const deterministicPayload = JSON.stringify({
@@ -291,7 +292,13 @@ function runScenario(config: ScenarioConfig): Record<string, unknown> {
       deferredUpdate: 'unknown',
       maximumUpdateAgeMs: 'unknown',
       trafficCpuMs: 'unknown',
-      realFrameTimeMs: values(snapshot.frames.map((frame) => frame.realWallClockMs)).average,
+      realFrameTimeMs: frameStats.average,
+      frameP50Ms: frameStats.median,
+      frameP95Ms: frameStats.p95,
+      frameP99Ms: frameStats.p99,
+      framesOver20Ms: snapshot.frames.filter((frame) => frame.realWallClockMs > 20).length,
+      framesOver33Ms: snapshot.frames.filter((frame) => frame.realWallClockMs > 33.34).length,
+      framesOver50Ms: snapshot.frames.filter((frame) => frame.realWallClockMs > 50).length,
       activeCount: agents.length,
       virtualCount: 0,
       parkedCount: 0,
@@ -396,6 +403,12 @@ const summary = results.map((result) => {
     p95StopDurationMs: metrics.p95StopDurationMs,
     reservationTimeout: metrics.reservationTimeout,
     realFrameTimeMs: metrics.realFrameTimeMs,
+    frameP50Ms: metrics.frameP50Ms,
+    frameP95Ms: metrics.frameP95Ms,
+    frameP99Ms: metrics.frameP99Ms,
+    framesOver20Ms: metrics.framesOver20Ms,
+    framesOver33Ms: metrics.framesOver33Ms,
+    framesOver50Ms: metrics.framesOver50Ms,
     wallClockMs: result.wallClockMs,
   };
 });

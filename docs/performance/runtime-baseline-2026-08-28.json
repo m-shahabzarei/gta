@@ -1,0 +1,615 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-28T15:11:58.489Z",
+  "commit": "5335cc2b989d0f97375e9264c9f34bb7e26dac0d",
+  "source": "scripts/traffic-stress.ts (deterministic headless-network harness)",
+  "notes": [
+    "Wall-clock frame samples are measured with performance.now() around each simulated frame.",
+    "This harness covers traffic, highway transition, pause/resume, bus/taxi, and 15/30-minute stability scenarios.",
+    "Browser-only rendering, GPU, heap, input-latency, weather, interior and mobile metrics require the browser smoke scripts and are recorded as unavailable here."
+  ],
+  "scenarios": [
+    {
+      "id": "tehran-low",
+      "city": "tehran",
+      "district": "central",
+      "density": "low",
+      "seed": 4097,
+      "durationSeconds": 60,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.2217885000000015,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 4,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 370.94809999999995,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 5
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 0,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "tehran-medium",
+      "city": "tehran",
+      "district": "central",
+      "density": "medium",
+      "seed": 4098,
+      "durationSeconds": 60,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.2806887499999983,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 398.1032,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 31
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 1450,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "tehran-high",
+      "city": "tehran",
+      "district": "central",
+      "density": "high",
+      "seed": 4099,
+      "durationSeconds": 60,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.22938466666666235,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 319.65469999999993,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 28
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 1650,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "yazd",
+      "city": "yazd",
+      "district": "market",
+      "density": "medium",
+      "seed": 8193,
+      "durationSeconds": 60,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.27093100000000336,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 367.9748000000002,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 34
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 2600,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "gilan",
+      "city": "gilan",
+      "district": "coastal",
+      "density": "medium",
+      "seed": 12289,
+      "durationSeconds": 60,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.1665311666666681,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 241.68140000000017,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 37
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 8050,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "highway-transition",
+      "city": "tehran",
+      "district": "arterial",
+      "density": "medium",
+      "seed": 16385,
+      "durationSeconds": 60,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.21826058333333057,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 294.6832999999999,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 35
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 4500,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "multi-junction",
+      "city": "tehran",
+      "district": "arterial",
+      "density": "high",
+      "seed": 16386,
+      "durationSeconds": 60,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.18604449999999473,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 251.64359999999988,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 25
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 4150,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "wanted-high",
+      "city": "tehran",
+      "district": "central",
+      "density": "medium",
+      "seed": 20481,
+      "durationSeconds": 60,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.2744798333333377,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 373.0803999999998,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 32
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 8350,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "roadblock-obstacle",
+      "city": "tehran",
+      "district": "industrial",
+      "density": "medium",
+      "seed": 20482,
+      "durationSeconds": 60,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.25577808333333263,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 342.8299000000002,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 40
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 750,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "bus-taxi",
+      "city": "tehran",
+      "district": "commercial",
+      "density": "medium",
+      "seed": 24577,
+      "durationSeconds": 60,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.6324519166666657,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 808.6259,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 35
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 0,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "fast-chunk-crossing",
+      "city": "gilan",
+      "district": "intercity",
+      "density": "medium",
+      "seed": 28673,
+      "durationSeconds": 60,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.2554620833333244,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 339.10030000000006,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 21
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 44350,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "pause-resume",
+      "city": "yazd",
+      "district": "residential",
+      "density": "medium",
+      "seed": 28674,
+      "durationSeconds": 60,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.29000676190478336,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 349.10509999999977,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 30
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 10000,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "idle-15-minute",
+      "city": "tehran",
+      "district": "central",
+      "density": "medium",
+      "seed": 32769,
+      "durationSeconds": 900,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.1912085222222232,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 3946.0911000000006,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 473
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 3050,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    },
+    {
+      "id": "idle-30-minute",
+      "city": "tehran",
+      "district": "central",
+      "density": "medium",
+      "seed": 32770,
+      "durationSeconds": 1800,
+      "fixtureCoverage": "headless-network",
+      "frameTimeMs": {
+        "average": 0.1734671138888959,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "over20": null,
+        "over33": null,
+        "over50": null
+      },
+      "traffic": {
+        "activeVehicles": 8,
+        "virtualVehicles": 0,
+        "parkedVehicles": 0,
+        "trafficCpuMs": null,
+        "deferredUpdates": null,
+        "maximumUpdateAgeMs": null
+      },
+      "wallClockMs": 6928.776400000001,
+      "correctness": {
+        "wrongDirection": 0,
+        "leftRoad": 0,
+        "badSpawn": 0,
+        "blockedIntersection": 0
+      },
+      "diagnostics": {
+        "stopReasons": {
+          "stop.queue": 102
+        },
+        "signalVisualLogicalDivergenceCount": 0,
+        "maximumQueueAgeMs": 1627500,
+        "maximumUpdateAgeMs": "unknown",
+        "lifecycleRaceCount": "unknown",
+        "orphanVehicleCount": "unknown"
+      }
+    }
+  ]
+}

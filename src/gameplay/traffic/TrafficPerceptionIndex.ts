@@ -51,7 +51,9 @@ export class TrafficPerceptionIndex implements TrafficPerceptionFrame {
     radius: number,
     visitor: (agent: TrafficAgentSnapshot) => void,
   ): void {
-    this.spatial.forEachInRadius(x, y, radius, (agent) => visitor(agent));
+    // A callback with fewer parameters is assignable here; passing it through
+    // directly avoids creating one closure for every driver query.
+    this.spatial.forEachInRadius(x, y, radius, visitor);
   }
 
   public forEachAgentOnLane(laneId: string, visitor: (agent: TrafficAgentSnapshot) => void): void {

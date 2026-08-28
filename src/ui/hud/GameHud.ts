@@ -91,6 +91,12 @@ export class GameHud extends UIComponent {
   private readonly snappArrivalOpen: Button;
   private readonly snappArrivalDismiss: Button;
   private readonly snappArrivalBookings = new Set<string>();
+  private lastSpeedKmh: number | null = null;
+  private lastCompassVisible = false;
+  private lastCompassAngle = Number.NaN;
+  private lastRegionName: string | null = null;
+  private lastRegionDistrict: string | null = null;
+  private lastRegionColor: number | null = null;
 
   /** All active event-bus unsubscribe handles, released on destroy. */
   private readonly unsubscribes: Unsubscribe[] = [];
@@ -405,6 +411,14 @@ export class GameHud extends UIComponent {
 
   /** Update the regional locator without coupling HUD code to world state. */
   public setRegion(name: string, district: string, color: number): void {
+    if (
+      name === this.lastRegionName &&
+      district === this.lastRegionDistrict &&
+      color === this.lastRegionColor
+    ) return;
+    this.lastRegionName = name;
+    this.lastRegionDistrict = district;
+    this.lastRegionColor = color;
     this.regionLabel.setText(name + ' / ' + district.toUpperCase());
     this.regionLabel.setColor(cssColor(color));
   }
@@ -417,6 +431,8 @@ export class GameHud extends UIComponent {
   public setVehicleSpeed(speedPxSec: number): void {
     if (!this.speedLabel.visible) return;
     const kmh = Math.round(Math.abs(speedPxSec) * SPEED_SCALE);
+    if (kmh === this.lastSpeedKmh) return;
+    this.lastSpeedKmh = kmh;
     this.speedLabel.setText(`${kmh} km/h`);
   }
 
@@ -428,10 +444,19 @@ export class GameHud extends UIComponent {
    */
   public setObjectiveArrow(angle: number | null, delta: number): void {
     if (angle === null) {
-      this.compass.setVisible(false);
+      if (this.lastCompassVisible) {
+        this.compass.setVisible(false);
+        this.lastCompassVisible = false;
+      }
     } else {
-      this.compass.setVisible(true);
-      this.compass.setRotation(angle);
+      if (!this.lastCompassVisible) {
+        this.compass.setVisible(true);
+        this.lastCompassVisible = true;
+      }
+      if (Math.abs(angle - this.lastCompassAngle) > 1e-4) {
+        this.compass.setRotation(angle);
+        this.lastCompassAngle = angle;
+      }
     }
 
     if (this.searching) {

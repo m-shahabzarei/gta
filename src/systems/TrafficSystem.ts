@@ -137,6 +137,8 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     simulationSeed: 0x9e3779b9,
   });
   private readonly trafficCars = new Set<Vehicle>();
+  /** Refreshed once per fixed step so Snapp fairness checks are O(1). */
+  private readonly snappDriverIds = new Set<number>();
   private readonly drivers = new Map<number, TrafficDriver>();
   private readonly blockedDriverIds = new Set<number>();
   private readonly lights: TrafficLightSprite[] = [];
@@ -405,6 +407,7 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     for (const driver of this.drivers.values()) driver.destroy();
     this.drivers.clear();
     this.trafficCars.clear();
+    this.snappDriverIds.clear();
     this.blockedDriverIds.clear();
     this.temporaryObstacles.clear();
     this.pendingDespawns.clear();
@@ -460,6 +463,10 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       this.accumulatorMs -= FIXED_STEP_MS;
       steps += 1;
     }
+    // Service ownership can change during a fixed update; refresh once more
+    // before rendering so the modal sees the same current assignment that the
+    // previous per-driver predicate observed.
+    this.refreshSnappDriverIds();
     const interpolation = this.accumulatorMs / FIXED_STEP_MS;
     for (const driver of this.drivers.values()) driver.render(interpolation);
     this.processPendingDespawns();
@@ -482,30 +489,28 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
     this.resolveServices();
     this.ensureRuntime();
     this.accumulatorMs += Math.min(delta, FIXED_STEP_MS * MAX_STEPS_PER_FRAME);
-    const snappOnly = (driver: TrafficDriver): boolean => {
-      const vehicleId = driver.snapshot()?.vehicleId;
-      return vehicleId !== undefined && this.vehicleSystem?.vehicles.some(
-        (vehicle) => vehicle.id === vehicleId && typeof vehicle.sprite.getData('snappBookingId') === 'string',
-      ) === true;
-    };
+    // Keep the same force-near semantics as the normal fixed-step path while
+    // avoiding a per-frame predicate closure and a linear vehicle scan for
+    // every driver rendered while the Phone modal is open.
+    this.refreshSnappDriverIds();
     let steps = 0;
     while (this.accumulatorMs >= FIXED_STEP_MS && steps < MAX_STEPS_PER_FRAME) {
       this.simulationClockMs += FIXED_STEP_MS;
       this.fixedStepCount += 1;
-      this.simulateFixedStep(this.simulationClockMs, FIXED_STEP_MS / 1000, snappOnly);
+      this.simulateFixedStep(this.simulationClockMs, FIXED_STEP_MS / 1000, this.isSnappDriver);
       this.accumulatorMs -= FIXED_STEP_MS;
       steps += 1;
     }
     const interpolation = this.accumulatorMs / FIXED_STEP_MS;
     for (const driver of this.drivers.values()) {
-      if (snappOnly(driver)) driver.render(interpolation);
+      if (this.isSnappDriver(driver)) driver.render(interpolation);
     }
     // Process only the assigned Snapp driver's bounded despawn/recovery work
     // during the phone tick. Leaving this queue untouched until the phone
     // closes can otherwise turn a legitimate recovery request into a visible
     // frozen taxi on the next normal frame, while processing the full queue
     // here would advance unrelated transit services behind the modal.
-    this.processPendingDespawns((vehicle) => typeof vehicle.sprite.getData('snappBookingId') === 'string');
+    this.processPendingDespawns(this.isSnappVehicle);
     this.collectRuntimeStats(performance.now() - realFrameStartedAt);
     this.telemetry.endFrame(performance.now());
     void time;
@@ -800,15 +805,10 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
       if (snapshot) this.perception.upsert(snapshot);
     }
     const player = getPlayerRef()?.playerPosition ?? null;
-    const isSnappDriver = (driver: TrafficDriver): boolean => {
-      const vehicleId = driver.snapshot()?.vehicleId;
-      return vehicleId !== undefined && this.vehicleSystem?.vehicles.some(
-        (vehicle) => vehicle.id === vehicleId && typeof vehicle.sprite.getData('snappBookingId') === 'string',
-      ) === true;
-    };
+    this.refreshSnappDriverIds();
     this.scheduler.schedule(now, deltaSeconds, player, this.drivers.values(), (work) => {
       work.driver.fixedUpdate(now, work.deltaSeconds, this.perception, work.detail);
-    }, filter ? (driver) => filter(driver) : isSnappDriver);
+    }, filter ?? this.isSnappDriver);
     this.telemetry.recordScheduler(this.scheduler.telemetry);
     for (const driver of this.drivers.values()) this.recordDriverTelemetry(driver, now);
     intersections.resolve(now);
@@ -817,6 +817,19 @@ export class TrafficSystem extends BaseSceneManager implements ITrafficQuery {
         ...junction,
         signalVisualLogicalDivergence: this.signalDivergenceFor(junction.junctionId),
       });
+    }
+  }
+
+  private readonly isSnappDriver = (driver: TrafficDriver): boolean =>
+    this.snappDriverIds.has(driver.id);
+
+  private readonly isSnappVehicle = (vehicle: Vehicle): boolean =>
+    typeof vehicle.sprite.getData('snappBookingId') === 'string';
+
+  private refreshSnappDriverIds(): void {
+    this.snappDriverIds.clear();
+    for (const vehicle of this.trafficCars) {
+      if (typeof vehicle.sprite.getData('snappBookingId') === 'string') this.snappDriverIds.add(vehicle.id);
     }
   }
 

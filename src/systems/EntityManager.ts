@@ -24,6 +24,16 @@ export enum EntityCategory {
   Object = 'object',
 }
 
+/** Stable iteration order; avoids allocating Object.values(EntityCategory) on every frame. */
+const ENTITY_CATEGORIES: readonly EntityCategory[] = [
+  EntityCategory.Player,
+  EntityCategory.Npc,
+  EntityCategory.Vehicle,
+  EntityCategory.Projectile,
+  EntityCategory.Particle,
+  EntityCategory.Object,
+];
+
 export enum SimulationTier {
   Near = 'near',
   Medium = 'medium',
@@ -31,6 +41,14 @@ export enum SimulationTier {
   VeryFar = 'very-far',
   Dormant = 'dormant',
 }
+
+const ENTITY_TIERS: readonly SimulationTier[] = [
+  SimulationTier.Near,
+  SimulationTier.Medium,
+  SimulationTier.Far,
+  SimulationTier.VeryFar,
+  SimulationTier.Dormant,
+];
 
 export enum AiLodLevel {
   Full = 0,
@@ -142,6 +160,8 @@ interface ManagedEntity {
   lastUpdateAt: number;
   accumulatedDelta: number;
   visitFrame: number;
+  indexedX: number;
+  indexedY: number;
   registered: boolean;
 }
 
@@ -237,6 +257,8 @@ export class EntityManager extends BaseSceneManager {
       lastUpdateAt: 0,
       accumulatedDelta: 0,
       visitFrame: 0,
+      indexedX: entity.sprite.x,
+      indexedY: entity.sprite.y,
       registered: true,
     };
     this.records.push(record);
@@ -286,16 +308,19 @@ export class EntityManager extends BaseSceneManager {
   public update(time: number, delta: number): void {
     this.frame += 1;
     const player = getPlayerRef()?.playerPosition ?? null;
-    const nextStats = mutableEmptyStats();
+    // Stats are a live read-only view. Reset and fill the same object instead
+    // of allocating three nested records every frame.
+    const nextStats = this.statsValue;
+    resetStats(nextStats);
     nextStats.total = this.byId.size;
     nextStats.sleeping = nextStats.total;
     nextStats.byTier[SimulationTier.Dormant] = nextStats.total;
-    for (const category of Object.values(EntityCategory)) {
+    for (const category of ENTITY_CATEGORIES) {
       nextStats.byCategory[category] = this.categoryTotals[category];
       nextStats.sleepingByCategory[category] = this.categoryTotals[category];
     }
     if (this.detailedProfiling) {
-      for (const category of Object.values(EntityCategory)) this.updateMsByCategory[category] = 0;
+      for (const category of ENTITY_CATEGORIES) this.updateMsByCategory[category] = 0;
     }
 
     this.nextActiveRecords.length = 0;
@@ -335,7 +360,16 @@ export class EntityManager extends BaseSceneManager {
           } else {
             this.tickRecord(record, tier, time, accumulated);
           }
-          this.spatial.update(record.entity.id, sprite.x, sprite.y);
+          // SpatialHashGrid already avoids bucket churn when the cell is
+          // unchanged. Avoid even the map lookup for sub-pixel updates.
+          if (
+            Math.abs(sprite.x - record.indexedX) >= 1 ||
+            Math.abs(sprite.y - record.indexedY) >= 1
+          ) {
+            this.spatial.update(record.entity.id, sprite.x, sprite.y);
+            record.indexedX = sprite.x;
+            record.indexedY = sprite.y;
+          }
         } catch (error) {
           this.quarantineRecord(record, error);
           return;
@@ -560,6 +594,21 @@ function mutableEmptyStats(): EntityManagerStats {
     activeByCategory: emptyCategoryCounts(),
     sleepingByCategory: emptyCategoryCounts(),
   };
+}
+
+function resetStats(stats: EntityManagerStats): void {
+  stats.total = 0;
+  stats.active = 0;
+  stats.sleeping = 0;
+  stats.physicsBodies = 0;
+  for (const category of ENTITY_CATEGORIES) {
+    stats.byCategory[category] = 0;
+    stats.activeByCategory[category] = 0;
+    stats.sleepingByCategory[category] = 0;
+  }
+  for (const tier of ENTITY_TIERS) {
+    stats.byTier[tier] = 0;
+  }
 }
 
 function emptyStats(): EntityManagerStats {

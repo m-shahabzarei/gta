@@ -6890,6 +6890,7 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
   /** Active streamed terrain/decor chunks, keyed by "cx,cy". */
   private readonly chunks = new Map<string, DecoChunk>();
   private readonly chunkQueue: ChunkOperation[] = [];
+  private chunkQueueHead = 0;
   private readonly chunkIndex = new QuadTree<string>({
     x: 0,
     y: 0,
@@ -7036,6 +7037,7 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
     this.highwayRenderer?.destroy();
     this.highwayRenderer = null;
     this.chunkQueue.length = 0;
+    this.chunkQueueHead = 0;
     this.chunkIndex.clear();
     this.visibilityAnchor = '';
     this.lastChunkKey = '';
@@ -7810,21 +7812,30 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
       }
     }
     this.chunkQueue.length = 0;
+    this.chunkQueueHead = 0;
     this.chunkQueue.push(...operations);
     if (initialChunkBuilt) this.finishChunkBatch();
   }
 
   private processChunkQueue(): void {
-    if (this.chunkQueue.length === 0) return;
+    if (this.chunkQueueHead >= this.chunkQueue.length) {
+      this.chunkQueue.length = 0;
+      this.chunkQueueHead = 0;
+      return;
+    }
     const startedAt = performance.now();
     let processed = 0;
     while (
       processed < MAX_CHUNK_OPERATIONS_PER_FRAME &&
-      this.chunkQueue.length > 0 &&
+      this.chunkQueueHead < this.chunkQueue.length &&
       (processed === 0 || performance.now() - startedAt < CHUNK_BUILD_BUDGET_MS)
     ) {
-      this.chunkQueue.shift()?.run();
+      this.chunkQueue[this.chunkQueueHead++]?.run();
       processed += 1;
+    }
+    if (this.chunkQueueHead >= this.chunkQueue.length) {
+      this.chunkQueue.length = 0;
+      this.chunkQueueHead = 0;
     }
     if (processed > 0) this.finishChunkBatch();
   }

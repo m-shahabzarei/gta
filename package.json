@@ -26,6 +26,7 @@
     "validate:architecture": "node scripts/run-architecture-validation.mjs",
     "validate:major-buildings": "node scripts/run-major-buildings-validation.mjs",
     "validate:mobile": "node scripts/run-mobile-controls-validation.mjs",
+    "profile:runtime": "node scripts/run-runtime-performance-baseline.mjs",
     "smoke:mobile": "powershell -ExecutionPolicy Bypass -File scripts/mobile-browser-smoke.ps1",
     "smoke:major-buildings": "powershell -ExecutionPolicy Bypass -File scripts/major-buildings-browser-smoke.ps1",
     "smoke:transit": "powershell -ExecutionPolicy Bypass -File scripts/transit-browser-smoke.ps1",

@@ -23,6 +23,12 @@ export interface VehicleObbPose {
   heading: number;
   halfWidth: number;
   halfLength: number;
+  /** Cached local axes; refreshed only when heading changes. */
+  cachedHeading?: number;
+  cachedForwardX?: number;
+  cachedForwardY?: number;
+  cachedRightX?: number;
+  cachedRightY?: number;
 }
 
 export interface VehicleSweptBounds {
@@ -53,6 +59,17 @@ export function createVehicleContact(): VehicleContact {
     timeOfImpact: 1,
     swept: false,
   };
+}
+
+function ensurePoseAxes(pose: VehicleObbPose): void {
+  if (pose.cachedHeading === pose.heading && pose.cachedForwardX !== undefined) return;
+  const forwardX = Math.cos(pose.heading);
+  const forwardY = Math.sin(pose.heading);
+  pose.cachedHeading = pose.heading;
+  pose.cachedForwardX = forwardX;
+  pose.cachedForwardY = forwardY;
+  pose.cachedRightX = -forwardY;
+  pose.cachedRightY = forwardX;
 }
 
 function projectionRadius(
@@ -105,14 +122,16 @@ export function computeObbContact(
   second: VehicleObbPose,
   out: VehicleContact,
 ): boolean {
-  const firstForwardX = Math.cos(first.heading);
-  const firstForwardY = Math.sin(first.heading);
-  const firstRightX = -firstForwardY;
-  const firstRightY = firstForwardX;
-  const secondForwardX = Math.cos(second.heading);
-  const secondForwardY = Math.sin(second.heading);
-  const secondRightX = -secondForwardY;
-  const secondRightY = secondForwardX;
+  ensurePoseAxes(first);
+  ensurePoseAxes(second);
+  const firstForwardX = first.cachedForwardX!;
+  const firstForwardY = first.cachedForwardY!;
+  const firstRightX = first.cachedRightX!;
+  const firstRightY = first.cachedRightY!;
+  const secondForwardX = second.cachedForwardX!;
+  const secondForwardY = second.cachedForwardY!;
+  const secondRightX = second.cachedRightX!;
+  const secondRightY = second.cachedRightY!;
   const centerX = second.x - first.x;
   const centerY = second.y - first.y;
   let minimumOverlap = Infinity;
@@ -233,14 +252,16 @@ export function computeSweptObbContact(
 ): boolean {
   if (computeObbContact(currentFirst, currentSecond, out)) return true;
 
-  const firstForwardX = Math.cos(currentFirst.heading);
-  const firstForwardY = Math.sin(currentFirst.heading);
-  const firstRightX = -firstForwardY;
-  const firstRightY = firstForwardX;
-  const secondForwardX = Math.cos(currentSecond.heading);
-  const secondForwardY = Math.sin(currentSecond.heading);
-  const secondRightX = -secondForwardY;
-  const secondRightY = secondForwardX;
+  ensurePoseAxes(currentFirst);
+  ensurePoseAxes(currentSecond);
+  const firstForwardX = currentFirst.cachedForwardX!;
+  const firstForwardY = currentFirst.cachedForwardY!;
+  const firstRightX = currentFirst.cachedRightX!;
+  const firstRightY = currentFirst.cachedRightY!;
+  const secondForwardX = currentSecond.cachedForwardX!;
+  const secondForwardY = currentSecond.cachedForwardY!;
+  const secondRightX = currentSecond.cachedRightX!;
+  const secondRightY = currentSecond.cachedRightY!;
   const startCenterX = previousSecond.x - previousFirst.x;
   const startCenterY = previousSecond.y - previousFirst.y;
   const relativeDeltaX =
@@ -337,14 +358,18 @@ export function computeSweptObbContact(
   contactSecond.heading = secondHeading;
   contactSecond.halfWidth = currentSecond.halfWidth;
   contactSecond.halfLength = currentSecond.halfLength;
-  const contactFirstForwardX = Math.cos(firstHeading);
-  const contactFirstForwardY = Math.sin(firstHeading);
-  const contactFirstRightX = -contactFirstForwardY;
-  const contactFirstRightY = contactFirstForwardX;
-  const contactSecondForwardX = Math.cos(secondHeading);
-  const contactSecondForwardY = Math.sin(secondHeading);
-  const contactSecondRightX = -contactSecondForwardY;
-  const contactSecondRightY = contactSecondForwardX;
+  contactFirst.cachedHeading = undefined;
+  contactSecond.cachedHeading = undefined;
+  ensurePoseAxes(contactFirst);
+  ensurePoseAxes(contactSecond);
+  const contactFirstForwardX = contactFirst.cachedForwardX!;
+  const contactFirstForwardY = contactFirst.cachedForwardY!;
+  const contactFirstRightX = contactFirst.cachedRightX!;
+  const contactFirstRightY = contactFirst.cachedRightY!;
+  const contactSecondForwardX = contactSecond.cachedForwardX!;
+  const contactSecondForwardY = contactSecond.cachedForwardY!;
+  const contactSecondRightX = contactSecond.cachedRightX!;
+  const contactSecondRightY = contactSecond.cachedRightY!;
   out.normalX = normalX;
   out.normalY = normalY;
   out.pointX =
@@ -399,10 +424,12 @@ export function computeSweptBounds(
   current: VehicleObbPose,
   out: VehicleSweptBounds,
 ): void {
-  const previousForwardX = Math.cos(previous.heading);
-  const previousForwardY = Math.sin(previous.heading);
-  const currentForwardX = Math.cos(current.heading);
-  const currentForwardY = Math.sin(current.heading);
+  ensurePoseAxes(previous);
+  ensurePoseAxes(current);
+  const previousForwardX = previous.cachedForwardX!;
+  const previousForwardY = previous.cachedForwardY!;
+  const currentForwardX = current.cachedForwardX!;
+  const currentForwardY = current.cachedForwardY!;
   const previousExtentX =
     Math.abs(previousForwardX) * previous.halfLength +
     Math.abs(previousForwardY) * previous.halfWidth;

@@ -359,7 +359,10 @@ export class TrafficTelemetryCollector {
   }
 
   public recordScheduler(sample: TrafficSchedulerTelemetry): void {
-    this.pushBounded(this.schedulerSamples, sample, this.maxFrames);
+    // The scheduler reuses its bounded work buffers between fixed steps. Take
+    // an observational copy here so historical telemetry remains immutable
+    // while the hot path avoids allocating per-driver records.
+    this.pushBounded(this.schedulerSamples, cloneSchedulerTelemetry(sample), this.maxFrames);
     for (const tier of TIERS) {
       this.increment(`scheduler.scheduled.${tier}`, sample.scheduledByTier[tier] ?? 0);
       this.increment(`scheduler.deferred.${tier}`, sample.deferredByTier[tier] ?? 0);
@@ -473,6 +476,29 @@ export class TrafficTelemetryCollector {
     target.push(value);
     if (target.length > maxLength) target.splice(0, target.length - maxLength);
   }
+}
+
+function cloneSchedulerTelemetry(sample: TrafficSchedulerTelemetry): TrafficSchedulerTelemetry {
+  return {
+    fixedStep: sample.fixedStep,
+    scheduledByTier: { ...sample.scheduledByTier },
+    deferredByTier: { ...sample.deferredByTier },
+    queueBeforeByTier: { ...sample.queueBeforeByTier },
+    queueAfterByTier: { ...sample.queueAfterByTier },
+    oldestDeferredVehicleId: sample.oldestDeferredVehicleId,
+    maximumUpdateAgeMs: sample.maximumUpdateAgeMs,
+    averageUpdateAgeMs: sample.averageUpdateAgeMs,
+    p95UpdateAgeMs: sample.p95UpdateAgeMs,
+    fairnessGapMs: sample.fairnessGapMs,
+    nearDriversDeferred: sample.nearDriversDeferred,
+    catchUpDeltaMs: sample.catchUpDeltaMs.slice(),
+    catchUpDeltaHistogramMs: { ...sample.catchUpDeltaHistogramMs },
+    executionMsByDriver: { ...sample.executionMsByDriver },
+    trafficCpuMs: sample.trafficCpuMs,
+    navigationCpuMs: sample.navigationCpuMs,
+    steeringCpuMs: sample.steeringCpuMs,
+    collisionCpuMs: sample.collisionCpuMs,
+  };
 }
 
 export function emptySchedulerTelemetry(fixedStep: number): TrafficSchedulerTelemetry {

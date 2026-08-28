@@ -48,6 +48,18 @@ export class UIScene extends Phaser.Scene {
   private mobilePlatform: MobilePlatform | null = null;
   private mobileLayoutUnsub: (() => void) | null = null;
   private phoneButton: Button | null = null;
+  /** Reused minimap marker records; positions are refreshed in place each frame. */
+  private readonly blipsScratch: MiniMapBlip[] = [];
+  private readonly onServiceBlip = (kind: 'bus' | 'taxi' | 'snapp', position: Vector2): void => {
+    this.pushBlip(
+      position.x,
+      position.y,
+      kind === 'bus' ? 0x38bdf8 : kind === 'snapp' ? 0x13c8bc : 0xf6c453,
+      kind === 'bus' ? 3 : kind === 'snapp' ? 3 : 2.5,
+    );
+  };
+  private lastDistrictSource = '';
+  private lastFormattedDistrict = '';
 
   /** The active mission/gig target in world space, or null. */
   private objectiveTarget: Vector2 | null = getObjectiveTarget();
@@ -178,10 +190,13 @@ export class UIScene extends Phaser.Scene {
   }
 
   private formatDistrict(district: string): string {
-    return district
+    if (district === this.lastDistrictSource) return this.lastFormattedDistrict;
+    this.lastDistrictSource = district;
+    this.lastFormattedDistrict = district
       .split('-')
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ');
+    return this.lastFormattedDistrict;
   }
 
   private applyMobileLayout(): void {
@@ -229,56 +244,53 @@ export class UIScene extends Phaser.Scene {
 
   /** Collect minimap blips: police (red), vehicles (grey), objective (gold). */
   private gatherBlips(): MiniMapBlip[] {
-    const blips: MiniMapBlip[] = [];
+    const blips = this.blipsScratch;
+    blips.length = 0;
     try {
       const wanted = ServiceLocator.tryResolve<WantedSystem>(ServiceKeys.Wanted);
       if (wanted) {
         for (const officer of wanted.group.getChildren()) {
           const s = officer as Phaser.GameObjects.Sprite;
-          if (s.active) blips.push({ x: s.x, y: s.y, color: COLORS.HEALTH, size: 3 });
+          if (s.active) this.pushBlip(s.x, s.y, COLORS.HEALTH, 3);
         }
         for (const air of wanted.airGroup.getChildren()) {
           const s = air as Phaser.GameObjects.Sprite;
-          if (s.active) blips.push({ x: s.x, y: s.y, color: 0x3a6cff, size: 4 });
+          if (s.active) this.pushBlip(s.x, s.y, 0x3a6cff, 4);
         }
       }
       const vehicles = ServiceLocator.tryResolve<VehicleSystem>(ServiceKeys.Vehicle);
       if (vehicles) {
         for (const veh of vehicles.vehicles) {
           if (veh.isDestroyed) continue;
-          blips.push({ x: veh.sprite.x, y: veh.sprite.y, color: 0x8a8f98, size: 2 });
+          this.pushBlip(veh.sprite.x, veh.sprite.y, 0x8a8f98, 2);
         }
       }
       ServiceLocator.tryResolve<TransportationSystem>(ServiceKeys.Transportation)?.forEachServiceBlip(
-        (kind, position) => {
-          blips.push({
-            x: position.x,
-            y: position.y,
-            color: kind === 'bus' ? 0x38bdf8 : kind === 'snapp' ? 0x13c8bc : 0xf6c453,
-            size: kind === 'bus' ? 3 : kind === 'snapp' ? 3 : 2.5,
-          });
-        },
+        this.onServiceBlip,
       );
     } catch {
       // Systems may briefly be detached during scene transitions — ignore.
     }
     if (this.objectiveTarget) {
-      blips.push({
-        x: this.objectiveTarget.x,
-        y: this.objectiveTarget.y,
-        color: COLORS.ACCENT,
-        size: 4,
-      });
+      this.pushBlip(this.objectiveTarget.x, this.objectiveTarget.y, COLORS.ACCENT, 4);
     }
     if (this.waypointTarget) {
-      blips.push({
-        x: this.waypointTarget.x,
-        y: this.waypointTarget.y,
-        color: 0x22d3ee,
-        size: 3,
-      });
+      this.pushBlip(this.waypointTarget.x, this.waypointTarget.y, 0x22d3ee, 3);
     }
     return blips;
+  }
+
+  private pushBlip(x: number, y: number, color: number, size?: number): void {
+    const index = this.blipsScratch.length;
+    const existing = this.blipsScratch[index];
+    if (existing) {
+      existing.x = x;
+      existing.y = y;
+      existing.color = color;
+      existing.size = size;
+    } else {
+      this.blipsScratch.push({ x, y, color, size });
+    }
   }
 
   /** Convert a world-space point to screen-space using the gameplay camera. */
@@ -350,6 +362,9 @@ export class UIScene extends Phaser.Scene {
     this.deathFade = null;
     this.gameplayDebug = null;
     this.mobileControls = null;
+    this.blipsScratch.length = 0;
+    this.lastDistrictSource = '';
+    this.lastFormattedDistrict = '';
     this.phoneButton = null;
     this.mobilePlatform = null;
     this.mobileLayoutUnsub = null;

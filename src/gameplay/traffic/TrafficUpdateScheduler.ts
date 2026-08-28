@@ -31,6 +31,13 @@ export interface TrafficScheduleWork {
   readonly tier: TrafficSimulationTier;
 }
 
+interface MutableTrafficScheduleWork {
+  driver: TrafficDriver;
+  detail: TrafficSimulationDetail;
+  deltaSeconds: number;
+  tier: TrafficSimulationTier;
+}
+
 interface DriverSchedule {
   tier: TrafficSimulationTier;
   lastUpdateAt: number;
@@ -46,6 +53,8 @@ const VIRTUAL_INTERVAL_MS = 1000;
 const FRAME_BUDGET_MS = 3.5;
 const MEDIUM_GROUPS = 2;
 const FAR_GROUPS = 5;
+const NEVER_FORCE_NEAR = (): boolean => false;
+const HISTOGRAM_BUCKETS = ['0-50', '51-100', '101-250', '251-500', '501-1000', '1001-2000', '2001-plus'] as const;
 
 /**
  * Central budget owner for autonomous traffic. It keeps near vehicles on the
@@ -59,6 +68,20 @@ export class TrafficUpdateScheduler {
   private readonly farQueue: TrafficScheduleWork[] = [];
   private readonly virtualQueue: TrafficScheduleWork[] = [];
   private readonly statsValue: MutableTrafficSchedulerStats = emptyStats();
+  private readonly workPool: MutableTrafficScheduleWork[] = [];
+  private workCursor = 0;
+  private readonly ageSamples: number[] = [];
+  private readonly catchUpDeltaMs: number[] = [];
+  private readonly executionMsByDriver: Record<string, number> = Object.create(null) as Record<string, number>;
+  private readonly executionDriverIds: number[] = [];
+  private readonly scheduledByTier = emptyTierCounts();
+  private readonly deferredByTier = emptyTierCounts();
+  private readonly queueBeforeByTier = emptyTierCounts();
+  private readonly queueAfterByTier = emptyTierCounts();
+  private readonly catchUpDeltaHistogram: Record<string, number> = emptyHistogram();
+  private oldestDeferredVehicleIdValue: number | null = null;
+  private oldestDeferredAge = -Infinity;
+  private nearDriversDeferredValue = 0;
   private telemetryValue: TrafficSchedulerTelemetry = emptySchedulerTelemetry(0);
   private fixedStep = 0;
 
@@ -88,6 +111,10 @@ export class TrafficUpdateScheduler {
     this.mediumQueue.length = 0;
     this.farQueue.length = 0;
     this.virtualQueue.length = 0;
+    this.workCursor = 0;
+    this.ageSamples.length = 0;
+    this.catchUpDeltaMs.length = 0;
+    this.clearExecutionTimings();
     this.fixedStep = 0;
     this.telemetryValue = emptySchedulerTelemetry(0);
     assignStats(this.statsValue, emptyStats());
@@ -99,26 +126,26 @@ export class TrafficUpdateScheduler {
     player: Vector2 | null,
     drivers: Iterable<TrafficDriver>,
     execute: (work: TrafficScheduleWork) => void,
-    forceNear: (driver: TrafficDriver) => boolean = () => false,
+    forceNear: (driver: TrafficDriver) => boolean = NEVER_FORCE_NEAR,
   ): void {
     this.fixedStep += 1;
     this.nearQueue.length = 0;
     this.mediumQueue.length = 0;
     this.farQueue.length = 0;
     this.virtualQueue.length = 0;
+    this.workCursor = 0;
     const stats = this.statsValue;
     resetFrameStats(stats);
-
-    const scheduledByTier = emptyTierCounts();
-    const deferredByTier = emptyTierCounts();
-    const queueBeforeByTier = emptyTierCounts();
-    const queueAfterByTier = emptyTierCounts();
-    const ageSamples: number[] = [];
-    const catchUpDeltaMs: number[] = [];
-    const executionMsByDriver: Record<string, number> = {};
-    let oldestDeferredVehicleId: number | null = null;
-    let oldestDeferredAge = -Infinity;
-    let nearDriversDeferred = 0;
+    resetTierCounts(this.scheduledByTier);
+    resetTierCounts(this.deferredByTier);
+    resetTierCounts(this.queueBeforeByTier);
+    resetTierCounts(this.queueAfterByTier);
+    this.ageSamples.length = 0;
+    this.catchUpDeltaMs.length = 0;
+    this.clearExecutionTimings();
+    this.oldestDeferredVehicleIdValue = null;
+    this.oldestDeferredAge = -Infinity;
+    this.nearDriversDeferredValue = 0;
 
     for (const driver of drivers) {
       const tier = forceNear(driver) ? 'near' : this.tierForPosition(driver, player);
@@ -131,15 +158,15 @@ export class TrafficUpdateScheduler {
 
       if (!this.isDue(schedule, tier, now)) continue;
       const elapsedMs = Math.max(50, now - schedule.lastUpdateAt);
-      const work: TrafficScheduleWork = {
-        driver,
-        detail: detailFor(tier),
-        deltaSeconds: tier === 'near' ? fixedDeltaSeconds : elapsedMs / 1000,
-        tier,
-      };
-      ageSamples.push(elapsedMs);
-      catchUpDeltaMs.push(work.deltaSeconds * 1000);
-      queueBeforeByTier[tier] += 1;
+      const work = this.workPool[this.workCursor] ?? this.createWorkSlot();
+      this.workCursor += 1;
+      work.driver = driver;
+      work.detail = detailFor(tier);
+      work.deltaSeconds = tier === 'near' ? fixedDeltaSeconds : elapsedMs / 1000;
+      work.tier = tier;
+      this.ageSamples.push(elapsedMs);
+      this.catchUpDeltaMs.push(work.deltaSeconds * 1000);
+      this.queueBeforeByTier[tier] += 1;
       switch (tier) {
         case 'near':
           this.nearQueue.push(work);
@@ -172,93 +199,75 @@ export class TrafficUpdateScheduler {
       now,
       startedAt,
       execute,
-      scheduledByTier,
-      deferredByTier,
-      queueAfterByTier,
-      executionMsByDriver,
-      (vehicleId, age, tier) => {
-        if (age > oldestDeferredAge || (age === oldestDeferredAge && vehicleId < (oldestDeferredVehicleId ?? Infinity))) {
-          oldestDeferredAge = age;
-          oldestDeferredVehicleId = vehicleId;
-        }
-        if (tier === 'near') nearDriversDeferred += 1;
-      },
+      this.scheduledByTier,
+      this.deferredByTier,
+      this.queueAfterByTier,
+      this.executionMsByDriver,
     );
     this.executeQueue(
       this.mediumQueue,
       now,
       startedAt,
       execute,
-      scheduledByTier,
-      deferredByTier,
-      queueAfterByTier,
-      executionMsByDriver,
-      (vehicleId, age, tier) => {
-        if (age > oldestDeferredAge || (age === oldestDeferredAge && vehicleId < (oldestDeferredVehicleId ?? Infinity))) {
-          oldestDeferredAge = age;
-          oldestDeferredVehicleId = vehicleId;
-        }
-        if (tier === 'near') nearDriversDeferred += 1;
-      },
+      this.scheduledByTier,
+      this.deferredByTier,
+      this.queueAfterByTier,
+      this.executionMsByDriver,
     );
     this.executeQueue(
       this.farQueue,
       now,
       startedAt,
       execute,
-      scheduledByTier,
-      deferredByTier,
-      queueAfterByTier,
-      executionMsByDriver,
-      (vehicleId, age, tier) => {
-        if (age > oldestDeferredAge || (age === oldestDeferredAge && vehicleId < (oldestDeferredVehicleId ?? Infinity))) {
-          oldestDeferredAge = age;
-          oldestDeferredVehicleId = vehicleId;
-        }
-        if (tier === 'near') nearDriversDeferred += 1;
-      },
+      this.scheduledByTier,
+      this.deferredByTier,
+      this.queueAfterByTier,
+      this.executionMsByDriver,
     );
     this.executeQueue(
       this.virtualQueue,
       now,
       startedAt,
       execute,
-      scheduledByTier,
-      deferredByTier,
-      queueAfterByTier,
-      executionMsByDriver,
-      (vehicleId, age, tier) => {
-        if (age > oldestDeferredAge || (age === oldestDeferredAge && vehicleId < (oldestDeferredVehicleId ?? Infinity))) {
-          oldestDeferredAge = age;
-          oldestDeferredVehicleId = vehicleId;
-        }
-        if (tier === 'near') nearDriversDeferred += 1;
-      },
+      this.scheduledByTier,
+      this.deferredByTier,
+      this.queueAfterByTier,
+      this.executionMsByDriver,
     );
     stats.cpuMs = performance.now() - startedAt;
     stats.load = Math.min(1, stats.cpuMs / stats.budgetMs);
     stats.averageUpdateHz =
       stats.activeDrivers > 0 ? (stats.scheduledUpdates * 20) / stats.activeDrivers : 0;
-    const minimumAge = ageSamples.length > 0 ? Math.min(...ageSamples) : 0;
-    const maximumAge = ageSamples.length > 0 ? Math.max(...ageSamples) : 0;
-    const averageAge = ageSamples.length > 0
-      ? ageSamples.reduce((sum, value) => sum + value, 0) / ageSamples.length
+    let minimumAge = 0;
+    let maximumAge = 0;
+    let ageSum = 0;
+    for (let index = 0; index < this.ageSamples.length; index += 1) {
+      const age = this.ageSamples[index] ?? 0;
+      if (index === 0 || age < minimumAge) minimumAge = age;
+      if (index === 0 || age > maximumAge) maximumAge = age;
+      ageSum += age;
+    }
+    const averageAge = this.ageSamples.length > 0
+      ? ageSum / this.ageSamples.length
       : 0;
+    const p95UpdateAgeMs = percentileInPlace(this.ageSamples, 0.95);
+    resetHistogram(this.catchUpDeltaHistogram);
+    accumulateHistogram(this.catchUpDeltaMs, this.catchUpDeltaHistogram);
     this.telemetryValue = {
       fixedStep: this.fixedStep,
-      scheduledByTier,
-      deferredByTier,
-      queueBeforeByTier,
-      queueAfterByTier,
-      oldestDeferredVehicleId,
-      maximumUpdateAgeMs: Math.max(maximumAge, oldestDeferredAge > 0 ? oldestDeferredAge : 0),
+      scheduledByTier: this.scheduledByTier,
+      deferredByTier: this.deferredByTier,
+      queueBeforeByTier: this.queueBeforeByTier,
+      queueAfterByTier: this.queueAfterByTier,
+      oldestDeferredVehicleId: this.oldestDeferredVehicleIdValue,
+      maximumUpdateAgeMs: Math.max(maximumAge, this.oldestDeferredAge > 0 ? this.oldestDeferredAge : 0),
       averageUpdateAgeMs: averageAge,
-      p95UpdateAgeMs: percentile(ageSamples, 0.95),
+      p95UpdateAgeMs,
       fairnessGapMs: Math.max(0, maximumAge - minimumAge),
-      nearDriversDeferred,
-      catchUpDeltaMs,
-      catchUpDeltaHistogramMs: histogram(catchUpDeltaMs),
-      executionMsByDriver,
+      nearDriversDeferred: this.nearDriversDeferredValue,
+      catchUpDeltaMs: this.catchUpDeltaMs,
+      catchUpDeltaHistogramMs: this.catchUpDeltaHistogram,
+      executionMsByDriver: this.executionMsByDriver,
       trafficCpuMs: stats.cpuMs,
       navigationCpuMs: stats.navigationMs,
       steeringCpuMs: stats.steeringMs,
@@ -275,7 +284,6 @@ export class TrafficUpdateScheduler {
     deferredByTier: Record<TrafficSimulationTier, number>,
     queueAfterByTier: Record<TrafficSimulationTier, number>,
     executionMsByDriver: Record<string, number>,
-    onDeferred: (vehicleId: number, ageMs: number, tier: TrafficSimulationTier) => void,
   ): void {
     const stats = this.statsValue;
     for (const work of queue) {
@@ -284,12 +292,20 @@ export class TrafficUpdateScheduler {
         deferredByTier[work.tier] += 1;
         queueAfterByTier[work.tier] += 1;
         const ageMs = Math.max(50, now - (this.schedules.get(work.driver.id)?.lastUpdateAt ?? now));
-        onDeferred(work.driver.id, ageMs, work.tier);
+        if (
+          ageMs > this.oldestDeferredAge ||
+          (ageMs === this.oldestDeferredAge && work.driver.id < (this.oldestDeferredVehicleIdValue ?? Infinity))
+        ) {
+          this.oldestDeferredAge = ageMs;
+          this.oldestDeferredVehicleIdValue = work.driver.id;
+        }
+        if (work.tier === 'near') this.nearDriversDeferredValue += 1;
         continue;
       }
       const driverStartedAt = performance.now();
       execute(work);
-      executionMsByDriver[String(work.driver.id)] = performance.now() - driverStartedAt;
+      executionMsByDriver[work.driver.id] = performance.now() - driverStartedAt;
+      this.executionDriverIds.push(work.driver.id);
       const schedule = this.schedules.get(work.driver.id);
       if (schedule) schedule.lastUpdateAt = now;
       scheduledByTier[work.tier] += 1;
@@ -299,6 +315,22 @@ export class TrafficUpdateScheduler {
       stats.collisionMs += cost.collisionMs;
       stats.scheduledUpdates += 1;
     }
+  }
+
+  private createWorkSlot(): MutableTrafficScheduleWork {
+    const work = {
+      driver: null as unknown as TrafficDriver,
+      detail: 'frozen' as TrafficSimulationDetail,
+      deltaSeconds: 0,
+      tier: 'virtual' as TrafficSimulationTier,
+    };
+    this.workPool.push(work);
+    return work;
+  }
+
+  private clearExecutionTimings(): void {
+    for (const vehicleId of this.executionDriverIds) delete this.executionMsByDriver[vehicleId];
+    this.executionDriverIds.length = 0;
   }
 
   private orderByStaleness(queue: TrafficScheduleWork[]): void {
@@ -352,15 +384,24 @@ function emptyTierCounts(): Record<TrafficSimulationTier, number> {
   return { near: 0, medium: 0, far: 0, virtual: 0 };
 }
 
-function percentile(values: readonly number[], p: number): number {
+function percentileInPlace(values: number[], p: number): number {
   if (values.length === 0) return 0;
-  const sorted = values.slice().sort((a, b) => a - b);
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1));
-  return sorted[index] ?? 0;
+  values.sort((a, b) => a - b);
+  const index = Math.min(values.length - 1, Math.max(0, Math.ceil(values.length * p) - 1));
+  return values[index] ?? 0;
 }
 
-function histogram(values: readonly number[]): Readonly<Record<string, number>> {
+function emptyHistogram(): Record<string, number> {
   const result: Record<string, number> = {};
+  for (const bucket of HISTOGRAM_BUCKETS) result[bucket] = 0;
+  return result;
+}
+
+function resetHistogram(result: Record<string, number>): void {
+  for (const bucket of HISTOGRAM_BUCKETS) result[bucket] = 0;
+}
+
+function accumulateHistogram(values: readonly number[], result: Record<string, number>): void {
   for (const value of values) {
     const bucket = value <= 50
       ? '0-50'
@@ -377,7 +418,6 @@ function histogram(values: readonly number[]): Readonly<Record<string, number>> 
                 : '2001-plus';
     result[bucket] = (result[bucket] ?? 0) + 1;
   }
-  return result;
 }
 
 interface MutableTrafficSchedulerStats {
@@ -448,6 +488,13 @@ function resetFrameStats(stats: MutableTrafficSchedulerStats): void {
   stats.nearDrivers = 0;
   stats.mediumDrivers = 0;
   stats.farDrivers = 0;
+}
+
+function resetTierCounts(counts: Record<TrafficSimulationTier, number>): void {
+  counts.near = 0;
+  counts.medium = 0;
+  counts.far = 0;
+  counts.virtual = 0;
 }
 
 function assignStats(

@@ -68,6 +68,8 @@ export class VehicleSystem extends BaseSceneManager {
 
   /** Wall-clock time (ms) at which each destroyed vehicle first became a wreck. */
   private readonly wreckTimers = new Map<number, number>();
+  /** Reused removal worklist; normal traffic updates must not allocate. */
+  private readonly staleVehicles: Vehicle[] = [];
 
   /** Physics group holding every vehicle sprite; created per scene attach. */
   private vehicleGroup!: Phaser.Physics.Arcade.Group;
@@ -258,8 +260,8 @@ export class VehicleSystem extends BaseSceneManager {
     // This is the pre-Arcade pose capture. Resolution occurs only at WORLD_STEP.
     this.collisionRuntime.capturePreviousPoses();
     const playerPos = getPlayerRef()?.playerPosition ?? null;
-
-    const stale: Vehicle[] = [];
+    const stale = this.staleVehicles;
+    stale.length = 0;
 
     for (const vehicle of this.registry) {
       if (vehicle.isDestroyed) {
@@ -291,8 +293,10 @@ export class VehicleSystem extends BaseSceneManager {
       }
     }
 
-    for (const vehicle of stale.slice(0, MAX_VEHICLE_REMOVALS_PER_FRAME)) {
-      this.removeVehicle(vehicle);
+    const removals = Math.min(stale.length, MAX_VEHICLE_REMOVALS_PER_FRAME);
+    for (let index = 0; index < removals; index += 1) {
+      const vehicle = stale[index];
+      if (vehicle) this.removeVehicle(vehicle);
     }
 
     void delta;
@@ -321,6 +325,7 @@ export class VehicleSystem extends BaseSceneManager {
     this.vehiclePool.clear();
     this.pooledVehicleCount = 0;
     this.wreckTimers.clear();
+    this.staleVehicles.length = 0;
   }
 
   /** Far traffic keeps its coarse trajectory without AI, physics or avoidance. */

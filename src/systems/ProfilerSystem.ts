@@ -11,6 +11,7 @@ import type { ParticleManager } from '@/managers/ParticleManager';
 const SAMPLE_ALPHA = 0.12;
 const DISPLAY_INTERVAL_MS = 250;
 const GPU_QUERY_INTERVAL_FRAMES = 4;
+const FRAME_SAMPLE_CAPACITY = 600;
 
 interface GpuTimerExtension {
   readonly TIME_ELAPSED_EXT: number;
@@ -33,6 +34,12 @@ interface DrawHooks {
 export interface ProfilerSnapshot {
   fps: number;
   frameMs: number;
+  frameP50Ms: number;
+  frameP95Ms: number;
+  frameP99Ms: number;
+  framesOver20Ms: number;
+  framesOver33Ms: number;
+  framesOver50Ms: number;
   cpuMs: number;
   gpuMs: number | null;
   renderMs: number;
@@ -92,6 +99,10 @@ export class ProfilerSystem extends BaseSceneManager {
   private visibleValue = false;
   private displayTimer = 0;
   private frameNumber = 0;
+  private lastStepAt = 0;
+  private frameSampleCount = 0;
+  private frameSampleCursor = 0;
+  private readonly frameSamples = new Float64Array(FRAME_SAMPLE_CAPACITY);
   private cpuStartedAt = 0;
   private renderStartedAt = 0;
   private physicsStartedAt = 0;
@@ -154,6 +165,9 @@ export class ProfilerSystem extends BaseSceneManager {
     this.overlay = null;
     this.visibleValue = false;
     this.setDetailedEntityProfiling(false);
+    this.lastStepAt = 0;
+    this.frameSampleCount = 0;
+    this.frameSampleCursor = 0;
   }
 
   public update(_time: number, delta: number): void {
@@ -203,10 +217,17 @@ export class ProfilerSystem extends BaseSceneManager {
     const highway = world?.highwayRenderStats;
     const npcUpdates = entities?.updateTimeFor(EntityCategory.Npc) ?? 0;
     const vehicleUpdates = entities?.updateTimeFor(EntityCategory.Vehicle) ?? 0;
+    const frameStats = this.frameTimingStats();
 
     return {
       fps: this.fpsValue,
       frameMs: this.frameMsValue,
+      frameP50Ms: frameStats.p50,
+      frameP95Ms: frameStats.p95,
+      frameP99Ms: frameStats.p99,
+      framesOver20Ms: frameStats.over20,
+      framesOver33Ms: frameStats.over33,
+      framesOver50Ms: frameStats.over50,
       cpuMs: this.cpuMsValue,
       gpuMs: this.gpuMsValue,
       renderMs: this.renderMsValue,
@@ -279,11 +300,45 @@ export class ProfilerSystem extends BaseSceneManager {
   }
 
   private onPreStep(_time: number, delta: number): void {
-    this.cpuStartedAt = performance.now();
+    const now = performance.now();
+    this.cpuStartedAt = now;
     this.frameNumber += 1;
-    const safeDelta = Math.max(0.1, delta);
-    this.frameMsValue = smooth(this.frameMsValue, safeDelta);
-    this.fpsValue = smooth(this.fpsValue, 1000 / safeDelta);
+    // Phaser's delta is simulation time and can be capped. Measure the actual
+    // wall-clock interval between engine steps for hitch and FPS diagnostics.
+    const wallDelta = this.lastStepAt > 0 ? Math.max(0, now - this.lastStepAt) : Math.max(0.1, delta);
+    this.lastStepAt = now;
+    this.frameSamples[this.frameSampleCursor] = wallDelta;
+    this.frameSampleCursor = (this.frameSampleCursor + 1) % FRAME_SAMPLE_CAPACITY;
+    this.frameSampleCount = Math.min(this.frameSampleCount + 1, FRAME_SAMPLE_CAPACITY);
+    this.frameMsValue = smooth(this.frameMsValue, wallDelta);
+    this.fpsValue = smooth(this.fpsValue, 1000 / Math.max(0.1, wallDelta));
+  }
+
+  private frameTimingStats(): {
+    p50: number;
+    p95: number;
+    p99: number;
+    over20: number;
+    over33: number;
+    over50: number;
+  } {
+    const count = this.frameSampleCount;
+    if (count === 0) return { p50: 0, p95: 0, p99: 0, over20: 0, over33: 0, over50: 0 };
+    const ordered = new Array<number>(count);
+    const start = count === FRAME_SAMPLE_CAPACITY ? this.frameSampleCursor : 0;
+    let over20 = 0;
+    let over33 = 0;
+    let over50 = 0;
+    for (let index = 0; index < count; index += 1) {
+      const value = this.frameSamples[(start + index) % FRAME_SAMPLE_CAPACITY] ?? 0;
+      ordered[index] = value;
+      if (value > 20) over20 += 1;
+      if (value > 33.34) over33 += 1;
+      if (value > 50) over50 += 1;
+    }
+    ordered.sort((a, b) => a - b);
+    const at = (p: number): number => ordered[Math.min(count - 1, Math.ceil(count * p) - 1)] ?? 0;
+    return { p50: at(0.5), p95: at(0.95), p99: at(0.99), over20, over33, over50 };
   }
 
   private onPreRender(): void {
@@ -358,6 +413,7 @@ export class ProfilerSystem extends BaseSceneManager {
       'ENGINE DIAGNOSTICS',
       `GAME ${s.gameState}   ENGINE ${s.engineDiagnostics.engineState}`,
       `FPS ${s.fps.toFixed(1).padStart(5)}   FRAME ${fixed(s.frameMs)} ms`,
+      `FRAME p50 ${fixed(s.frameP50Ms)}  p95 ${fixed(s.frameP95Ms)}  p99 ${fixed(s.frameP99Ms)}  >20/>33/>50 ${s.framesOver20Ms}/${s.framesOver33Ms}/${s.framesOver50Ms}`,
       `CPU ${fixed(s.cpuMs)} ms   GPU ${gpu}`,
       `RENDER ${fixed(s.renderMs)} ms   PHYSICS ${fixed(s.physicsMs)} ms`,
       `PHASE ${s.engineDiagnostics.currentUpdatePhase}   SYSTEM ${s.engineDiagnostics.currentSystem ?? 'idle'}`,
