@@ -12,6 +12,7 @@ import { ServiceLocator } from '@/core/ServiceLocator';
 import { ServiceKeys } from '@/config/ServiceKeys';
 import { eventBus } from '@/core/EventBus';
 import { EventKeys } from '@/config/EventKeys';
+import { classifyPropertyMapStatus } from '@/gameplay/HousingMapPresentation';
 
 const failures: string[] = [];
 let assertions = 0;
@@ -19,6 +20,19 @@ const check = (condition: boolean, message: string): void => {
   assertions += 1;
   if (!condition) failures.push(message);
 };
+
+check(
+  classifyPropertyMapStatus('property:test', [], null) === 'for-sale',
+  'unowned property must render as for-sale on the map',
+);
+check(
+  classifyPropertyMapStatus('property:test', ['property:test'], null) === 'owned',
+  'owned property must render as owned on the map',
+);
+check(
+  classifyPropertyMapStatus('property:test', ['property:test'], 'property:test') === 'active',
+  'active home must render as active on the map',
+);
 
 function fixtureMap(): MapData {
   const cities = [

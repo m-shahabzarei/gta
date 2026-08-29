@@ -16,6 +16,8 @@ import {
   type MajorBuildingDefinition,
   type MajorBuildingIcon,
   type MapData,
+  type PropertyDefinition,
+  type RealEstateOfficeDefinition,
   type WorldCity,
   type WorldLandmark,
 } from '@/gameplay/types';
@@ -27,6 +29,7 @@ import type { WorldManager } from '@/systems/WorldManager';
 import type { MissionSystem } from '@/systems/MissionSystem';
 import type { TransportationSystem } from '@/systems/TransportationSystem';
 import type { TrafficSystem } from '@/systems/TrafficSystem';
+import type { HousingSystem } from '@/systems/HousingSystem';
 import type { TaxiDestination, TaxiFareQuote } from '@/gameplay/transit';
 import { sampleSpline } from '@/gameplay/traffic/SplineMath';
 import type { MobilePlatform } from '@/platform';
@@ -35,6 +38,19 @@ import {
   majorBuildingIconHitRadius,
   paintMajorBuildingIcon,
 } from '@/ui/hud/MajorBuildingIconPainter';
+import {
+  PROPERTY_MAP_COLORS,
+  REAL_ESTATE_OFFICE_COLOR,
+  paintRealEstateOfficeIcon,
+  paintPropertyMapIcon,
+  propertyMapIconHitRadius,
+} from '@/ui/hud/PropertyMapIconPainter';
+import {
+  classifyPropertyMapStatus,
+  formatPropertyMapPrice,
+  propertyMapStatusLabel,
+  type PropertyMapStatus,
+} from '@/gameplay/HousingMapPresentation';
 
 interface MapRect {
   x: number;
@@ -47,10 +63,27 @@ interface LegendItem {
   label: string;
   color?: number;
   icon?: MajorBuildingIcon;
+  propertyStatus?: PropertyMapStatus;
+  count?: number;
+  shape?: 'circle' | 'diamond' | 'line';
+  realEstateOffice?: boolean;
 }
 
 interface MajorPoiScreenTarget {
   building: MajorBuildingDefinition;
+  screen: Vector2;
+  hitRadius: number;
+}
+
+interface PropertyScreenTarget {
+  property: PropertyDefinition;
+  status: PropertyMapStatus;
+  screen: Vector2;
+  hitRadius: number;
+}
+
+interface RealEstateOfficeScreenTarget {
+  office: RealEstateOfficeDefinition;
   screen: Vector2;
   hitRadius: number;
 }
@@ -73,7 +106,7 @@ const VIEW: MapRect = {
 const PANEL_X = 24;
 const PANEL_Y = 72;
 const PANEL_WIDTH = 228;
-const PANEL_HEIGHT = 542;
+const PANEL_HEIGHT = 594;
 const TOP_BAR_HEIGHT = 46;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 7;
@@ -83,8 +116,9 @@ const PLAYER_COLOR = 0x7dd3fc;
 const WAYPOINT_COLOR = 0x22d3ee;
 const OBJECTIVE_COLOR = COLORS.ACCENT;
 const FULL_MAP_POI_SIZE = 13;
-const POI_CARD_WIDTH = 268;
-const POI_CARD_HEIGHT = 118;
+const PROPERTY_MARKER_SIZE = 12;
+const POI_CARD_WIDTH = 300;
+const POI_CARD_HEIGHT = 164;
 
 export class MapScene extends Phaser.Scene {
   private mobile = false;
@@ -93,6 +127,8 @@ export class MapScene extends Phaser.Scene {
   private viewRect: MapRect = { ...VIEW };
   private mapData: MapData | null = null;
   private content: Phaser.GameObjects.Container | null = null;
+  private mapMaskSource: Phaser.GameObjects.Graphics | null = null;
+  private mapContentMask: Phaser.Display.Masks.GeometryMask | null = null;
   private tileLayer: Phaser.GameObjects.Graphics | null = null;
   private cityLayer: Phaser.GameObjects.Graphics | null = null;
   private routeLayer: Phaser.GameObjects.Graphics | null = null;
@@ -110,9 +146,15 @@ export class MapScene extends Phaser.Scene {
   private taxiConfirmButton: Button | null = null;
   private readonly cityLabels: Phaser.GameObjects.Text[] = [];
   private readonly poiTargets: MajorPoiScreenTarget[] = [];
+  private readonly propertyTargets: PropertyScreenTarget[] = [];
+  private readonly realEstateOfficeTargets: RealEstateOfficeScreenTarget[] = [];
   private uiZones: Phaser.Geom.Rectangle[] = [];
   private hoveredPoiId: string | null = null;
   private selectedPoiId: string | null = null;
+  private hoveredPropertyId: string | null = null;
+  private selectedPropertyId: string | null = null;
+  private hoveredRealEstateOfficeId: string | null = null;
+  private selectedRealEstateOfficeId: string | null = null;
   private taxiMode = false;
   private taxiDestination: TaxiDestination | null = null;
   private taxiFare: TaxiFareQuote | null = null;
@@ -138,12 +180,18 @@ export class MapScene extends Phaser.Scene {
   public create(): void {
     this.hoveredPoiId = null;
     this.selectedPoiId = null;
+    this.hoveredPropertyId = null;
+    this.selectedPropertyId = null;
+    this.hoveredRealEstateOfficeId = null;
+    this.selectedRealEstateOfficeId = null;
     this.taxiDestination = null;
     this.taxiFare = null;
     this.taxiMode =
       ServiceLocator.tryResolve<TransportationSystem>(ServiceKeys.Transportation)
         ?.taxiDestinationSelectionActive ?? false;
     this.poiTargets.length = 0;
+    this.propertyTargets.length = 0;
+    this.realEstateOfficeTargets.length = 0;
     const platform = ServiceLocator.tryResolve<MobilePlatform>(ServiceKeys.Platform);
     this.mobile = platform?.isMobile ?? false;
     if (platform?.isMobile) {
@@ -227,6 +275,75 @@ export class MapScene extends Phaser.Scene {
     };
   }
 
+  /** Read-only browser validation surface for the property marker layer. */
+  public debugPropertySnapshot(): {
+    catalogCount: number;
+    renderedPropertyCount: number;
+    officeCount: number;
+    renderedOfficeCount: number;
+    selectedId: string | null;
+    hoveredId: string | null;
+    selectedOfficeId: string | null;
+    hoveredOfficeId: string | null;
+    statusCounts: Record<PropertyMapStatus, number>;
+    renderedProperties: Array<{
+      id: string;
+      name: string;
+      cityId: PropertyDefinition['cityId'];
+      status: PropertyMapStatus;
+      screen: Vector2;
+      entranceWorldPosition: Vector2;
+      hitRadius: number;
+      insideView: boolean;
+    }>;
+    renderedOffices: Array<{
+      id: string;
+      cityId: RealEstateOfficeDefinition['cityId'];
+      screen: Vector2;
+      worldPosition: Vector2;
+      hitRadius: number;
+      insideView: boolean;
+    }>;
+  } {
+    const properties = this.validProperties();
+    const offices = this.realEstateOffices();
+    const statusCounts: Record<PropertyMapStatus, number> = {
+      'for-sale': 0,
+      owned: 0,
+      active: 0,
+    };
+    for (const property of properties) statusCounts[this.propertyStatus(property)] += 1;
+    return {
+      catalogCount: properties.length,
+      renderedPropertyCount: this.propertyTargets.length,
+      officeCount: offices.length,
+      renderedOfficeCount: this.realEstateOfficeTargets.length,
+      selectedId: this.selectedPropertyId,
+      hoveredId: this.hoveredPropertyId,
+      selectedOfficeId: this.selectedRealEstateOfficeId,
+      hoveredOfficeId: this.hoveredRealEstateOfficeId,
+      statusCounts,
+      renderedProperties: this.propertyTargets.map(({ property, status, screen, hitRadius }) => ({
+        id: property.id,
+        name: property.displayName,
+        cityId: property.cityId,
+        status,
+        screen: { ...screen },
+        entranceWorldPosition: { ...property.entranceWorldPosition },
+        hitRadius,
+        insideView: this.isInView(screen.x, screen.y),
+      })),
+      renderedOffices: this.realEstateOfficeTargets.map(({ office, screen, hitRadius }) => ({
+        id: office.id,
+        cityId: office.cityId,
+        screen: { ...screen },
+        worldPosition: { ...office.npcSpawnPosition },
+        hitRadius,
+        insideView: this.isInView(screen.x, screen.y),
+      })),
+    };
+  }
+
   private buildChrome(): void {
     const topBarHeight = this.mobile ? 94 : TOP_BAR_HEIGHT;
     this.add.rectangle(0, 0, this.viewportWidth, this.viewportHeight, 0x06070d, 0.98).setOrigin(0);
@@ -238,6 +355,22 @@ export class MapScene extends Phaser.Scene {
       fontStyle: 'bold',
       color: this.hex(COLORS.ACCENT),
     });
+    if (!this.mobile) {
+      const propertyCount = this.validProperties().length;
+      const officeCount = this.realEstateOffices().length;
+      this.add.text(
+        this.taxiMode ? 264 : 174,
+        17,
+        this.taxiMode
+          ? 'SELECT A MARKER OR ROAD POINT'
+          : `${propertyCount} HOMES • ${officeCount} OFFICES  •  CLICK A MARKER TO SET ROUTE`,
+        {
+          fontFamily: 'Courier New',
+          fontSize: '12px',
+          color: this.hex(0x94a3b8),
+        },
+      );
+    }
 
     this.add
       .rectangle(
@@ -267,26 +400,27 @@ export class MapScene extends Phaser.Scene {
     this.buildLegend();
     this.buildButtons();
 
-    this.statusText = this.add.text(PANEL_X + 16, PANEL_Y + PANEL_HEIGHT - 38, '', {
+    this.statusText = this.add.text(PANEL_X + 16, PANEL_Y + PANEL_HEIGHT - 28, '', {
       fontFamily: 'Courier New',
-      fontSize: '14px',
-      color: this.hex(0x9aa0a6),
+      fontSize: '12px',
+      fontStyle: 'bold',
+      color: this.hex(0xcbd5e1),
       wordWrap: { width: PANEL_WIDTH - 32 },
     });
     this.cityStatusText = this.add.text(
       PANEL_X + 16,
-      PANEL_Y + (this.taxiMode ? 312 : 332),
+      PANEL_Y + (this.taxiMode ? 400 : 438),
       'CURRENT: TEHRAN',
       {
-      fontFamily: 'Courier New',
-      fontSize: '13px',
-      fontStyle: 'bold',
-      color: this.hex(COLORS.ACCENT),
-      wordWrap: { width: PANEL_WIDTH - 32 },
+        fontFamily: 'Courier New',
+        fontSize: '12px',
+        fontStyle: 'bold',
+        color: this.hex(COLORS.ACCENT),
+        wordWrap: { width: PANEL_WIDTH - 32 },
       },
     );
     if (this.taxiMode) {
-      this.taxiQuoteText = this.add.text(PANEL_X + 16, PANEL_Y + 338, 'Select a destination', {
+      this.taxiQuoteText = this.add.text(PANEL_X + 16, PANEL_Y + 426, 'Select a destination', {
         fontFamily: 'Courier New',
         fontSize: '12px',
         color: this.hex(0xf6c453),
@@ -311,7 +445,7 @@ export class MapScene extends Phaser.Scene {
         fontFamily: 'Courier New',
         fontSize: '12px',
         color: this.hex(0xcbd5e1),
-        lineSpacing: 3,
+        lineSpacing: 4,
         wordWrap: { width: POI_CARD_WIDTH - 28 },
       })
       .setDepth(13)
@@ -330,42 +464,152 @@ export class MapScene extends Phaser.Scene {
   }
 
   private buildLegend(): void {
-    this.add.text(PANEL_X + 16, PANEL_Y + 18, 'LEGEND', {
+    const housing = this.housing();
+    const properties = this.validProperties();
+    const offices = this.realEstateOffices(housing);
+    const statusCounts: Record<PropertyMapStatus, number> = {
+      'for-sale': 0,
+      owned: 0,
+      active: 0,
+    };
+    for (const property of properties) statusCounts[this.propertyStatus(property, housing)] += 1;
+
+    this.add.text(PANEL_X + 16, PANEL_Y + 16, 'MAP GUIDE', {
       fontFamily: 'Courier New',
       fontSize: '16px',
       fontStyle: 'bold',
       color: this.hex(COLORS.TEXT),
     });
+    this.add.text(
+      PANEL_X + 16,
+      PANEL_Y + 39,
+      `${properties.length} HOMES • ${offices.length} OFFICES`,
+      {
+        fontFamily: 'Courier New',
+        fontSize: '11px',
+        fontStyle: 'bold',
+        color: this.hex(0x94a3b8),
+      },
+    );
 
     const legendIcons = this.add.graphics();
-    const items: LegendItem[] = [
-      { label: 'Player', color: PLAYER_COLOR },
-      { label: 'Mission', color: OBJECTIVE_COLOR },
-      { label: 'Waypoint', color: WAYPOINT_COLOR },
-      { label: 'City Area', color: 0xf59e0b },
-      { label: 'Highway Route', color: 0xf8d36e },
-      { label: 'Airport', color: 0x94a3b8 },
-      { label: 'Hospital', icon: 'medical-cross' },
-      { label: 'Police Station', icon: 'police-badge' },
-      { label: 'Services / Shops', color: 0x8b5cf6 },
-      { label: 'Nature / View', color: 0x4cbf87 },
-    ];
+    legendIcons.lineStyle(1, 0xffffff, 0.08);
+    legendIcons.lineBetween(PANEL_X + 16, PANEL_Y + 59, PANEL_X + PANEL_WIDTH - 16, PANEL_Y + 59);
 
-    items.forEach((item, index) => {
-      const y = PANEL_Y + 58 + index * 25;
-      if (item.icon) {
-        paintMajorBuildingIcon(legendIcons, item.icon, PANEL_X + 26, y + 7, 8);
+    const addHeading = (label: string, y: number): void => {
+      this.add.text(PANEL_X + 16, y, label, {
+        fontFamily: 'Courier New',
+        fontSize: '11px',
+        fontStyle: 'bold',
+        color: this.hex(COLORS.ACCENT),
+      });
+    };
+    const addItem = (item: LegendItem, y: number): void => {
+      const iconX = PANEL_X + 27;
+      const iconY = y + 7;
+      if (item.realEstateOffice) {
+        paintRealEstateOfficeIcon(legendIcons, iconX, iconY, 8);
+      } else if (item.propertyStatus) {
+        paintPropertyMapIcon(legendIcons, item.propertyStatus, iconX, iconY, 8);
+      } else if (item.icon) {
+        paintMajorBuildingIcon(legendIcons, item.icon, iconX, iconY, 7);
       } else {
-        this.add
-          .circle(PANEL_X + 26, y + 7, 5, item.color ?? COLORS.TEXT, 1)
-          .setStrokeStyle(2, 0xffffff, 0.75);
+        const color = item.color ?? COLORS.TEXT;
+        legendIcons.lineStyle(1.5, 0xffffff, 0.8);
+        legendIcons.fillStyle(color, 1);
+        if (item.shape === 'diamond') {
+          legendIcons.beginPath();
+          legendIcons.moveTo(iconX, iconY - 5);
+          legendIcons.lineTo(iconX + 5, iconY);
+          legendIcons.lineTo(iconX, iconY + 5);
+          legendIcons.lineTo(iconX - 5, iconY);
+          legendIcons.closePath();
+          legendIcons.fillPath();
+          legendIcons.strokePath();
+        } else if (item.shape === 'line') {
+          legendIcons.lineStyle(3, color, 1);
+          legendIcons.lineBetween(iconX - 7, iconY, iconX + 7, iconY);
+          legendIcons.lineStyle(1, 0xffffff, 0.55);
+          legendIcons.strokeCircle(iconX, iconY, 7);
+        } else {
+          legendIcons.fillCircle(iconX, iconY, 5);
+          legendIcons.strokeCircle(iconX, iconY, 5);
+        }
       }
       this.add.text(PANEL_X + 42, y, item.label, {
         fontFamily: 'Courier New',
         fontSize: '12px',
         color: this.hex(COLORS.TEXT),
       });
+      if (item.count !== undefined) {
+        this.add.text(PANEL_X + PANEL_WIDTH - 48, y, String(item.count), {
+          fontFamily: 'Courier New',
+          fontSize: '12px',
+          fontStyle: 'bold',
+          color: this.hex(
+            item.propertyStatus ? PROPERTY_MAP_COLORS[item.propertyStatus] : COLORS.TEXT,
+          ),
+          fixedWidth: 24,
+          align: 'right',
+        });
+      }
+    };
+
+    addHeading('NAVIGATION', PANEL_Y + 69);
+    addItem({ label: 'You', color: PLAYER_COLOR, shape: 'diamond' }, PANEL_Y + 88);
+    addItem({ label: 'Mission', color: OBJECTIVE_COLOR, shape: 'diamond' }, PANEL_Y + 109);
+    addItem({ label: 'Waypoint / route', color: WAYPOINT_COLOR, shape: 'diamond' }, PANEL_Y + 130);
+
+    addHeading('PROPERTIES', PANEL_Y + 155);
+    addItem(
+      { label: 'For sale', propertyStatus: 'for-sale', count: statusCounts['for-sale'] },
+      PANEL_Y + 174,
+    );
+    addItem(
+      { label: 'Owned home', propertyStatus: 'owned', count: statusCounts.owned },
+      PANEL_Y + 195,
+    );
+    addItem(
+      { label: 'Active home', propertyStatus: 'active', count: statusCounts.active },
+      PANEL_Y + 216,
+    );
+    addItem(
+      { label: 'Real estate office', realEstateOffice: true, count: offices.length },
+      PANEL_Y + 237,
+    );
+
+    addHeading('PLACES + ROUTES', PANEL_Y + 258);
+    addItem({ label: 'Hospital', icon: 'medical-cross' }, PANEL_Y + 277);
+    addItem({ label: 'Police station', icon: 'police-badge' }, PANEL_Y + 297);
+    addItem({ label: 'Services / transit', color: 0x8b5cf6 }, PANEL_Y + 317);
+    addItem({ label: 'City / highway', color: 0xf8d36e, shape: 'line' }, PANEL_Y + 337);
+
+    const helpX = PANEL_X + 12;
+    const helpY = PANEL_Y + 356;
+    const helpWidth = PANEL_WIDTH - 24;
+    legendIcons.fillStyle(0x070a12, 0.82);
+    legendIcons.fillRoundedRect(helpX, helpY, helpWidth, 74, 7);
+    legendIcons.lineStyle(1, 0xffffff, 0.12);
+    legendIcons.strokeRoundedRect(helpX, helpY, helpWidth, 74, 7);
+    this.add.text(helpX + 10, helpY + 8, 'CONTROLS', {
+      fontFamily: 'Courier New',
+      fontSize: '11px',
+      fontStyle: 'bold',
+      color: this.hex(COLORS.ACCENT),
     });
+    this.add.text(
+      helpX + 10,
+      helpY + 27,
+      ['DRAG  Pan     WHEEL  Zoom', 'CLICK marker   Set route', 'HOME  Fit all  •  F  Locate'].join(
+        '\n',
+      ),
+      {
+        fontFamily: 'Courier New',
+        fontSize: '11px',
+        color: this.hex(0xcbd5e1),
+        lineSpacing: 3,
+      },
+    );
   }
 
   private buildButtons(): void {
@@ -391,14 +635,14 @@ export class MapScene extends Phaser.Scene {
       onClick: () => this.zoomAt(1 / ZOOM_STEP, this.viewCenterScreen()),
     });
     const clear = this.taxiMode
-      ? new Button(this, PANEL_X + PANEL_WIDTH / 2, PANEL_Y + (this.mobile ? 424 : 414), {
+      ? new Button(this, PANEL_X + PANEL_WIDTH / 2, PANEL_Y + (this.mobile ? 424 : 493), {
           text: 'Cancel Trip',
           width: PANEL_WIDTH - 32,
           height: this.mobile ? 76 : 38,
           onClick: () => this.cancelTaxiSelection(),
         })
-      : new Button(this, PANEL_X + PANEL_WIDTH / 2, PANEL_Y + (this.mobile ? 424 : 368), {
-          text: 'Clear Waypoint',
+      : new Button(this, PANEL_X + PANEL_WIDTH / 2, PANEL_Y + (this.mobile ? 424 : 518), {
+          text: 'Clear Route',
           width: PANEL_WIDTH - 32,
           height: this.mobile ? 76 : 38,
           onClick: () => this.clearWaypoint(),
@@ -419,7 +663,7 @@ export class MapScene extends Phaser.Scene {
       this.taxiConfirmButton = new Button(
         this,
         PANEL_X + PANEL_WIDTH / 2,
-        PANEL_Y + (this.mobile ? 510 : 462),
+        PANEL_Y + (this.mobile ? 510 : 542),
         {
           text: 'Confirm Fare',
           width: PANEL_WIDTH - 32,
@@ -440,6 +684,18 @@ export class MapScene extends Phaser.Scene {
     this.dynamicMarkerLayer = this.add.graphics();
     this.poiLayer = this.add.graphics().setDepth(6);
     this.playerOverlayLayer = this.add.graphics().setDepth(7);
+    this.mapMaskSource = this.make.graphics({ x: 0, y: 0 }, false);
+    this.mapMaskSource.fillStyle(0xffffff, 1);
+    this.mapMaskSource.fillRect(
+      this.viewRect.x,
+      this.viewRect.y,
+      this.viewRect.width,
+      this.viewRect.height,
+    );
+    this.mapContentMask = this.mapMaskSource.createGeometryMask();
+    this.content.setMask(this.mapContentMask);
+    this.poiLayer.setMask(this.mapContentMask);
+    this.playerOverlayLayer.setMask(this.mapContentMask);
     this.content.add([
       this.tileLayer,
       this.cityLayer,
@@ -593,7 +849,7 @@ export class MapScene extends Phaser.Scene {
     g.clear();
     this.drawTransitRouteOverlays(g, start);
     if (!start || !target) return;
-    const taxiRoute = this.taxiMode ? this.taxiFare?.route.laneIds ?? null : null;
+    const taxiRoute = this.taxiMode ? (this.taxiFare?.route.laneIds ?? null) : null;
     const points = taxiRoute
       ? this.laneRoutePoints(taxiRoute, start, target)
       : this.roadRoutePreviewPoints(start, target);
@@ -602,7 +858,7 @@ export class MapScene extends Phaser.Scene {
 
   /** Draw cached city lines only when they can be read at the current map scale. */
   private drawTransitRouteOverlays(g: Phaser.GameObjects.Graphics, player: Vector2 | null): void {
-    const currentCityId = player ? this.cityForPoint(player)?.id ?? null : null;
+    const currentCityId = player ? (this.cityForPoint(player)?.id ?? null) : null;
     const showAllCities = this.zoom >= 1.7;
     for (const route of this.transitRouteLines) {
       if (!showAllCities && currentCityId !== route.cityId) continue;
@@ -645,11 +901,7 @@ export class MapScene extends Phaser.Scene {
   }
 
   /** Turn legal lane ids into a sparse, render-friendly road polyline. */
-  private laneRoutePoints(
-    laneIds: readonly string[],
-    start?: Vector2,
-    end?: Vector2,
-  ): Vector2[] {
+  private laneRoutePoints(laneIds: readonly string[], start?: Vector2, end?: Vector2): Vector2[] {
     const network = ServiceLocator.tryResolve<TrafficSystem>(ServiceKeys.Traffic)?.roadNetwork;
     if (!network) return start && end ? [start, end] : [];
     const points: Vector2[] = [];
@@ -668,8 +920,13 @@ export class MapScene extends Phaser.Scene {
   }
 
   private roadRoutePreviewPoints(start: Vector2, target: Vector2): Vector2[] {
-    const preview = ServiceLocator.tryResolve<TrafficSystem>(ServiceKeys.Traffic)?.routePreview(start, target);
-    return preview ? this.laneRoutePoints(preview.laneIds, start, target) : this.routePreviewPoints(start, target);
+    const preview = ServiceLocator.tryResolve<TrafficSystem>(ServiceKeys.Traffic)?.routePreview(
+      start,
+      target,
+    );
+    return preview
+      ? this.laneRoutePoints(preview.laneIds, start, target)
+      : this.routePreviewPoints(start, target);
   }
 
   private appendRoutePoints(target: Vector2[], source: readonly Vector2[]): void {
@@ -678,7 +935,9 @@ export class MapScene extends Phaser.Scene {
 
   private appendRoutePoint(target: Vector2[], point: Vector2): void {
     const previous = target[target.length - 1];
-    if (previous && Phaser.Math.Distance.Between(previous.x, previous.y, point.x, point.y) < 2) return;
+    if (previous && Phaser.Math.Distance.Between(previous.x, previous.y, point.x, point.y) < 2) {
+      return;
+    }
     target.push({ x: point.x, y: point.y });
   }
 
@@ -773,11 +1032,7 @@ export class MapScene extends Phaser.Scene {
   }
 
   /** Dedicated transit sign used on the full map instead of a generic POI dot. */
-  private drawBusStopMarker(
-    g: Phaser.GameObjects.Graphics,
-    point: Vector2,
-    size: number,
-  ): void {
+  private drawBusStopMarker(g: Phaser.GameObjects.Graphics, point: Vector2, size: number): void {
     const x = point.x / TILE_SIZE;
     const y = point.y / TILE_SIZE;
     g.fillStyle(0x38bdf8, 1);
@@ -794,6 +1049,55 @@ export class MapScene extends Phaser.Scene {
     if (!map || !g) return;
     g.clear();
     this.poiTargets.length = 0;
+    this.propertyTargets.length = 0;
+    this.realEstateOfficeTargets.length = 0;
+
+    const housing = this.housing();
+    for (const office of this.realEstateOffices(housing)) {
+      const screen = this.worldToMapScreen(office.npcSpawnPosition);
+      const hitRadius = Math.max(
+        propertyMapIconHitRadius(PROPERTY_MARKER_SIZE),
+        this.mobile ? 22 : 16,
+      );
+      if (!this.isInViewWithMargin(screen.x, screen.y, hitRadius + 3)) continue;
+
+      this.realEstateOfficeTargets.push({ office, screen, hitRadius });
+      const selected = this.selectedRealEstateOfficeId === office.id;
+      const hovered = this.hoveredRealEstateOfficeId === office.id;
+      const x = Math.round(screen.x);
+      const y = Math.round(screen.y);
+      if (selected || hovered) {
+        g.fillStyle(REAL_ESTATE_OFFICE_COLOR, selected ? 0.2 : 0.12);
+        g.fillCircle(x, y, hitRadius + (selected ? 7 : 4));
+        g.lineStyle(selected ? 3 : 2, selected ? COLORS.ACCENT : 0xffffff, 0.95);
+        g.strokeCircle(x, y, hitRadius + (selected ? 5 : 3));
+      }
+      paintRealEstateOfficeIcon(g, x, y, PROPERTY_MARKER_SIZE);
+    }
+
+    for (const property of this.validProperties(housing)) {
+      const screen = this.worldToMapScreen(property.entranceWorldPosition);
+      const status = this.propertyStatus(property, housing);
+      const hitRadius = Math.max(
+        propertyMapIconHitRadius(PROPERTY_MARKER_SIZE),
+        this.mobile ? 22 : 16,
+      );
+      if (!this.isInViewWithMargin(screen.x, screen.y, hitRadius + 3)) continue;
+
+      this.propertyTargets.push({ property, status, screen, hitRadius });
+      const selected = this.selectedPropertyId === property.id;
+      const hovered = this.hoveredPropertyId === property.id;
+      const x = Math.round(screen.x);
+      const y = Math.round(screen.y);
+
+      if (selected || hovered) {
+        g.fillStyle(PROPERTY_MAP_COLORS[status], selected ? 0.2 : 0.12);
+        g.fillCircle(x, y, hitRadius + (selected ? 7 : 4));
+        g.lineStyle(selected ? 3 : 2, selected ? COLORS.ACCENT : 0xffffff, 0.95);
+        g.strokeCircle(x, y, hitRadius + (selected ? 5 : 3));
+      }
+      paintPropertyMapIcon(g, status, x, y, PROPERTY_MARKER_SIZE);
+    }
 
     for (const building of map.majorBuildings) {
       const screen = this.worldToMapScreen(building.worldPosition);
@@ -877,6 +1181,38 @@ export class MapScene extends Phaser.Scene {
     return best;
   }
 
+  private findPropertyAtScreen(x: number, y: number): PropertyScreenTarget | null {
+    let best: PropertyScreenTarget | null = null;
+    let bestDistanceSq = Infinity;
+    for (const target of this.propertyTargets) {
+      const dx = target.screen.x - x;
+      const dy = target.screen.y - y;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq > target.hitRadius * target.hitRadius || distanceSq >= bestDistanceSq) {
+        continue;
+      }
+      best = target;
+      bestDistanceSq = distanceSq;
+    }
+    return best;
+  }
+
+  private findRealEstateOfficeAtScreen(x: number, y: number): RealEstateOfficeScreenTarget | null {
+    let best: RealEstateOfficeScreenTarget | null = null;
+    let bestDistanceSq = Infinity;
+    for (const target of this.realEstateOfficeTargets) {
+      const dx = target.screen.x - x;
+      const dy = target.screen.y - y;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq > target.hitRadius * target.hitRadius || distanceSq >= bestDistanceSq) {
+        continue;
+      }
+      best = target;
+      bestDistanceSq = distanceSq;
+    }
+    return best;
+  }
+
   /** Bus platforms and landmark pins are first-class taxi targets, not generic map clicks. */
   private findTaxiDestinationAtScreen(x: number, y: number): TaxiDestination | null {
     const map = this.mapData;
@@ -922,17 +1258,65 @@ export class MapScene extends Phaser.Scene {
   }
 
   private updatePoiHover(x: number, y: number): void {
+    const office = this.isInView(x, y) ? this.findRealEstateOfficeAtScreen(x, y) : null;
+    if (office) {
+      this.setHoveredRealEstateOffice(office.office);
+      return;
+    }
+    const property = this.isInView(x, y) ? this.findPropertyAtScreen(x, y) : null;
+    if (property) {
+      this.setHoveredProperty(property.property);
+      return;
+    }
     const target = this.isInView(x, y) ? this.findPoiAtScreen(x, y) : null;
     this.setHoveredPoi(target?.building ?? null);
   }
 
   private setHoveredPoi(building: MajorBuildingDefinition | null): void {
     const nextId = building?.id ?? null;
-    if (this.hoveredPoiId === nextId) {
+    if (
+      this.hoveredPoiId === nextId &&
+      this.hoveredPropertyId === null &&
+      this.hoveredRealEstateOfficeId === null
+    ) {
       this.updatePoiHoverLabel();
       return;
     }
     this.hoveredPoiId = nextId;
+    this.hoveredPropertyId = null;
+    this.hoveredRealEstateOfficeId = null;
+    this.redrawPoiMarkers();
+  }
+
+  private setHoveredProperty(property: PropertyDefinition | null): void {
+    const nextId = property?.id ?? null;
+    if (
+      this.hoveredPropertyId === nextId &&
+      this.hoveredPoiId === null &&
+      this.hoveredRealEstateOfficeId === null
+    ) {
+      this.updatePoiHoverLabel();
+      return;
+    }
+    this.hoveredPropertyId = nextId;
+    this.hoveredPoiId = null;
+    this.hoveredRealEstateOfficeId = null;
+    this.redrawPoiMarkers();
+  }
+
+  private setHoveredRealEstateOffice(office: RealEstateOfficeDefinition | null): void {
+    const nextId = office?.id ?? null;
+    if (
+      this.hoveredRealEstateOfficeId === nextId &&
+      this.hoveredPoiId === null &&
+      this.hoveredPropertyId === null
+    ) {
+      this.updatePoiHoverLabel();
+      return;
+    }
+    this.hoveredRealEstateOfficeId = nextId;
+    this.hoveredPoiId = null;
+    this.hoveredPropertyId = null;
     this.redrawPoiMarkers();
   }
 
@@ -948,8 +1332,51 @@ export class MapScene extends Phaser.Scene {
       return;
     }
     this.selectedPoiId = building.id;
+    this.selectedPropertyId = null;
+    this.selectedRealEstateOfficeId = null;
     setWaypoint(building.entrancePosition);
     this.showStatus(`${this.poiTypeLabel(building)} waypoint set`);
+    this.redrawPoiMarkers();
+    this.refreshMarkers();
+  }
+
+  private selectProperty(property: PropertyDefinition): void {
+    if (this.taxiMode) {
+      this.selectTaxiDestination({
+        id: `property:${property.id}`,
+        label: property.displayName,
+        position: { ...property.entranceWorldPosition },
+        cityId: property.cityId,
+        source: 'landmark',
+      });
+      return;
+    }
+    this.selectedPropertyId = property.id;
+    this.selectedPoiId = null;
+    this.selectedRealEstateOfficeId = null;
+    setWaypoint(property.entranceWorldPosition);
+    this.showStatus(`${property.displayName} route set`);
+    this.redrawPoiMarkers();
+    this.refreshMarkers();
+  }
+
+  private selectRealEstateOffice(office: RealEstateOfficeDefinition): void {
+    const label = `Real Estate Office — ${this.cityLabel(office.cityId)}`;
+    if (this.taxiMode) {
+      this.selectTaxiDestination({
+        id: `real-estate:${office.id}`,
+        label,
+        position: { ...office.npcSpawnPosition },
+        cityId: office.cityId,
+        source: 'landmark',
+      });
+      return;
+    }
+    this.selectedRealEstateOfficeId = office.id;
+    this.selectedPropertyId = null;
+    this.selectedPoiId = null;
+    setWaypoint(office.npcSpawnPosition);
+    this.showStatus(`${label} route set`);
     this.redrawPoiMarkers();
     this.refreshMarkers();
   }
@@ -960,8 +1387,18 @@ export class MapScene extends Phaser.Scene {
     const body = this.poiInfoBodyText;
     if (!panel || !title || !body) return;
 
-    const building = this.buildingById(this.hoveredPoiId) ?? this.buildingById(this.selectedPoiId);
-    if (!building) {
+    const hoveredOffice = this.realEstateOfficeById(this.hoveredRealEstateOfficeId);
+    const hoveredProperty = this.propertyById(this.hoveredPropertyId);
+    const hoveredBuilding = this.buildingById(this.hoveredPoiId);
+    const selectedOffice = this.realEstateOfficeById(this.selectedRealEstateOfficeId);
+    const selectedProperty = this.propertyById(this.selectedPropertyId);
+    const selectedBuilding = this.buildingById(this.selectedPoiId);
+    const office = hoveredOffice ?? (!hoveredProperty && !hoveredBuilding ? selectedOffice : null);
+    const property = office
+      ? null
+      : (hoveredProperty ?? (hoveredBuilding ? null : selectedProperty));
+    const building = office || property ? null : (hoveredBuilding ?? selectedBuilding);
+    if (!office && !property && !building) {
       panel.clear();
       panel.setVisible(false);
       title.setVisible(false);
@@ -970,8 +1407,47 @@ export class MapScene extends Phaser.Scene {
     }
 
     const rect = this.poiPanelRect();
-    const selected = this.selectedPoiId === building.id;
-    const color = this.poiColor(building);
+    const propertyStatus = property ? this.propertyStatus(property) : null;
+    const selected = office
+      ? this.selectedRealEstateOfficeId === office.id
+      : property
+        ? this.selectedPropertyId === property.id
+        : this.selectedPoiId === building?.id;
+    const color = office
+      ? REAL_ESTATE_OFFICE_COLOR
+      : propertyStatus
+        ? PROPERTY_MAP_COLORS[propertyStatus]
+        : this.poiColor(building as MajorBuildingDefinition);
+    const heading = office
+      ? 'REAL ESTATE OFFICE'
+      : property
+        ? `HOME • ${propertyMapStatusLabel(propertyStatus as PropertyMapStatus).toUpperCase()}`
+        : this.poiTypeLabel(building as MajorBuildingDefinition).toUpperCase();
+    const lines = office
+      ? [
+          `Real Estate Office — ${this.cityLabel(office.cityId)}`,
+          'Property agent and home listings',
+          `Listings: ${this.validProperties().filter((entry) => entry.cityId === office.cityId).length}`,
+          `Distance: ${this.distanceLabel(office.npcSpawnPosition)}`,
+          selected ? 'Route: agent waypoint set' : 'Click: set route to agent',
+        ]
+      : property
+        ? [
+            property.displayName,
+            `${this.cityLabel(property.cityId)} • ${this.humanize(property.districtId)}`,
+            propertyStatus === 'for-sale'
+              ? `Price: ${formatPropertyMapPrice(property.price, property.currency)}`
+              : `Status: ${propertyMapStatusLabel(propertyStatus as PropertyMapStatus)}`,
+            `Parking: ${property.parkingCapacity} • ${property.features[0] ?? 'Home'}`,
+            `Distance: ${this.distanceLabel(property.entranceWorldPosition)}`,
+            selected ? 'Route: entrance waypoint set' : 'Click: set route to entrance',
+          ]
+        : [
+            this.poiLabel(building as MajorBuildingDefinition),
+            (building as MajorBuildingDefinition).name,
+            `Distance: ${this.distanceLabel((building as MajorBuildingDefinition).entrancePosition)}`,
+            selected ? 'Route: entrance waypoint set' : 'Click: set route to entrance',
+          ];
 
     panel.clear();
     panel.setVisible(true);
@@ -985,30 +1461,45 @@ export class MapScene extends Phaser.Scene {
     title
       .setVisible(true)
       .setPosition(rect.x + 14, rect.y + 12)
-      .setText(this.poiTypeLabel(building).toUpperCase())
+      .setText(heading)
       .setColor(this.hex(color));
     body
       .setVisible(true)
       .setPosition(rect.x + 14, rect.y + 36)
-      .setText(
-        [
-          this.poiLabel(building),
-          building.name,
-          `Distance: ${this.distanceLabel(building.entrancePosition)}`,
-          selected ? 'Waypoint: entrance set' : 'Click: set waypoint',
-        ].join('\n'),
-      );
+      .setText(lines.join('\n'));
   }
 
   private updatePoiHoverLabel(): void {
     const label = this.poiHoverLabel;
     if (!label) return;
-    const target = this.poiTargets.find((entry) => entry.building.id === this.hoveredPoiId);
-    if (!target) {
+    const propertyTarget = this.propertyTargets.find(
+      (entry) => entry.property.id === this.hoveredPropertyId,
+    );
+    const officeTarget = this.realEstateOfficeTargets.find(
+      (entry) => entry.office.id === this.hoveredRealEstateOfficeId,
+    );
+    const poiTarget = this.poiTargets.find((entry) => entry.building.id === this.hoveredPoiId);
+    const screen = officeTarget?.screen ?? propertyTarget?.screen ?? poiTarget?.screen;
+    if (!screen) {
       label.setVisible(false);
       return;
     }
-    const text = this.poiLabel(target.building);
+    const text = officeTarget
+      ? `Real Estate Office • ${this.cityLabel(officeTarget.office.cityId)}`
+      : propertyTarget
+        ? [
+            propertyTarget.property.displayName,
+            propertyMapStatusLabel(propertyTarget.status),
+            propertyTarget.status === 'for-sale'
+              ? formatPropertyMapPrice(
+                  propertyTarget.property.price,
+                  propertyTarget.property.currency,
+                )
+              : null,
+          ]
+            .filter((part): part is string => part !== null)
+            .join(' • ')
+        : this.poiLabel((poiTarget as MajorPoiScreenTarget).building);
     label.setText(text);
     label.setColor(this.hex(COLORS.TEXT));
     label.setVisible(true);
@@ -1016,12 +1507,12 @@ export class MapScene extends Phaser.Scene {
     const labelWidth = label.width;
     const labelHeight = label.height;
     const x = Phaser.Math.Clamp(
-      target.screen.x + 13,
+      screen.x + 15,
       this.viewRect.x + 6,
       this.viewRect.x + this.viewRect.width - labelWidth - 6,
     );
     const y = Phaser.Math.Clamp(
-      target.screen.y - labelHeight - 12,
+      screen.y - labelHeight - 14,
       this.viewRect.y + 6,
       this.viewRect.y + this.viewRect.height - labelHeight - 6,
     );
@@ -1031,6 +1522,48 @@ export class MapScene extends Phaser.Scene {
   private buildingById(id: string | null): MajorBuildingDefinition | null {
     if (!id || !this.mapData) return null;
     return this.mapData.majorBuildings.find((building) => building.id === id) ?? null;
+  }
+
+  private propertyById(id: string | null): PropertyDefinition | null {
+    if (!id) return null;
+    return this.housing()?.getProperty(id) ?? null;
+  }
+
+  private realEstateOfficeById(id: string | null): RealEstateOfficeDefinition | null {
+    if (!id) return null;
+    return this.housing()?.officesForWorld.find((office) => office.id === id) ?? null;
+  }
+
+  private housing(): HousingSystem | null {
+    return ServiceLocator.tryResolve<HousingSystem>(ServiceKeys.Housing);
+  }
+
+  private validProperties(
+    housing: HousingSystem | null = this.housing(),
+  ): readonly PropertyDefinition[] {
+    return housing?.catalog.filter((property) => property.valid) ?? [];
+  }
+
+  private realEstateOffices(
+    housing: HousingSystem | null = this.housing(),
+  ): readonly RealEstateOfficeDefinition[] {
+    return housing?.officesForWorld ?? [];
+  }
+
+  private propertyStatus(
+    property: PropertyDefinition,
+    housing: HousingSystem | null = this.housing(),
+  ): PropertyMapStatus {
+    const state = housing?.ownershipState;
+    return classifyPropertyMapStatus(
+      property.id,
+      state?.ownedPropertyIds ?? [],
+      state?.activeHomeId ?? null,
+    );
+  }
+
+  private humanize(value: string): string {
+    return value.replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
   }
 
   private poiPanelRect(): MapRect {
@@ -1160,8 +1693,14 @@ export class MapScene extends Phaser.Scene {
     this.dragging = false;
     this.dragPointerId = -1;
     if (shouldPlace) {
-      const poi = this.findPoiAtScreen(pointer.x, pointer.y);
-      if (poi) {
+      const office = this.findRealEstateOfficeAtScreen(pointer.x, pointer.y);
+      const property = office ? null : this.findPropertyAtScreen(pointer.x, pointer.y);
+      const poi = office || property ? null : this.findPoiAtScreen(pointer.x, pointer.y);
+      if (office) {
+        this.selectRealEstateOffice(office.office);
+      } else if (property) {
+        this.selectProperty(property.property);
+      } else if (poi) {
         this.selectPoi(poi.building);
       } else if (this.taxiMode) {
         const destination = this.findTaxiDestinationAtScreen(pointer.x, pointer.y);
@@ -1239,6 +1778,8 @@ export class MapScene extends Phaser.Scene {
     }
     setWaypoint(worldPoint);
     this.selectedPoiId = null;
+    this.selectedPropertyId = null;
+    this.selectedRealEstateOfficeId = null;
     this.updatePoiInfoPanel();
     this.showStatus('Waypoint set');
     this.refreshMarkers();
@@ -1251,6 +1792,8 @@ export class MapScene extends Phaser.Scene {
     }
     setWaypoint(null);
     this.selectedPoiId = null;
+    this.selectedPropertyId = null;
+    this.selectedRealEstateOfficeId = null;
     this.updatePoiInfoPanel();
     this.showStatus('Waypoint cleared');
     this.refreshMarkers();
@@ -1560,5 +2103,12 @@ export class MapScene extends Phaser.Scene {
     this.input.off(Phaser.Input.Events.POINTER_MOVE, this.onPointerMove, this);
     this.input.off(Phaser.Input.Events.POINTER_UP, this.onPointerUp, this);
     this.input.off(Phaser.Input.Events.POINTER_WHEEL, this.onWheel, this);
+    this.content?.clearMask(false);
+    this.poiLayer?.clearMask(false);
+    this.playerOverlayLayer?.clearMask(false);
+    this.mapContentMask?.destroy();
+    this.mapContentMask = null;
+    this.mapMaskSource?.destroy();
+    this.mapMaskSource = null;
   }
 }

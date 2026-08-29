@@ -5,4 +5,5 @@ export * from './HUD';
 export * from './GameHud';
 export * from './MiniMap';
 export * from './MajorBuildingIconPainter';
+export * from './PropertyMapIconPainter';
 export * from './GameplayDebugOverlay';

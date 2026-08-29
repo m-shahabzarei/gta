@@ -227,6 +227,42 @@ so a streamed chunk can render irregular footprints and shared building IDs
 without scanning every building in the country or reverting to periodic lot
 identity.
 
+## Full-screen navigation overlay
+
+`MapScene` presents the generated country as a paused, full-screen navigation
+surface. The map content is geometry-masked to the visible viewport, so terrain,
+routes and city labels never paint over the guide or top controls while panning
+or zooming. Major hospitals and police stations remain screen-space POIs, while
+mission, waypoint, player, service and public-transport layers preserve their
+existing behavior.
+
+Each `HousingSystem.officesForWorld` entry is rendered as a purple storefront
+marker at the real-estate agent position. Hovering identifies the city office;
+clicking sets a route to the agent and shows the number of available listings
+for that city.
+
+Every valid `HousingSystem.catalog` entry is also projected at its authored
+`entranceWorldPosition`. Property markers stay a constant screen size and use
+both icon detail and color to distinguish:
+
+- amber tagged house: available for sale;
+- cyan checked house: owned home;
+- green haloed house: active home.
+
+Hovering a property shows its name, status and price. Selecting it opens a
+detail card with city, district, price or ownership state, parking, a feature
+summary and distance from the player. A click sets the normal waypoint to the
+property entrance; it does not mutate ownership or bypass the real-estate
+office purchase flow. In taxi destination mode the same marker is treated as a
+normal reachable destination candidate.
+
+The grouped `MAP GUIDE` keeps navigation, property, and place/route semantics
+separate, includes live counts for the three property states, and exposes the
+pan, zoom, fit, locate and marker-route controls without relying on color alone.
+`MapScene.debugPropertySnapshot()` provides a read-only browser-audit surface
+with catalog count, visible marker count, status counts, hit radii, screen
+positions, entrance positions, office counts and real-estate agent positions.
+
 ## Verification
 
 The browser smoke harness exposes `MapData.validation`, urban quality status,
