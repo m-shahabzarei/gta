@@ -20,6 +20,12 @@ export interface ISerializable {
    * @param data The value previously returned by {@link serialize}.
    */
   deserialize(data: Json): void;
+
+  /**
+   * Optional migration hook invoked when a loaded save predates this provider
+   * and therefore has no section for its stable `saveId`.
+   */
+  readonly onMissingSaveSection?: () => void;
 }
 
 /** Runtime type-guard for {@link ISerializable}. */

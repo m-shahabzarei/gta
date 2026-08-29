@@ -26,6 +26,10 @@ import {
   InventoryScene,
   PhoneScene,
   InteriorScene,
+  RealEstateScene,
+  HomeManagementScene,
+  HomeCustomizationScene,
+  GarageScene,
 } from '@/scenes';
 import { Logger } from '@/utils/Logger';
 
@@ -42,6 +46,10 @@ const SCENE_TABLE: ReadonlyArray<readonly [SceneKeys, new () => Phaser.Scene]> =
   [SceneKeys.Inventory, InventoryScene],
   [SceneKeys.Phone, PhoneScene],
   [SceneKeys.Interior, InteriorScene],
+  [SceneKeys.RealEstate, RealEstateScene],
+  [SceneKeys.HomeManagement, HomeManagementScene],
+  [SceneKeys.HomeCustomization, HomeCustomizationScene],
+  [SceneKeys.Garage, GarageScene],
 ];
 
 /** Convenience wrapper bundling the Phaser game with its manager registry. */

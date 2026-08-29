@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-08-28T15:11:58.489Z",
+  "capturedAt": "2026-08-29T07:28:46.347Z",
   "commit": "5335cc2b989d0f97375e9264c9f34bb7e26dac0d",
   "source": "scripts/traffic-stress.ts (deterministic headless-network harness)",
   "notes": [
@@ -18,13 +18,13 @@
       "durationSeconds": 60,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.2217885000000015,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.2508507499999996,
+        "p50": 0.13939999999996644,
+        "p95": 0.5991999999999962,
+        "p99": 2.4973999999999705,
+        "over20": 0,
+        "over33": 0,
+        "over50": 0
       },
       "traffic": {
         "activeVehicles": 4,
@@ -34,7 +34,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 370.94809999999995,
+      "wallClockMs": 428.5126,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -61,13 +61,13 @@
       "durationSeconds": 60,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.2806887499999983,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.5852272499999974,
+        "p50": 0.30960000000004584,
+        "p95": 1.328800000000001,
+        "p99": 6.290899999999965,
+        "over20": 1,
+        "over33": 0,
+        "over50": 0
       },
       "traffic": {
         "activeVehicles": 8,
@@ -77,7 +77,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 398.1032,
+      "wallClockMs": 796.6621,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -104,13 +104,13 @@
       "durationSeconds": 60,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.22938466666666235,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.3217273333333344,
+        "p50": 0.23480000000017753,
+        "p95": 0.6752999999998792,
+        "p99": 1.687599999999975,
+        "over20": 0,
+        "over33": 0,
+        "over50": 0
       },
       "traffic": {
         "activeVehicles": 8,
@@ -120,7 +120,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 319.65469999999993,
+      "wallClockMs": 461.21080000000006,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -147,13 +147,13 @@
       "durationSeconds": 60,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.27093100000000336,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.4272948333333361,
+        "p50": 0.23280000000022483,
+        "p95": 1.0924999999997453,
+        "p99": 4.303600000000188,
+        "over20": 0,
+        "over33": 0,
+        "over50": 0
       },
       "traffic": {
         "activeVehicles": 8,
@@ -163,7 +163,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 367.9748000000002,
+      "wallClockMs": 615.5895000000003,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -190,13 +190,13 @@
       "durationSeconds": 60,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.1665311666666681,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.3429955833333217,
+        "p50": 0.18190000000004147,
+        "p95": 0.8501999999998588,
+        "p99": 3.0819000000001324,
+        "over20": 0,
+        "over33": 0,
+        "over50": 0
       },
       "traffic": {
         "activeVehicles": 8,
@@ -206,7 +206,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 241.68140000000017,
+      "wallClockMs": 573.5376999999999,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -233,13 +233,13 @@
       "durationSeconds": 60,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.21826058333333057,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.47812066666666964,
+        "p50": 0.28549999999995634,
+        "p95": 1.3046999999996842,
+        "p99": 3.5925000000002,
+        "over20": 0,
+        "over33": 0,
+        "over50": 0
       },
       "traffic": {
         "activeVehicles": 8,
@@ -249,7 +249,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 294.6832999999999,
+      "wallClockMs": 657.2871999999998,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -276,13 +276,13 @@
       "durationSeconds": 60,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.18604449999999473,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.5303851666666549,
+        "p50": 0.20240000000012515,
+        "p95": 2.257499999999709,
+        "p99": 5.590900000000147,
+        "over20": 0,
+        "over33": 0,
+        "over50": 0
       },
       "traffic": {
         "activeVehicles": 8,
@@ -292,7 +292,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 251.64359999999988,
+      "wallClockMs": 706.2779,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -319,13 +319,13 @@
       "durationSeconds": 60,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.2744798333333377,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.684840250000005,
+        "p50": 0.2403999999996813,
+        "p95": 1.8419999999996435,
+        "p99": 7.717299999999341,
+        "over20": 2,
+        "over33": 2,
+        "over50": 0
       },
       "traffic": {
         "activeVehicles": 8,
@@ -335,7 +335,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 373.0803999999998,
+      "wallClockMs": 922.4916999999996,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -362,13 +362,13 @@
       "durationSeconds": 60,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.25577808333333263,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.6694145833333346,
+        "p50": 0.2812999999996464,
+        "p95": 2.2160000000003492,
+        "p99": 6.236299999999574,
+        "over20": 3,
+        "over33": 1,
+        "over50": 0
       },
       "traffic": {
         "activeVehicles": 8,
@@ -378,7 +378,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 342.8299000000002,
+      "wallClockMs": 958.6791000000003,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -405,13 +405,13 @@
       "durationSeconds": 60,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.6324519166666657,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.4708477500000208,
+        "p50": 0.248899999999594,
+        "p95": 1.3110999999998967,
+        "p99": 5.216199999999844,
+        "over20": 1,
+        "over33": 0,
+        "over50": 0
       },
       "traffic": {
         "activeVehicles": 8,
@@ -421,7 +421,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 808.6259,
+      "wallClockMs": 660.8027000000002,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -448,13 +448,13 @@
       "durationSeconds": 60,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.2554620833333244,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.3724283333333362,
+        "p50": 0.25500000000010914,
+        "p95": 0.7071999999998297,
+        "p99": 3.248099999999795,
+        "over20": 0,
+        "over33": 0,
+        "over50": 0
       },
       "traffic": {
         "activeVehicles": 8,
@@ -464,7 +464,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 339.10030000000006,
+      "wallClockMs": 503.8928999999998,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -491,13 +491,13 @@
       "durationSeconds": 60,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.29000676190478336,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.469988761904753,
+        "p50": 0.29830000000038126,
+        "p95": 1.2455000000009022,
+        "p99": 4.201000000000022,
+        "over20": 0,
+        "over33": 0,
+        "over50": 0
       },
       "traffic": {
         "activeVehicles": 8,
@@ -507,7 +507,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 349.10509999999977,
+      "wallClockMs": 538.0520999999999,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -534,13 +534,13 @@
       "durationSeconds": 900,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.1912085222222232,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.3586785277777808,
+        "p50": 0.19909999999981665,
+        "p95": 0.7713000000003376,
+        "p99": 3.228399999999965,
+        "over20": 12,
+        "over33": 3,
+        "over50": 1
       },
       "traffic": {
         "activeVehicles": 8,
@@ -550,7 +550,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 3946.0911000000006,
+      "wallClockMs": 7307.9702,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,
@@ -577,13 +577,13 @@
       "durationSeconds": 1800,
       "fixtureCoverage": "headless-network",
       "frameTimeMs": {
-        "average": 0.1734671138888959,
-        "p50": null,
-        "p95": null,
-        "p99": null,
-        "over20": null,
-        "over33": null,
-        "over50": null
+        "average": 0.36632628055554806,
+        "p50": 0.20089999999981956,
+        "p95": 0.8251999999993131,
+        "p99": 3.286500000001979,
+        "over20": 19,
+        "over33": 8,
+        "over50": 4
       },
       "traffic": {
         "activeVehicles": 8,
@@ -593,7 +593,7 @@
         "deferredUpdates": null,
         "maximumUpdateAgeMs": null
       },
-      "wallClockMs": 6928.776400000001,
+      "wallClockMs": 14733.4261,
       "correctness": {
         "wrongDirection": 0,
         "leftRoad": 0,

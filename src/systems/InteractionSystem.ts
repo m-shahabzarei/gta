@@ -21,6 +21,7 @@ import type { PlayerController } from '@/systems/PlayerController';
 import type { VehicleSystem } from '@/systems/VehicleSystem';
 import type { MissionSystem } from '@/systems/MissionSystem';
 import type { TransportationSystem } from '@/systems/TransportationSystem';
+import type { HousingSystem } from '@/systems/HousingSystem';
 import { Pedestrian } from '@/entities/Pedestrian';
 import { EntityCategory, type EntityManager } from '@/systems/EntityManager';
 
@@ -29,6 +30,8 @@ interface InteractionTarget {
   prompt: string;
   distanceSq: number;
   priority: number;
+  id?: string;
+  cityId?: import('@/gameplay/types').CityId;
 }
 
 interface CrowdProvider {
@@ -83,6 +86,19 @@ export class InteractionSystem extends BaseSceneManager {
     const target = this.findTarget(pos);
     if (!target) return;
 
+    if (target.kind === 'real-estate') {
+      const cityId = target.cityId ?? this.resolveWorld()?.cityAt(pos.x, pos.y)?.id;
+      if (target.id && cityId) {
+        this.resolveHousing()?.requestRealEstateInteraction(target.id, cityId, { ...pos });
+      }
+      return;
+    }
+
+    if (target.kind === 'home') {
+      if (target.id) this.resolveHousing()?.requestEnterHome(target.id);
+      return;
+    }
+
     if (target.kind === 'npc') {
       const line = NPC_LINES[Math.floor(Math.random() * NPC_LINES.length)] ?? NPC_LINES[0];
       this.bus.emit(EventKeys.UIToast, { message: line, durationMs: 2200 });
@@ -118,6 +134,47 @@ export class InteractionSystem extends BaseSceneManager {
   /** Find the current highest-priority target around a position. */
   private findTarget(pos: Vector2): InteractionTarget | null {
     const candidates: InteractionTarget[] = [];
+    const housing = this.resolveHousing();
+    if (housing) {
+      let nearestOffice: { id: string; cityId: import('@/gameplay/types').CityId; distanceSq: number } | null = null;
+      for (const office of housing.officesForWorld) {
+        const dx = office.npcSpawnPosition.x - pos.x;
+        const dy = office.npcSpawnPosition.y - pos.y;
+        const distanceSq = dx * dx + dy * dy;
+        if (distanceSq <= office.interactionRadius * office.interactionRadius && (!nearestOffice || distanceSq < nearestOffice.distanceSq)) {
+          nearestOffice = { id: office.id, cityId: office.cityId, distanceSq };
+        }
+      }
+      if (nearestOffice) {
+        candidates.push({
+          kind: 'real-estate',
+          prompt: 'E  Talk to real-estate agent',
+          distanceSq: nearestOffice.distanceSq,
+          priority: -2,
+          id: nearestOffice.id,
+          cityId: nearestOffice.cityId,
+        });
+      }
+      let nearestHome: { id: string; cityId: import('@/gameplay/types').CityId; distanceSq: number; owned: boolean } | null = null;
+      for (const property of housing.catalog) {
+        const dx = property.entranceWorldPosition.x - pos.x;
+        const dy = property.entranceWorldPosition.y - pos.y;
+        const distanceSq = dx * dx + dy * dy;
+        if (distanceSq <= property.interactionRadius * property.interactionRadius && (!nearestHome || distanceSq < nearestHome.distanceSq)) {
+          nearestHome = { id: property.id, cityId: property.cityId, distanceSq, owned: housing.isOwned(property.id) };
+        }
+      }
+      if (nearestHome) {
+        candidates.push({
+          kind: 'home',
+          prompt: nearestHome.owned ? 'E  Enter home' : 'E  Home locked (buy at office)',
+          distanceSq: nearestHome.distanceSq,
+          priority: 0,
+          id: nearestHome.id,
+          cityId: nearestHome.cityId,
+        });
+      }
+    }
     const transit = this.resolveTransit()?.interactionAt(pos);
     if (transit) {
       candidates.push({
@@ -308,5 +365,9 @@ export class InteractionSystem extends BaseSceneManager {
 
   private resolveTransit(): TransportationSystem | null {
     return ServiceLocator.tryResolve<TransportationSystem>(ServiceKeys.Transportation);
+  }
+
+  private resolveHousing(): HousingSystem | null {
+    return ServiceLocator.tryResolve<HousingSystem>(ServiceKeys.Housing);
   }
 }

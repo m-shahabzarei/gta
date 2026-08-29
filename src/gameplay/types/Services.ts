@@ -7,11 +7,12 @@
  * compiles and reasons independently of the systems that implement them.
  */
 import type { Vector2 } from '@/core/types';
-import type { PoliceDirective } from './CrimeTypes';
+import type { PoliceDirective, WantedPhase } from './CrimeTypes';
 import { ServiceLocator } from '@/core/ServiceLocator';
 import { ServiceKeys } from '@/config/ServiceKeys';
 import type { DamageAttribution, Faction } from './CombatTypes';
 import type { WeaponId } from './WeaponTypes';
+import type { WantedReductionResult } from './HousingPhase2Types';
 import type {
   BenchSite,
   BusStopSite,
@@ -131,10 +132,14 @@ export interface IWantedService {
   /** Current police-awareness level (0..5). */
   readonly level: number;
   readonly isSearching: boolean;
+  /** Current wanted lifecycle phase, exposed for policy adapters. */
+  readonly phase: WantedPhase;
   directiveForOfficer(officerId: number): PoliceDirective;
   reportOfficerSighting(officerId: number, position: Vector2): void;
   /** Arrest the player: clears wanted and triggers the bust flow. */
   bustPlayer(): void;
+  /** Request a policy-controlled, time-based safehouse heat reduction. */
+  requestSafehouseReduction(durationSeconds: number): WantedReductionResult;
 }
 
 /** Read-only traffic-light phase query used by pedestrian crosswalk gating (implemented by TrafficSystem). */

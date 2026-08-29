@@ -7,6 +7,7 @@
  */
 import type { Vector2 } from '@/core/types';
 import type { InteriorKind } from './InteriorTypes';
+import type { PropertyDefinition, RealEstateOfficeDefinition } from './HousingTypes';
 
 /** Optional constraints for deterministic pedestrian-sized actor placement. */
 export interface SafePedestrianPlacementOptions {
@@ -1283,6 +1284,10 @@ export interface MapData {
   landmarks: WorldLandmark[];
   /** Required service landmarks consumed by gameplay, world map and minimap. */
   majorBuildings: MajorBuildingDefinition[];
+  /** Immutable housing catalog projected from validated world geometry. */
+  properties?: readonly PropertyDefinition[];
+  /** One deterministic real-estate office per city. */
+  realEstateOffices?: readonly RealEstateOfficeDefinition[];
   /** Intercity highway routes used by routing preview and road-trip traffic. */
   highways: HighwayRoute[];
   /** Rejection-gate result for the complete national expressway system. */

@@ -23,6 +23,20 @@ import type { WeaponId } from '@/gameplay/types/WeaponTypes';
 import type { PickupKind } from '@/gameplay/types/PickupTypes';
 import type { InteriorKind } from '@/gameplay/types/InteriorTypes';
 import type { InteractionContext } from '@/gameplay/types/InteractionTypes';
+import type {
+  HomeInteriorPayload,
+  PropertyPurchaseReason,
+} from '@/gameplay/types/HousingTypes';
+import type {
+  CustomizationResult,
+  FurniturePlacement,
+  GarageOperationReason,
+  HousingMissionDefinition,
+  NeighborInteractionResult,
+  SafehouseDecision,
+  SafehouseResult,
+  WantedReductionResult,
+} from '@/gameplay/types/HousingPhase2Types';
 import type { SnappBookingState, SnappQuote, SnappTrackingSnapshot } from '@/gameplay/transit';
 import type { InteriorAmbienceKind } from '@/gameplay/types/WorldTypes';
 import type {
@@ -59,6 +73,75 @@ export interface EventPayloadMap {
   [EventKeys.GameInteriorRequested]: { kind: InteriorKind };
   [EventKeys.GameNew]: void;
   [EventKeys.GameQuitToMenu]: void;
+
+  // Housing / real estate
+  [EventKeys.RealEstateInteractionRequested]: {
+    officeId: string;
+    cityId: import('@/gameplay/types').CityId;
+    playerPosition: Vector2;
+  };
+  [EventKeys.RealEstateOpened]: { officeId: string; cityId: import('@/gameplay/types').CityId };
+  [EventKeys.RealEstateClosed]: { cityId: import('@/gameplay/types').CityId };
+  [EventKeys.PropertyPreviewRequested]: { propertyId: string };
+  [EventKeys.PropertyPreviewStarted]: { propertyId: string };
+  [EventKeys.PropertyPreviewEnded]: { propertyId: string };
+  [EventKeys.PropertyPurchaseRequested]: { propertyId: string };
+  [EventKeys.PropertyOwnershipChanged]: {
+    propertyId: string;
+    owned: boolean;
+    ownedPropertyIds: readonly string[];
+    activeHomeId: string | null;
+  };
+  [EventKeys.HomeEnterRequested]: { propertyId: string; playerPosition: Vector2 };
+  [EventKeys.HomeEnterAccepted]: { propertyId: string; payload: HomeInteriorPayload };
+  [EventKeys.HomeEnterRejected]: { propertyId: string; reason: PropertyPurchaseReason | 'not-owned' | 'out-of-range' | 'transition-busy' | 'invalid-layout' };
+  [EventKeys.HomeExitRequested]: { propertyId: string };
+  [EventKeys.HomeExited]: { propertyId: string };
+  [EventKeys.HomeTransitionFailed]: { propertyId: string; phase: 'enter' | 'exit'; reason: string };
+  [EventKeys.PropertyUpgradePurchaseRequested]: { propertyId: string; upgradeId: string };
+  [EventKeys.PropertyUpgradeChanged]: {
+    propertyId: string;
+    upgradeId: string;
+    purchased: boolean;
+    purchasedUpgradeIds: readonly string[];
+  };
+  [EventKeys.PropertyCustomizationApplied]: CustomizationResult & { placements: readonly FurniturePlacement[] };
+  [EventKeys.PropertyCustomizationCancelled]: { propertyId: string; revision: number };
+  [EventKeys.PropertyCustomizationRejected]: {
+    propertyId: string;
+    reason: string;
+  };
+  [EventKeys.PropertyRoomUnlocked]: { propertyId: string; roomId: string };
+  [EventKeys.GarageOperationRequested]: { propertyId: string; vehicleId: string; operation: 'store' | 'remove' | 'activate' };
+  [EventKeys.GarageOperationCompleted]: { propertyId: string; vehicleId: string; operation: 'store' | 'remove' | 'activate' };
+  [EventKeys.GarageOperationRejected]: { propertyId: string; vehicleId: string; operation: 'store' | 'remove' | 'activate'; reason: GarageOperationReason };
+  [EventKeys.NeighborInteractionRequested]: { neighborId: string; interactionId: string };
+  [EventKeys.NeighborInteractionCompleted]: NeighborInteractionResult;
+  [EventKeys.NeighborAffinityChanged]: { neighborId: string; affinity: number; delta: number };
+  [EventKeys.HousingMissionOffered]: HousingMissionDefinition;
+  [EventKeys.HousingMissionCompleted]: { missionId: string; propertyId: string; reward: number };
+  [EventKeys.SafehouseUseRequested]: { propertyId: string };
+  [EventKeys.SafehouseUseCompleted]: SafehouseResult & { wanted: WantedReductionResult | null };
+  [EventKeys.SafehouseUseDenied]: { propertyId: string; decision: SafehouseDecision };
+  [EventKeys.HousingReplaySnapshotCreated]: { deterministicHash: string; simulationTick: number };
+  [EventKeys.HousingTelemetry]: {
+    event: string;
+    simulationTick: number;
+    simulationClock: string;
+    worldSeed: number;
+    simulationSeed: number;
+    city: string;
+    district: string;
+    propertyId: string;
+    playerId: string;
+    ownershipClass: string;
+    currentScene: string;
+    activeHome: string | null;
+    result: string;
+    denialReason: string | null;
+    elapsedMs: number | 'unknown';
+    deterministicReplayKey: string;
+  };
 
   // Scene flow
   [EventKeys.SceneReady]: { key: string };

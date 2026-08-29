@@ -18,3 +18,5 @@ export * from './InteractionTypes';
 export * from './Services';
 export * from './CrimeTypes';
 export * from './OccupantTypes';
+export * from './HousingTypes';
+export * from './HousingPhase2Types';

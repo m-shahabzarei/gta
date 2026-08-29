@@ -273,6 +273,10 @@ export class GameScene extends Phaser.Scene {
         this.scene.stop(SceneKeys.Inventory);
         this.scene.stop(SceneKeys.Settings);
         this.scene.stop(SceneKeys.Interior);
+        this.scene.stop(SceneKeys.RealEstate);
+        this.scene.stop(SceneKeys.HomeManagement);
+        this.scene.stop(SceneKeys.HomeCustomization);
+        this.scene.stop(SceneKeys.Garage);
         ServiceLocator.tryResolve<InputManager>(ServiceKeys.Input)?.resetGameplayInput();
         if (!this.scene.isActive(SceneKeys.Phone)) {
           this.scene.launch(SceneKeys.Phone);
@@ -284,6 +288,10 @@ export class GameScene extends Phaser.Scene {
         this.scene.stop(SceneKeys.Pause);
         this.scene.stop(SceneKeys.Inventory);
         this.scene.stop(SceneKeys.Interior);
+        this.scene.stop(SceneKeys.RealEstate);
+        this.scene.stop(SceneKeys.HomeManagement);
+        this.scene.stop(SceneKeys.HomeCustomization);
+        this.scene.stop(SceneKeys.Garage);
         this.scene.stop(SceneKeys.Phone);
         this.scene.launch(SceneKeys.Map);
         this.scene.bringToTop(SceneKeys.Map);
@@ -293,6 +301,10 @@ export class GameScene extends Phaser.Scene {
         this.scene.stop(SceneKeys.Pause);
         this.scene.stop(SceneKeys.Map);
         this.scene.stop(SceneKeys.Interior);
+        this.scene.stop(SceneKeys.RealEstate);
+        this.scene.stop(SceneKeys.HomeManagement);
+        this.scene.stop(SceneKeys.HomeCustomization);
+        this.scene.stop(SceneKeys.Garage);
         this.scene.stop(SceneKeys.Phone);
         this.scene.launch(SceneKeys.Inventory, { resumeOnClose: true });
         this.scene.bringToTop(SceneKeys.Inventory);
@@ -304,12 +316,20 @@ export class GameScene extends Phaser.Scene {
         this.scene.stop(SceneKeys.Inventory);
         this.scene.stop(SceneKeys.Phone);
         this.scene.stop(SceneKeys.Interior);
+        this.scene.stop(SceneKeys.RealEstate);
+        this.scene.stop(SceneKeys.HomeManagement);
+        this.scene.stop(SceneKeys.HomeCustomization);
+        this.scene.stop(SceneKeys.Garage);
       }),
       eventBus.on(EventKeys.GameResumed, () => {
         this.scene.stop(SceneKeys.Pause);
         this.scene.stop(SceneKeys.Map);
         this.scene.stop(SceneKeys.Inventory);
         this.scene.stop(SceneKeys.Interior);
+        this.scene.stop(SceneKeys.RealEstate);
+        this.scene.stop(SceneKeys.HomeManagement);
+        this.scene.stop(SceneKeys.HomeCustomization);
+        this.scene.stop(SceneKeys.Garage);
         this.scene.stop(SceneKeys.Phone);
         this.scene.resume();
       }),
@@ -319,6 +339,10 @@ export class GameScene extends Phaser.Scene {
         this.scene.stop(SceneKeys.Map);
         this.scene.stop(SceneKeys.Inventory);
         this.scene.stop(SceneKeys.Interior);
+        this.scene.stop(SceneKeys.RealEstate);
+        this.scene.stop(SceneKeys.HomeManagement);
+        this.scene.stop(SceneKeys.HomeCustomization);
+        this.scene.stop(SceneKeys.Garage);
         this.scene.stop(SceneKeys.Settings);
         this.scene.stop(SceneKeys.Phone);
         this.scene.start(SceneKeys.MainMenu);

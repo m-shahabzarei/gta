@@ -10,7 +10,9 @@ export type InteractionKind =
   | 'vehicle'
   | 'npc'
   | 'interior'
-  | 'door';
+  | 'door'
+  | 'real-estate'
+  | 'home';
 
 export interface InteractionContext {
   kind: InteractionKind;

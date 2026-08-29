@@ -15,12 +15,18 @@ import { COLORS, GAME_HEIGHT, GAME_WIDTH } from '@/config/Constants';
 import { Button, Label, Panel } from '@/ui/components';
 import { VEHICLES, WEAPONS } from '@/data';
 import type { InteriorKind, VehicleKind, WeaponId } from '@/gameplay/types';
+import type { HomeInteriorPayload } from '@/gameplay/types/HousingTypes';
+import { createHomeLayout, type HomeLayoutSpec } from '@/gameplay/HomeLayoutRegistry';
+import type { HousingSystem } from '@/systems/HousingSystem';
+import type { HomeCustomizationSystem } from '@/systems/HomeCustomizationSystem';
+import { FURNITURE_ITEMS } from '@/systems/HomeCustomizationSystem';
 import type { GameManager } from '@/managers/GameManager';
 import type { SaveManager } from '@/managers/SaveManager';
 import type { PlayerController } from '@/systems/PlayerController';
 
 interface InteriorSceneData {
   kind?: InteriorKind;
+  home?: HomeInteriorPayload;
 }
 
 interface RectSpec {
@@ -104,12 +110,20 @@ const VEHICLE_PRICES: ReadonlyArray<{ kind: VehicleKind; price: number }> = [
 
 export class InteriorScene extends Phaser.Scene {
   private kind: InteriorKind = 'hospital';
+  private homePayload: HomeInteriorPayload | null = null;
   private layout: InteriorLayout | null = null;
   private playerMarker: Phaser.GameObjects.Sprite | null = null;
   private keys: KeySet | null = null;
   private promptLabel: Label | null = null;
   private statusLabel: Label | null = null;
   private shopPanel: Phaser.GameObjects.Container | null = null;
+  /** Cached collision geometry; rebuilt once when a layout is created. */
+  private readonly collisionRects: Phaser.Geom.Rectangle[] = [];
+  /** Cached interaction zones; avoids allocating rectangles in the update loop. */
+  private readonly zoneRects: Array<{ spec: ZoneSpec; rect: Phaser.Geom.Rectangle }> = [];
+  /** Reusable movement/collision probes for the hot path. */
+  private readonly movementAxis = new Phaser.Math.Vector2(0, 0);
+  private readonly collisionProbe = new Phaser.Geom.Rectangle();
   private prevPadInteract = false;
   private prevPadBack = false;
 
@@ -119,10 +133,25 @@ export class InteriorScene extends Phaser.Scene {
 
   /** Build the requested interior. */
   public create(data?: InteriorSceneData): void {
+    // Phaser can reuse this scene instance after a stop/start cycle. Clear all
+    // scene-local caches and references before constructing the next layout.
+    this.homePayload = data?.home ?? null;
     this.kind = data?.kind ?? 'hospital';
+    this.playerMarker = null;
+    this.keys = null;
+    this.promptLabel = null;
+    this.statusLabel = null;
+    this.shopPanel = null;
+    this.collisionRects.length = 0;
+    this.zoneRects.length = 0;
+    this.prevPadInteract = false;
+    this.prevPadBack = false;
     this.enableMenuCursor();
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x05070c, 1).setOrigin(0);
-    this.layout = this.makeLayout(this.kind);
+    this.layout = this.homePayload
+      ? this.fromHomeLayout(createHomeLayout(this.homePayload.layoutId, this.homePayload.deterministicSeed))
+      : this.makeLayout(this.kind);
+    this.cacheCollisionGeometry(this.layout);
     this.drawLayout(this.layout);
     this.bindInput();
 
@@ -159,6 +188,38 @@ export class InteriorScene extends Phaser.Scene {
       duration: 160,
       ease: 'Quad.easeOut',
     });
+  }
+
+  private fromHomeLayout(home: HomeLayoutSpec): InteriorLayout {
+    const furniture = home.furniture.map((rect) => ({ ...rect }));
+    const customization = this.homePayload
+      ? ServiceLocator.tryResolve<HomeCustomizationSystem>(ServiceKeys.HomeCustomization)?.getCustomization(this.homePayload.propertyId)
+      : null;
+    const customizationSystem = ServiceLocator.tryResolve<HomeCustomizationSystem>(ServiceKeys.HomeCustomization);
+    for (const placement of customization?.placements ?? []) {
+      const item = FURNITURE_ITEMS.find((candidate) => candidate.id === placement.itemId);
+      const slot = customizationSystem?.getSlots(this.homePayload?.propertyId ?? '').find((candidate) => candidate.id === placement.slotId);
+      if (!item || !slot) continue;
+      const rotated = placement.rotation === 90 || placement.rotation === 270;
+      furniture.push({
+        x: slot.anchor.x - (rotated ? item.height : item.width) / 2,
+        y: slot.anchor.y - (rotated ? item.width : item.height) / 2,
+        w: rotated ? item.height : item.width,
+        h: rotated ? item.width : item.height,
+        color: furnitureColor(item.category),
+        label: placement.itemId.split(':')[0]?.toUpperCase(),
+      });
+    }
+    return {
+      title: home.title,
+      subtitle: `${home.subtitle} · ${this.homePayload?.propertyId ?? 'home'}`,
+      floor: home.floor,
+      walls: home.walls.map((rect) => ({ ...rect })),
+      furniture,
+      zones: home.zones.map((zone) => ({ ...zone })),
+      npcs: [],
+      spawn: new Phaser.Math.Vector2(home.spawn.x, home.spawn.y),
+    };
   }
 
   /** Move the local player marker and handle interaction keys. */
@@ -424,7 +485,7 @@ export class InteriorScene extends Phaser.Scene {
 
   /** Keyboard/gamepad movement axis. */
   private readAxis(): Phaser.Math.Vector2 {
-    const axis = new Phaser.Math.Vector2(0, 0);
+    const axis = this.movementAxis.set(0, 0);
     const keys = this.keys;
     if (keys) {
       axis.x += (keys.d.isDown ? 1 : 0) - (keys.a.isDown ? 1 : 0);
@@ -457,25 +518,30 @@ export class InteriorScene extends Phaser.Scene {
 
   /** Whether the local player marker would collide at a point. */
   private isBlocked(x: number, y: number): boolean {
-    const body = new Phaser.Geom.Rectangle(
+    const body = this.collisionProbe.setTo(
       x - PLAYER_RADIUS,
       y - PLAYER_RADIUS,
       PLAYER_RADIUS * 2,
       PLAYER_RADIUS * 2,
     );
     if (!FLOOR.contains(x, y)) return true;
-    for (const rect of this.blockingRects()) {
+    for (const rect of this.collisionRects) {
       if (Phaser.Geom.Intersects.RectangleToRectangle(body, rect)) return true;
     }
     return false;
   }
 
-  /** Blocking rectangles from walls and furniture. */
-  private blockingRects(): Phaser.Geom.Rectangle[] {
-    const layout = this.layout;
-    if (!layout) return [];
-    return [...layout.walls, ...layout.furniture].map(
-      (r) => new Phaser.Geom.Rectangle(r.x, r.y, r.w, r.h),
+  /** Cache blocking rectangles and zone hitboxes once per scene layout. */
+  private cacheCollisionGeometry(layout: InteriorLayout): void {
+    this.collisionRects.push(
+      ...layout.walls.map((rect) => new Phaser.Geom.Rectangle(rect.x, rect.y, rect.w, rect.h)),
+      ...layout.furniture.map((rect) => new Phaser.Geom.Rectangle(rect.x, rect.y, rect.w, rect.h)),
+    );
+    this.zoneRects.push(
+      ...layout.zones.map((zone) => ({
+        spec: zone,
+        rect: new Phaser.Geom.Rectangle(zone.x, zone.y, zone.w, zone.h),
+      })),
     );
   }
 
@@ -526,10 +592,8 @@ export class InteriorScene extends Phaser.Scene {
   /** Current zone under or near the player marker. */
   private currentZone(): ZoneSpec | null {
     const marker = this.playerMarker;
-    const layout = this.layout;
-    if (!marker || !layout) return null;
-    const point = new Phaser.Geom.Point(marker.x, marker.y);
-    return layout.zones.find((z) => new Phaser.Geom.Rectangle(z.x, z.y, z.w, z.h).contains(point.x, point.y)) ?? null;
+    if (!marker) return null;
+    return this.zoneRects.find(({ rect }) => rect.contains(marker.x, marker.y))?.spec ?? null;
   }
 
   private healPlayer(): void {
@@ -785,6 +849,10 @@ export class InteriorScene extends Phaser.Scene {
 
   private closeInterior(): void {
     this.closeShopPanel();
+    if (this.homePayload) {
+      ServiceLocator.tryResolve<HousingSystem>(ServiceKeys.Housing)?.requestExitHome();
+      return;
+    }
     ServiceLocator.tryResolve<GameManager>(ServiceKeys.Game)?.resumeGame();
     this.scene.stop();
   }
@@ -805,5 +873,28 @@ export class InteriorScene extends Phaser.Scene {
 
   private hex(color: number): string {
     return '#' + color.toString(16).padStart(6, '0');
+  }
+}
+
+function furnitureColor(category: string): number {
+  switch (category) {
+    case 'bed':
+      return 0x7e8db4;
+    case 'sofa':
+      return 0x4d7187;
+    case 'table':
+      return 0x9b7352;
+    case 'desk':
+      return 0x586b84;
+    case 'storage':
+      return 0x8b654e;
+    case 'kitchen':
+      return 0x799b92;
+    case 'lighting':
+      return 0xd3b46f;
+    case 'workshop':
+      return 0x6c6b74;
+    default:
+      return 0x628a78;
   }
 }

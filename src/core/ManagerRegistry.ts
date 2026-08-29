@@ -38,6 +38,13 @@ import { PhoneManager } from '@/managers/PhoneManager';
 import { GameAudioSystem } from '@/systems/GameAudioSystem';
 import { WorldManager } from '@/systems/WorldManager';
 import { WorldInteriorSystem } from '@/systems/WorldInteriorSystem';
+import { HousingSystem } from '@/systems/HousingSystem';
+import { HousingProgressionSystem } from '@/systems/HousingProgressionSystem';
+import { HomeCustomizationSystem } from '@/systems/HomeCustomizationSystem';
+import { GarageHousingAdapter } from '@/systems/GarageHousingAdapter';
+import { NeighborhoodSystem } from '@/systems/NeighborhoodSystem';
+import { HousingMissionProvider } from '@/systems/HousingMissionProvider';
+import { SafehouseAdapter } from '@/systems/SafehouseAdapter';
 import { NavigationSystem } from '@/systems/NavigationSystem';
 import { CombatSystem } from '@/systems/CombatSystem';
 import { VehicleSystem } from '@/systems/VehicleSystem';
@@ -100,19 +107,26 @@ export class ManagerRegistry {
       new GameAudioSystem(this.game),
       new WorldManager(this.game),
       new WorldInteriorSystem(this.game),
+      new HousingSystem(this.game),
+      new HousingProgressionSystem(this.game),
+      new HomeCustomizationSystem(this.game),
       // Navigation queries the world's tile grid, so it comes right after it
       // and before anything (pedestrian AI, later traffic AI) that paths.
       new NavigationSystem(this.game),
       new CombatSystem(this.game),
       new VehicleSystem(this.game),
+      new GarageHousingAdapter(this.game),
       new VehicleOccupantSystem(this.game),
       new PedestrianSystem(this.game),
+      new NeighborhoodSystem(this.game),
       new TrafficSystem(this.game),
       new TransportationSystem(this.game),
       new EmergencyResponseSystem(this.game),
       new CrimeSystem(this.game),
       new WantedSystem(this.game),
+      new SafehouseAdapter(this.game),
       new MissionSystem(this.game),
+      new HousingMissionProvider(this.game),
       new WeatherSystem(this.game),
       new CityLifeSystem(this.game),
       new PickupSystem(this.game),

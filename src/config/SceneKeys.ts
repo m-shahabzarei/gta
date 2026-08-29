@@ -28,4 +28,12 @@ export enum SceneKeys {
   Phone = 'PhoneScene',
   /** Enterable building interior scene. */
   Interior = 'InteriorScene',
+  /** Real-estate catalog modal overlay. */
+  RealEstate = 'RealEstateScene',
+  /** Phase 2 owned-home management modal. */
+  HomeManagement = 'HomeManagementScene',
+  /** Phase 2 slot-based interior customization modal. */
+  HomeCustomization = 'HomeCustomizationScene',
+  /** Phase 2 garage storage modal. */
+  Garage = 'GarageScene',
 }

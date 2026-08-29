@@ -102,6 +102,7 @@ import {
   createMajorInteriorLayout,
   type MajorInteriorLayout,
 } from '@/gameplay/major-buildings';
+import { createHousingCatalog } from '@/gameplay/HousingCatalog';
 import { QuadTree, Random, random } from '@/utils';
 import { ArchitectureComposer } from '@/graphics/ArchitectureComposer';
 import {
@@ -6984,6 +6985,12 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
   /** Generate the world once, up front. */
   protected onInit(): void {
     this.mapData = CityGenerator.generate(CITY_SEED);
+    const housingCatalog = createHousingCatalog(this.mapData, CITY_SEED);
+    this.mapData = {
+      ...this.mapData,
+      properties: housingCatalog.properties,
+      realEstateOffices: housingCatalog.offices,
+    };
     this.majorBuildingRegistry = new MajorBuildingRegistry(this.mapData.majorBuildings);
     this.highwayGeometry = HighwayGeometryIndex.build(this.mapData, CHUNK_TILES);
     this.architectureComposer = new ArchitectureComposer(
@@ -7001,6 +7008,7 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
         `${this.mapData.urbanPlan.blocks.length} blocks, ` +
         `${this.mapData.urbanPlan.buildings.length} buildings, ` +
         `${this.mapData.buildingEntrances.length} entrances, ` +
+        `${this.mapData.realEstateOffices?.length ?? 0} real-estate offices, ` +
         `${this.mapData.benches.length} benches, ` +
         `${this.mapData.busStops.length} bus stops, ` +
         `${this.mapData.crossings.length} crossings`,
@@ -7070,6 +7078,15 @@ export class WorldManager extends BaseSceneManager implements IWorldQuery {
     if (interiorId === this.openInteriorRoofId) return;
     this.openInteriorRoofId = interiorId;
     this.visibilityAnchor = '';
+    this.updateChunkVisibility(true);
+  }
+
+  /** Prepare the existing streamed chunk pipeline for a camera preview/exit target. */
+  public prepareChunkAt(x: number, y: number): void {
+    if (!this.scene || !this.mapData) return;
+    const cx = Math.floor(x / (CHUNK_TILES * TILE_SIZE));
+    const cy = Math.floor(y / (CHUNK_TILES * TILE_SIZE));
+    this.streamChunks(cx, cy, `${cx},${cy}`);
     this.updateChunkVisibility(true);
   }
 

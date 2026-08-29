@@ -30,6 +30,20 @@ export enum ServiceKeys {
   World = 'WorldManager',
   /** Draws and drives real enterable building interiors inside the city map. */
   Interior = 'WorldInteriorSystem',
+  /** Immutable property catalog, ownership transactions and home transitions. */
+  Housing = 'HousingSystem',
+  /** Deterministic property upgrade progression and tier effects. */
+  HousingProgression = 'HousingProgressionSystem',
+  /** Slot-based furniture placement and room unlock validation. */
+  HomeCustomization = 'HomeCustomizationSystem',
+  /** Safe, metadata-only bridge to the existing VehicleSystem registry. */
+  GarageHousing = 'GarageHousingAdapter',
+  /** Resident projections backed by the existing PedestrianSystem. */
+  Neighborhood = 'NeighborhoodSystem',
+  /** Deterministic housing mission offers backed by MissionSystem. */
+  HousingMission = 'HousingMissionProvider',
+  /** Policy bridge to WantedSystem safehouse requests. */
+  Safehouse = 'SafehouseAdapter',
   /** Pathfinding + local-avoidance queries for AI (grid-based, request-queued). */
   Navigation = 'NavigationSystem',
   /** Ambulance / paramedic dispatch for downed or killed civilians. */

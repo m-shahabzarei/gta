@@ -108,7 +108,15 @@ export class SaveManager extends BaseManager {
       const providers = this.collectProviders();
       for (const p of providers) {
         const section = data.sections[p.saveId];
-        if (section !== undefined) p.deserialize(section);
+        if (section !== undefined) {
+          p.deserialize(section);
+        } else {
+          // Providers may opt into an explicit reset/migration when loading an
+          // older save that predates their section. Existing providers retain
+          // their historical best-effort behaviour unless they implement the
+          // hook (HousingSystem uses it to migrate to empty ownership).
+          p.onMissingSaveSection?.();
+        }
       }
       this.bus.emit(EventKeys.SaveLoadCompleted, { slot });
       return true;

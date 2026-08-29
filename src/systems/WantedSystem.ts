@@ -16,6 +16,7 @@ import {
   type PoliceDirective,
   type VehicleOccupantRecord,
   type WantedPhase,
+  type WantedReductionResult,
   getPlayerRef,
   ENTITY_DATA_KEY,
 } from '@/gameplay/types';
@@ -343,6 +344,29 @@ export class WantedSystem extends BaseSceneManager implements IWantedService, IS
     this.heat = 0;
     this.setLevel(0);
     this.beginCooldown();
+  }
+
+  /**
+   * Official safehouse reduction hook. Safehouse adapters call this method
+   * after their policy/cooldown has elapsed; police entities and pursuit state
+   * remain owned by this system.
+   */
+  public requestSafehouseReduction(durationSeconds: number): WantedReductionResult {
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return { accepted: false, reductionApplied: 0, reason: 'invalid-duration' };
+    }
+    if (this.wantedLevel <= 0) {
+      return { accepted: false, reductionApplied: 0, reason: 'no-wanted' };
+    }
+    if (this.phaseValue === 'pursuit' || this.phaseValue === 'responding') {
+      return { accepted: false, reductionApplied: 0, reason: 'unsafe-state' };
+    }
+    const reduction = Math.max(1, Math.floor(durationSeconds / 30));
+    const before = this.wantedLevel;
+    this.heat = Math.max(0, this.heat - reduction * 2);
+    this.setLevel(desiredWantedLevel(this.heat));
+    if (this.wantedLevel === 0) this.beginCooldown();
+    return { accepted: true, reductionApplied: before - this.wantedLevel, reason: 'applied' };
   }
 
   public serialize(): Json {

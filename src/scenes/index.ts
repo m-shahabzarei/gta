@@ -12,6 +12,10 @@ import { SettingsScene } from './SettingsScene';
 import { InventoryScene } from './InventoryScene';
 import { PhoneScene } from './PhoneScene';
 import { InteriorScene } from './InteriorScene';
+import { RealEstateScene } from './RealEstateScene';
+import { HomeManagementScene } from './HomeManagementScene';
+import { HomeCustomizationScene } from './HomeCustomizationScene';
+import { GarageScene } from './GarageScene';
 
 export {
   BootScene,
@@ -25,6 +29,10 @@ export {
   InventoryScene,
   PhoneScene,
   InteriorScene,
+  RealEstateScene,
+  HomeManagementScene,
+  HomeCustomizationScene,
+  GarageScene,
 };
 
 /**
@@ -43,4 +51,8 @@ export const SCENE_CLASSES = [
   InventoryScene,
   PhoneScene,
   InteriorScene,
+  RealEstateScene,
+  HomeManagementScene,
+  HomeCustomizationScene,
+  GarageScene,
 ] as const;

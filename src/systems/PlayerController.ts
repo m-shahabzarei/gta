@@ -36,6 +36,7 @@ import type { TrafficSystem } from '@/systems/TrafficSystem';
 import type { TransportationSystem } from '@/systems/TransportationSystem';
 import type { WantedSystem } from '@/systems/WantedSystem';
 import type { VehicleSystem } from '@/systems/VehicleSystem';
+import type { HousingSystem } from '@/systems/HousingSystem';
 import type { PassengerBoardingFailureReason, PassengerBoardingResult } from '@/gameplay/transit';
 
 interface VehicleEntryTransition {
@@ -912,6 +913,9 @@ export class PlayerController extends BaseSceneManager implements IPlayerRef, IS
 
   /** Resolve the initial spawn point from the world map, then sensible defaults. */
   private resolveSpawnPoint(): Vector2 {
+    const activeHome = ServiceLocator.tryResolve(ServiceKeys.Housing) as unknown as HousingSystem | null;
+    const homeSpawn = activeHome?.getActiveHomeSpawnPosition?.();
+    if (homeSpawn) return homeSpawn;
     const start = this.resolveWorld()?.map?.playerStart;
     if (start) {
       return { x: start.x, y: start.y };
